@@ -53,11 +53,12 @@ function navigateTo(viewName, proyectoId = null) {
   _activeView = viewName;
 
   const renders = {
-    dashboard: () => renderDashboard(),
-    caja:      () => renderCaja(),
-    proyectos: () => renderProyectos(),
-    detalle:   () => renderDetalle(_activeProyecto),
-    importar:  () => renderImportar(),
+    dashboard:   () => renderDashboard(),
+    caja:        () => renderCaja(),
+    proyectos:   () => renderProyectos(),
+    detalle:     () => renderDetalle(_activeProyecto),
+    proveedores: () => renderProveedores(),
+    importar:    () => renderImportar(),
   };
   renders[viewName]?.();
 }

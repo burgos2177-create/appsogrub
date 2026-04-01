@@ -175,3 +175,90 @@ function calcTotalGastadoPagado(proyectoId) {
     .filter(m => m.proyecto_id === proyectoId && m.tipo === 'gasto' && m.status === 'Pagado');
   return movs.reduce((acc, m) => acc + Math.abs(m.monto), 0);
 }
+
+// =====================================================
+// IVA — Desglose por proyecto
+// Gastos con incluye_iva=true: neto = monto/1.16, iva = monto - neto
+// Gastos sin IVA: neto = monto, iva_por_cobrar = monto * 0.16
+// =====================================================
+function calcIVADesglose(proyectoId) {
+  const movs = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
+    .filter(m => m.proyecto_id === proyectoId && m.tipo === 'gasto' && m.status === 'Pagado');
+
+  let gastoNeto = 0;
+  let ivaPagado = 0;
+  let ivaPorCobrar = 0;
+
+  movs.forEach(m => {
+    const abs = Math.abs(m.monto);
+    if (m.incluye_iva) {
+      const neto = abs / 1.16;
+      gastoNeto += neto;
+      ivaPagado += abs - neto;
+    } else {
+      gastoNeto += abs;
+      ivaPorCobrar += abs * 0.16;
+    }
+  });
+
+  return { gastoNeto, ivaPagado, ivaPorCobrar, totalBruto: gastoNeto + ivaPagado };
+}
+
+// =====================================================
+// ANALYTICS — Gasto por categoría (proyecto)
+// =====================================================
+const CATEGORIAS = ['Material', 'Mano de Obra', 'Subcontratista', 'Indirecto'];
+
+function calcGastoPorCategoria(proyectoId) {
+  const movs = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
+    .filter(m => m.proyecto_id === proyectoId && m.tipo === 'gasto' && m.status === 'Pagado');
+
+  const result = {};
+  CATEGORIAS.forEach(c => result[c] = 0);
+
+  movs.forEach(m => {
+    const cat = m.categoria || 'Sin categoría';
+    result[cat] = (result[cat] || 0) + Math.abs(m.monto);
+  });
+
+  return result;
+}
+
+// =====================================================
+// ANALYTICS — Gasto por proveedor (proyecto)
+// =====================================================
+function calcGastoPorProveedor(proyectoId) {
+  const movs = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
+    .filter(m => m.proyecto_id === proyectoId && m.tipo === 'gasto' && m.status === 'Pagado');
+
+  const result = {};
+  movs.forEach(m => {
+    const prov = m.subcontratista || 'Sin proveedor';
+    result[prov] = (result[prov] || 0) + Math.abs(m.monto);
+  });
+
+  return result;
+}
+
+// =====================================================
+// ANALYTICS — Total gastado con un proveedor (global)
+// =====================================================
+function calcGastoGlobalProveedor(proveedorNombre) {
+  const movs = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
+    .filter(m => m.tipo === 'gasto' && m.status === 'Pagado' && m.subcontratista === proveedorNombre);
+  return movs.reduce((acc, m) => acc + Math.abs(m.monto), 0);
+}
+
+// Detalle de gasto por proyecto para un proveedor
+function calcGastoProveedorPorProyecto(proveedorNombre) {
+  const movs = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
+    .filter(m => m.tipo === 'gasto' && m.status === 'Pagado' && m.subcontratista === proveedorNombre);
+
+  const result = {};
+  movs.forEach(m => {
+    const proy = getItem(KEYS.PROYECTOS, m.proyecto_id);
+    const nombre = proy?.nombre || 'Desconocido';
+    result[nombre] = (result[nombre] || 0) + Math.abs(m.monto);
+  });
+  return result;
+}
