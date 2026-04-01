@@ -22,7 +22,6 @@ async function extraerTextoPDF(file) {
   for (let i = 1; i <= pdf.numPages; i++) {
     const page    = await pdf.getPage(i);
     const content = await page.getTextContent();
-    // Reconstruye el texto con espacios, preservando proximidad de tokens
     const pageText = content.items.map(item => item.str).join(' ');
     fullText += pageText + '\n';
   }
@@ -31,93 +30,148 @@ async function extraerTextoPDF(file) {
 
 // =====================================================
 // Parsea un string de monto MXN → number
-// Acepta: "16,709.80" | "$16,709.80" | "16709.80" | "16 709.80"
+// Acepta: "$ 108.00" | "$108.00" | "108.00" | "1,234.56"
 // =====================================================
-function parsearMonto(str) {
-  if (!str) return null;
-  // Quitar signo de pesos, espacios internos y comas de miles
-  const limpio = str.replace(/\$/g, '').replace(/\s/g, '').replace(/,/g, '');
+function _parseMonto(s) {
+  if (!s) return null;
+  // Quitar signo de pesos, espacios internos, comas de miles, signo negativo inicial
+  const limpio = s.replace(/\$/g, '').replace(/\s/g, '').replace(/,/g, '').replace(/^-/, '');
   const num = parseFloat(limpio);
   return (!isNaN(num) && num > 0) ? num : null;
 }
 
+// Regex base para un monto con decimales obligatorios (formato factura)
+// Requiere exactamente 2 decimales para no confundir códigos con montos
+const _RX_MONTO_STR = /\$?\s*(\d{1,3}(?:,\d{3})*\.\d{2}|\d{4,}\.\d{2}|\d{1,3}\.\d{2})/;
+
 // =====================================================
-// Detecta el monto total en texto de factura
+// DETECCIÓN PRINCIPAL
 //
-// Estrategia multi-paso:
-//   1. Buscar cerca de palabras clave de "total" (excluyendo subtotal)
-//   2. Buscar el patrón CFDI estructurado (Subtotal / IVA / Total)
-//   3. Fallback: el mayor importe del documento
+// Estrategias en orden de confianza:
+//   1. "XXX Pesos 00/100" — texto en palabras del CFDI (más confiable)
+//   2. "Total:" en tabla de resumen CFDI (SubTotal / IVA / Total)
+//   3. Keyword "Total" con variantes (importe total, total a pagar…)
+//   4. Última aparición de monto en la mitad inferior del doc
 // =====================================================
 function detectarMontoTotal(texto) {
-  // Normalizar: colapsar espacios múltiples, preservar saltos de línea
+  // Normalizar
   const norm = texto.replace(/[ \t]+/g, ' ').replace(/\r/g, '');
 
-  // Regex para montos con formato MXN: 1,234.56 o 1234.56 o 1 234.56
-  const MONTO_RX = /\$?\s*(\d{1,3}(?:[,\s]\d{3})*(?:\.\d{1,2})?|\d+\.\d{1,2})/g;
-
-  // ── Paso 1: Buscar montos después de keywords de "total" ──
-  // Excluir "subtotal" para no confundirlo con el total final
-  const totalKeywordRx = /(?<!\w)(?:total\s+(?:a\s+pagar|del\s+comprobante|factura|mxn|importe)?|importe\s+total|monto\s+total|gran\s+total|total\s+general|precio\s+total|amount\s+due|total\s+due)\s*[:\$]?\s*(\d{1,3}(?:[,\s]\d{3})*(?:\.\d{1,2})?|\d+\.\d{1,2})/gi;
-
-  const candidatosPaso1 = [];
-  let m;
-  while ((m = totalKeywordRx.exec(norm)) !== null) {
-    const num = parsearMonto(m[1]);
-    if (num !== null) candidatosPaso1.push(num);
+  // ── Estrategia 1: "Ciento ocho Pesos 00/100" ──────────────────────
+  // Los CFDIs siempre incluyen el monto en palabras antes del pie.
+  // La fracción "/100" nos da los centavos; el número entero lo buscamos
+  // en el fragmento inmediatamente anterior a "Pesos".
+  const pesosRx = /([A-ZÁÉÍÓÚ][a-záéíóúA-ZÁÉÍÓÚ\s]+)\s+[Pp]esos?\s+(\d{2})\/100/;
+  const pesosMatch = norm.match(pesosRx);
+  if (pesosMatch) {
+    // Buscar un número decimal cerca de "Pesos XX/100" en un radio de ±150 chars
+    const idx    = pesosMatch.index;
+    const radio  = norm.substring(Math.max(0, idx - 150), idx + 60);
+    // Buscar el monto con decimales más cercano al inicio de esa ventana
+    const montoRx = /\$?\s*(\d{1,3}(?:,\d{3})*\.\d{2})/g;
+    let m2;
+    const candidatos = [];
+    while ((m2 = montoRx.exec(radio)) !== null) {
+      const n = _parseMonto(m2[1]);
+      if (n) candidatos.push(n);
+    }
+    if (candidatos.length > 0) {
+      // El total en el texto en palabras es el mayor dentro de ese radio
+      return Math.max(...candidatos);
+    }
+    // Si no hay número cercano, intentar parsear los centavos como indicador
+    const centavos = parseInt(pesosMatch[2], 10);
+    // Buscar en todo el doc un número cuya parte decimal coincida
+    const decRx = new RegExp(`\\b(\\d+)\\.${String(centavos).padStart(2,'0')}\\b`, 'g');
+    const hits = [];
+    let dm;
+    while ((dm = decRx.exec(norm)) !== null) {
+      const n = _parseMonto(dm[0]);
+      if (n && n >= 10) hits.push(n);
+    }
+    if (hits.length > 0) return Math.max(...hits);
   }
 
-  // También buscar líneas donde la palabra exacta "total" aparece sola
-  // seguida por un número en la misma o siguiente línea (formato tabla)
+  // ── Estrategia 2: "Total:" en tabla CFDI ──────────────────────────
+  // Busca el patrón exacto "Total:" (o "TOTAL:") seguido del importe,
+  // excluyendo líneas que empiezan con "Sub" (SubTotal) o "Descuento".
+  //
+  // El texto PDF suele quedar como:
+  //   "SubTotal: $ 93.10 Descuento: -$ 0.00 I.V.A.: $ 14.90 Total: $ 108.00"
+  // o en líneas separadas.
+
   const lines = norm.split('\n');
+  const totalMatches = [];
+
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    // Línea que es exactamente "Total" o "TOTAL" con posible espacio y monto
-    if (/^total\s*[:\$]?\s*(\d[\d,\s.]+)$/i.test(line)) {
-      const match = line.match(/(\d{1,3}(?:[,\s]\d{3})*(?:\.\d{1,2})?|\d+\.\d{1,2})/);
-      if (match) {
-        const num = parsearMonto(match[1]);
-        if (num !== null) candidatosPaso1.push(num);
+    const line = lines[i];
+    // Línea que contiene "Total:" pero NO "SubTotal" ni "Descuento" ni "IVA"
+    if (/total\s*:/i.test(line) && !/sub\s*total|descuento/i.test(line)) {
+      const m = line.match(/total\s*:\s*-?\s*\$?\s*(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})/i);
+      if (m) {
+        const n = _parseMonto(m[1]);
+        if (n) totalMatches.push(n);
+        continue;
+      }
+      // El número puede estar en el token siguiente de la misma línea
+      const rest = line.replace(/.*total\s*:/i, '').trim();
+      const m2 = rest.match(/^\s*-?\s*\$?\s*(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})/i);
+      if (m2) {
+        const n = _parseMonto(m2[1]);
+        if (n) totalMatches.push(n);
+        continue;
+      }
+      // O en la línea siguiente
+      if (i + 1 < lines.length) {
+        const next = lines[i + 1].trim();
+        const m3 = next.match(/^-?\s*\$?\s*(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})/);
+        if (m3) {
+          const n = _parseMonto(m3[1]);
+          if (n) totalMatches.push(n);
+        }
       }
     }
-    // Línea que solo dice "Total" o "TOTAL" y la siguiente tiene el número
-    if (/^total\s*[:\$]?\s*$/i.test(line) && i + 1 < lines.length) {
-      const nextLine = lines[i + 1].trim();
-      const match = nextLine.match(/^[:\$]?\s*(\d{1,3}(?:[,\s]\d{3})*(?:\.\d{1,2})?|\d+\.\d{1,2})/);
-      if (match) {
-        const num = parsearMonto(match[1]);
-        if (num !== null) candidatosPaso1.push(num);
-      }
-    }
   }
 
-  if (candidatosPaso1.length > 0) {
-    // Si hay varios candidatos, el mayor suele ser el total final
-    // (el subtotal es siempre menor que el total con IVA)
-    return Math.max(...candidatosPaso1);
+  // También buscar el patrón compacto en una sola línea normalizada
+  // "SubTotal $ 93.10 ... Total $ 108.00"
+  const inlineRx = /\btotal\s*:?\s*\$?\s*(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})/gi;
+  let im;
+  while ((im = inlineRx.exec(norm)) !== null) {
+    const before = norm.substring(Math.max(0, im.index - 3), im.index);
+    if (/sub/i.test(before)) continue; // saltar "SubTotal"
+    const n = _parseMonto(im[1]);
+    if (n) totalMatches.push(n);
   }
 
-  // ── Paso 2: Patrón CFDI — buscar la secuencia Subtotal → IVA → Total ──
-  // En CFDI el texto suele tener: "Subtotal $X IVA $Y Total $Z"
-  const cfdiRx = /subtotal\s*\$?\s*([\d,]+\.?\d*)\s+(?:iva|impuesto|taxes?)\s*\$?\s*([\d,]+\.?\d*)\s+total\s*\$?\s*([\d,]+\.?\d*)/i;
-  const cfdiMatch = cfdiRx.exec(norm);
-  if (cfdiMatch) {
-    const num = parsearMonto(cfdiMatch[3]);
-    if (num !== null) return num;
+  if (totalMatches.length > 0) {
+    // De todos los "Total:" encontrados, tomar el ÚLTIMO (aparece al fondo de la tabla)
+    return totalMatches[totalMatches.length - 1];
   }
 
-  // ── Paso 3: Fallback — mayor monto del documento ──
-  // (excluir cantidades muy pequeñas que son unitarias/cantidades)
-  const todosLosMontos = [];
+  // ── Estrategia 3: Keywords ampliados ──────────────────────────────
+  const keywordsRx = /(?:importe\s+total|monto\s+total|gran\s+total|total\s+a\s+pagar|total\s+general|total\s+del\s+comprobante|total\s+mxn|amount\s+due|total\s+due)\s*[:\$]?\s*(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})/gi;
+  let km;
+  while ((km = keywordsRx.exec(norm)) !== null) {
+    const n = _parseMonto(km[1]);
+    if (n) return n;
+  }
+
+  // ── Estrategia 4: Fallback — último monto ≥ 10 en la mitad inferior ──
+  // Usamos ÚLTIMO (no máximo) para evitar códigos SAT grandes como 31162000
+  const halfDoc   = norm.slice(Math.floor(norm.length * 0.45));
+  const allMontos = [];
+  const fallbackRx = /\$\s*(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})/g;
   let fm;
-  while ((fm = MONTO_RX.exec(norm)) !== null) {
-    const num = parsearMonto(fm[1]);
-    // Ignorar montos menores a 10 (cantidades, porcentajes, etc.)
-    if (num !== null && num >= 10) todosLosMontos.push(num);
+  while ((fm = fallbackRx.exec(halfDoc)) !== null) {
+    const n = _parseMonto(fm[1]);
+    // Ignorar montos negativos/descuentos y menores a 1
+    if (n && n >= 1) allMontos.push(n);
   }
 
-  if (todosLosMontos.length > 0) {
-    return Math.max(...todosLosMontos);
+  if (allMontos.length > 0) {
+    // El último monto con "$" en la parte inferior suele ser el total
+    return allMontos[allMontos.length - 1];
   }
 
   return null;
