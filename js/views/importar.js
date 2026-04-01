@@ -170,7 +170,7 @@ function renderPaso1(container) {
 function renderPaso2(container) {
   const esProy   = _importState.destino === 'proyecto';
   const placeholder = esProy
-    ? `fecha,monto,concepto,status,subcontratista\n2024-11-15,-2999,Dron,Pagado,Mario\n2024-11-20,-522,Chalecos,Pagado,`
+    ? `fecha,monto,concepto,status,proveedor,categoria,incluye_iva\n2024-11-15,-2999,Dron,Pagado,Mario,Material,false\n2024-11-20,-522,Chalecos,Pagado,,Indirecto,true`
     : `fecha,monto,concepto,status\n2024-11-15,-2999,Gasolina,Pagado\n2024-11-20,-1200,Comida,Pendiente`;
 
   const card = document.createElement('div');
@@ -179,10 +179,11 @@ function renderPaso2(container) {
     <h3 class="section-title mb-4">Paso 2 — Pegar datos CSV</h3>
     <p class="text-muted text-sm mb-16">
       Formato esperado: <code style="background:var(--surface2);padding:2px 6px;border-radius:4px;font-size:11px">
-        ${esProy ? 'fecha,monto,concepto,status,subcontratista' : 'fecha,monto,concepto,status'}
+        ${esProy ? 'fecha,monto,concepto,status,proveedor,categoria,incluye_iva' : 'fecha,monto,concepto,status'}
       </code><br>
       El monto es negativo para egresos y positivo para ingresos.
       La columna <em>status</em> acepta "Pagado" o "Pendiente".
+      ${esProy ? '<br>Categorías: Material, Mano de Obra, Subcontratista, Indirecto. <em>incluye_iva</em>: true/false.' : ''}
     </p>
 
     <div class="form-group mb-16">
@@ -249,11 +250,13 @@ function parsearCSV(csv, esProy) {
     const cols  = splitCSVLine(lines[i]);
     const get   = (col) => cols[header.indexOf(col)]?.trim() ?? '';
 
-    const fecha    = get('fecha');
-    const montoRaw = parseFloat(get('monto'));
-    const concepto = get('concepto');
-    const status   = get('status') || 'Pagado';
-    const subcon   = esProy ? get('subcontratista') : '';
+    const fecha      = get('fecha');
+    const montoRaw   = parseFloat(get('monto'));
+    const concepto   = get('concepto');
+    const status     = get('status') || 'Pagado';
+    const subcon     = esProy ? (get('proveedor') || get('subcontratista') || '') : '';
+    const categoria  = esProy ? (get('categoria') || '') : '';
+    const incluye_iva = esProy ? (get('incluye_iva') === 'true') : false;
 
     if (!fecha || !/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
       return { ok: false, error: `Línea ${i+1}: fecha inválida "${fecha}" (usa AAAA-MM-DD)` };
@@ -268,7 +271,7 @@ function parsearCSV(csv, esProy) {
       return { ok: false, error: `Línea ${i+1}: status debe ser "Pagado" o "Pendiente"` };
     }
 
-    filas.push({ fecha, monto: montoRaw, concepto, status, subcontratista: subcon, _error: null });
+    filas.push({ fecha, monto: montoRaw, concepto, status, subcontratista: subcon, categoria, incluye_iva, _error: null });
   }
 
   return { ok: true, filas };
@@ -301,7 +304,7 @@ function renderPreviewTable(wrap, filas, esProy) {
           <th>Fecha</th>
           <th>Monto</th>
           <th>Concepto</th>
-          ${esProy ? '<th>Subcontratista</th>' : ''}
+          ${esProy ? '<th>Proveedor</th><th>Categoría</th><th>IVA</th>' : ''}
           <th>Status</th>
         </tr>
       </thead>
@@ -312,7 +315,17 @@ function renderPreviewTable(wrap, filas, esProy) {
             <td><input class="form-input" style="width:130px;padding:4px 8px" data-row="${i}" data-col="fecha"  value="${f.fecha}"></td>
             <td><input class="form-input" style="width:110px;padding:4px 8px" data-row="${i}" data-col="monto"  value="${f.monto}" type="number" step="0.01"></td>
             <td><input class="form-input" style="min-width:180px;padding:4px 8px" data-row="${i}" data-col="concepto" value="${f.concepto}"></td>
-            ${esProy ? `<td><input class="form-input" style="min-width:120px;padding:4px 8px" data-row="${i}" data-col="subcontratista" value="${f.subcontratista}"></td>` : ''}
+            ${esProy ? `
+              <td><input class="form-input" style="min-width:120px;padding:4px 8px" data-row="${i}" data-col="subcontratista" value="${f.subcontratista}"></td>
+              <td><select class="form-select" style="padding:4px 30px 4px 8px" data-row="${i}" data-col="categoria">
+                <option value="">—</option>
+                ${CATEGORIAS.map(c => `<option ${f.categoria === c ? 'selected' : ''}>${c}</option>`).join('')}
+              </select></td>
+              <td><select class="form-select" style="padding:4px 30px 4px 8px" data-row="${i}" data-col="incluye_iva">
+                <option value="false" ${!f.incluye_iva ? 'selected' : ''}>Sin IVA</option>
+                <option value="true" ${f.incluye_iva ? 'selected' : ''}>Con IVA</option>
+              </select></td>
+            ` : ''}
             <td>
               <select class="form-select" style="padding:4px 30px 4px 8px" data-row="${i}" data-col="status">
                 <option ${f.status === 'Pagado'   ? 'selected' : ''}>Pagado</option>
@@ -332,6 +345,7 @@ function renderPreviewTable(wrap, filas, esProy) {
       const col = e.target.dataset.col;
       let val   = e.target.value;
       if (col === 'monto') val = parseFloat(val);
+      if (col === 'incluye_iva') val = val === 'true';
       _importState.preview[row][col] = val;
     });
   });
@@ -449,6 +463,9 @@ function ejecutarImportacion() {
         subcontratista: f.subcontratista ?? '',
         status:         f.status,
         tipo:           _importState.tipoMov,
+        categoria:      f.categoria ?? '',
+        incluye_iva:    f.incluye_iva ?? false,
+        factura_url:    '',
       });
     });
   } else {

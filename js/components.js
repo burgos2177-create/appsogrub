@@ -237,6 +237,57 @@ function progressBar(pct, showLabel = true) {
 // EMPTY STATE HELPER
 // =====================================================
 
+// =====================================================
+// CATEGORÍA BADGE
+// =====================================================
+function categoriaBadge(cat) {
+  const map = {
+    'Material':       { cls: 'badge-info',    label: 'Material' },
+    'Mano de Obra':   { cls: 'badge-warning', label: 'Mano de Obra' },
+    'Subcontratista': { cls: 'badge-danger',  label: 'Subcontratista' },
+    'Indirecto':      { cls: 'badge-muted',   label: 'Indirecto' },
+  };
+  const def = map[cat] ?? { cls: 'badge-muted', label: cat || '—' };
+  return `<span class="badge ${def.cls}">${def.label}</span>`;
+}
+
+// =====================================================
+// HORIZONTAL BAR CHART (CSS-based)
+// data = { label: value, ... }
+// =====================================================
+function renderBarChart(data, { colorVar = '--accent', title = '' } = {}) {
+  const entries = Object.entries(data).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+  if (entries.length === 0) return '<p class="text-muted text-sm" style="padding:8px 0">Sin datos.</p>';
+
+  const max = Math.max(...entries.map(([, v]) => v));
+  const total = entries.reduce((a, [, v]) => a + v, 0);
+
+  const colors = ['#1a9fd4', '#4caf82', '#e0a752', '#e05252', '#9b59b6', '#3498db', '#e67e22', '#1abc9c'];
+
+  return `
+    ${title ? `<div class="chart-title">${title}</div>` : ''}
+    <div class="bar-chart">
+      ${entries.map(([label, val], i) => {
+        const pct = max > 0 ? (val / max) * 100 : 0;
+        const pctTotal = total > 0 ? ((val / total) * 100).toFixed(1) : '0';
+        const color = colors[i % colors.length];
+        return `
+          <div class="bar-chart-row">
+            <span class="bar-chart-label">${label}</span>
+            <div class="bar-chart-track">
+              <div class="bar-chart-fill" style="width:${pct}%;background:${color}"></div>
+            </div>
+            <span class="bar-chart-value">${formatMXN(val)} <span class="text-dim">(${pctTotal}%)</span></span>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
+// =====================================================
+// EMPTY STATE HELPER
+// =====================================================
 function emptyState({ icon = '', title = 'Sin datos', desc = '', actionLabel = '', onAction = null }) {
   const el = document.createElement('div');
   el.className = 'empty-state';

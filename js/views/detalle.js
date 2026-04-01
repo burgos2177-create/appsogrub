@@ -32,6 +32,12 @@ function renderDetalle(proyectoId) {
   // ---- Toolbar acciones ----
   root.appendChild(renderDetalleToolbar(proyectoId, proyecto));
 
+  // ---- Gráficas ----
+  const chartsWrap = document.createElement('div');
+  chartsWrap.id = 'detalle-charts-wrap';
+  root.appendChild(chartsWrap);
+  refreshDetalleCharts(proyectoId);
+
   // ---- Tabla movimientos ----
   const tableWrap = document.createElement('div');
   tableWrap.id = 'detalle-table-wrap';
@@ -50,6 +56,7 @@ function renderDetalleKPIs(proyectoId, proyecto) {
   const utilidad         = calcUtilidadEstimada(proyectoId);
   const avance           = calcAvanceFinanciero(proyectoId);
   const deudaPend        = calcDeudaPendiente(proyectoId);
+  const iva              = calcIVADesglose(proyectoId);
 
   const cls = avance < 60 ? 'low' : avance < 85 ? 'medium' : 'high';
 
@@ -59,7 +66,17 @@ function renderDetalleKPIs(proyectoId, proyecto) {
   grid.innerHTML = `
     ${detalleKPI('💰', 'Saldo en caja',       formatMXN(saldoCaja),     saldoCaja >= 0 ? 'text-success' : 'text-danger')}
     ${detalleKPI('📥', 'Total cobrado',        formatMXN(totalCobrado),  'text-success')}
-    ${detalleKPI('📤', 'Total gastado',        formatMXN(totalGastado),  'text-danger')}
+    <div class="kpi-card">
+      <div class="kpi-label">📤 Total gastado
+        <button class="btn-iva-info" title="Ver desglose IVA" data-proyecto="${proyectoId}">ℹ</button>
+      </div>
+      <div class="kpi-value text-danger" style="font-size:20px">${formatMXN(totalGastado)}</div>
+      <div class="kpi-sub iva-desglose hidden" id="iva-desglose-${proyectoId}">
+        <div>Neto: <strong>${formatMXN(iva.gastoNeto)}</strong></div>
+        <div>IVA pagado: <strong>${formatMXN(iva.ivaPagado)}</strong></div>
+        <div style="color:var(--warning)">IVA por cobrar: <strong>${formatMXN(iva.ivaPorCobrar)}</strong></div>
+      </div>
+    </div>
     ${detalleKPI('📈', 'Utilidad estimada',    formatMXN(utilidad),      utilidad >= 0 ? 'text-success' : 'text-danger')}
     <div class="kpi-card">
       <div class="kpi-label">📊 Avance financiero</div>
@@ -71,6 +88,18 @@ function renderDetalleKPIs(proyectoId, proyecto) {
     </div>
     ${detalleKPI('⚠️', 'Deuda pendiente',      formatMXN(deudaPend),     deudaPend > 0 ? 'text-warning' : 'text-muted')}
   `;
+
+  // Toggle IVA info
+  setTimeout(() => {
+    grid.querySelectorAll('.btn-iva-info').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const el = grid.querySelector(`#iva-desglose-${btn.dataset.proyecto}`);
+        if (el) el.classList.toggle('hidden');
+      });
+    });
+  }, 0);
+
   return grid;
 }
 
@@ -91,6 +120,30 @@ function refreshDetalleKPIs(proyectoId) {
 }
 
 // =====================================================
+// CHARTS — Gasto por categoría y por proveedor
+// =====================================================
+function refreshDetalleCharts(proyectoId) {
+  const wrap = document.getElementById('detalle-charts-wrap');
+  if (!wrap) return;
+
+  const porCategoria  = calcGastoPorCategoria(proyectoId);
+  const porProveedor  = calcGastoPorProveedor(proyectoId);
+
+  wrap.innerHTML = `
+    <div class="charts-grid mb-24">
+      <div class="card">
+        <h3 class="section-title" style="margin-bottom:12px">Gasto por Categoría</h3>
+        ${renderBarChart(porCategoria, { title: '' })}
+      </div>
+      <div class="card">
+        <h3 class="section-title" style="margin-bottom:12px">Gasto por Proveedor</h3>
+        ${renderBarChart(porProveedor, { title: '' })}
+      </div>
+    </div>
+  `;
+}
+
+// =====================================================
 // TOOLBAR ACCIONES
 // =====================================================
 function renderDetalleToolbar(proyectoId, proyecto) {
@@ -101,6 +154,7 @@ function renderDetalleToolbar(proyectoId, proyecto) {
     <button class="btn btn-primary" id="btn-gasto">＋ Registrar gasto</button>
     <button class="btn btn-secondary" id="btn-abono">＋ Abono del cliente</button>
     <button class="btn btn-secondary" id="btn-recibir">⇄ Recibir de SOGRUB</button>
+    <button class="btn btn-secondary" id="btn-proveedores-proy">📋 Proveedores</button>
     <div class="toolbar-spacer"></div>
     <button class="btn btn-ghost btn-sm" id="btn-editar-proy">✏️ Editar proyecto</button>
   `;
@@ -111,6 +165,8 @@ function renderDetalleToolbar(proyectoId, proyecto) {
     abrirModalMovProy(proyectoId, 'abono_cliente'));
   bar.querySelector('#btn-recibir').addEventListener('click', () =>
     abrirModalRecibirSOGRUB(proyectoId));
+  bar.querySelector('#btn-proveedores-proy').addEventListener('click', () =>
+    abrirModalProveedoresProyecto(proyectoId));
   bar.querySelector('#btn-editar-proy').addEventListener('click', () =>
     abrirModalEditarProyecto(proyectoId));
 
@@ -197,9 +253,11 @@ function renderDetalleTableOnly(proyectoId, wrap) {
           <tr>
             <th>Fecha</th>
             <th>Concepto</th>
-            <th>Subcontratista</th>
+            <th>Categoría</th>
+            <th>Proveedor</th>
             <th>Tipo</th>
             <th>Monto</th>
+            <th>IVA</th>
             <th>Status</th>
             <th>Acciones</th>
           </tr>
@@ -207,13 +265,21 @@ function renderDetalleTableOnly(proyectoId, wrap) {
         <tbody>
           ${movs.map(m => {
             const colorMonto = m.monto >= 0 ? 'amount-positive' : 'amount-negative';
+            const ivaLabel = m.tipo === 'gasto'
+              ? (m.incluye_iva ? '<span class="badge badge-success badge-no-dot" style="font-size:10px">Con IVA</span>' : '<span class="badge badge-muted badge-no-dot" style="font-size:10px">Sin IVA</span>')
+              : '—';
+            const facturaIcon = m.factura_url
+              ? `<a href="${m.factura_url}" target="_blank" class="btn btn-ghost btn-icon" title="Ver factura" style="font-size:12px">📄</a>`
+              : '';
             return `
               <tr>
                 <td class="text-muted">${formatDate(m.fecha)}</td>
                 <td>${m.concepto || '—'}</td>
+                <td>${m.tipo === 'gasto' ? categoriaBadge(m.categoria) : '—'}</td>
                 <td class="text-muted">${m.subcontratista || '—'}</td>
                 <td>${tipoBadge(m.tipo)}</td>
                 <td class="${colorMonto} font-mono">${formatMXN(m.monto)}</td>
+                <td>${ivaLabel}${facturaIcon}</td>
                 <td>${statusBadge(m.status)}</td>
                 <td>
                   <div class="td-actions">
@@ -255,6 +321,10 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
   const titulo = titulos[tipo] ?? 'Movimiento';
   const esGasto = tipo === 'gasto';
 
+  // Obtener proveedores del proyecto
+  const proveedoresProy = (getCollection(KEYS.PROY_PROVEEDORES) ?? [])
+    .filter(p => p.proyecto_id === proyectoId);
+
   const body = document.createElement('div');
   body.style.cssText = 'display:flex;flex-direction:column;gap:14px';
   body.innerHTML = `
@@ -277,9 +347,37 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
     </div>
     ${esGasto ? `
     <div class="form-group">
-      <label class="form-label" for="pm-subcon">Subcontratista <span class="text-dim">(opcional)</span></label>
-      <input type="text" id="pm-subcon" class="form-input" placeholder="Nombre del subcontratista"
-        value="${mov?.subcontratista ?? ''}">
+      <label class="form-label" for="pm-categoria">Categoría</label>
+      <select id="pm-categoria" class="form-select">
+        <option value="">Selecciona categoría</option>
+        ${CATEGORIAS.map(c => `<option value="${c}" ${mov?.categoria === c ? 'selected' : ''}>${c}</option>`).join('')}
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="pm-proveedor">Proveedor <span class="text-dim">(opcional)</span></label>
+      <div style="position:relative">
+        <input type="text" id="pm-proveedor" class="form-input" placeholder="Buscar o escribir proveedor"
+          value="${mov?.subcontratista ?? ''}" list="prov-list-${proyectoId}" autocomplete="off">
+        <datalist id="prov-list-${proyectoId}">
+          ${proveedoresProy.map(p => `<option value="${p.nombre}">`).join('')}
+        </datalist>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">IVA</label>
+      <div class="toggle-group" style="max-width:280px">
+        <input type="radio" name="pm-iva" id="pm-siniva" value="false" class="toggle-option"
+          ${!mov?.incluye_iva ? 'checked' : ''}>
+        <label for="pm-siniva" class="toggle-label">Sin IVA</label>
+        <input type="radio" name="pm-iva" id="pm-coniva" value="true" class="toggle-option"
+          ${mov?.incluye_iva ? 'checked' : ''}>
+        <label for="pm-coniva" class="toggle-label">Incluye IVA</label>
+      </div>
+    </div>
+    <div class="form-group hidden" id="pm-factura-group">
+      <label class="form-label" for="pm-factura">Factura PDF <span class="text-dim">(opcional)</span></label>
+      <input type="file" id="pm-factura" class="form-input" accept=".pdf" style="padding:6px 10px">
+      ${mov?.factura_url ? `<a href="${mov.factura_url}" target="_blank" class="text-sm" style="color:var(--accent)">📄 Ver factura actual</a>` : ''}
     </div>
     <div class="form-group">
       <label class="form-label">Status</label>
@@ -301,18 +399,38 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
     `}
   `;
 
+  // Show/hide factura field based on IVA toggle
+  if (esGasto) {
+    setTimeout(() => {
+      const toggleIVA = () => {
+        const conIva = body.querySelector('#pm-coniva')?.checked;
+        const factGroup = body.querySelector('#pm-factura-group');
+        if (factGroup) factGroup.classList.toggle('hidden', !conIva);
+      };
+      body.querySelectorAll('input[name="pm-iva"]').forEach(r =>
+        r.addEventListener('change', toggleIVA));
+      toggleIVA();
+    }, 0);
+  }
+
   openModal({
     title:       titulo,
     body,
     confirmText: mov ? 'Guardar cambios' : (esGasto ? 'Registrar gasto' : 'Registrar abono'),
-    onConfirm:   () => {
+    onConfirm:   async (btn) => {
       const fecha    = body.querySelector('#pm-fecha').value;
       const montoRaw = parseFloat(body.querySelector('#pm-monto').value);
       const concepto = body.querySelector('#pm-concepto').value.trim();
-      const subcon   = body.querySelector('#pm-subcon, #pm-nota')?.value.trim() ?? '';
+      const subcon   = body.querySelector('#pm-proveedor, #pm-nota')?.value.trim() ?? '';
       const status   = esGasto
         ? (body.querySelector('input[name="pm-status"]:checked')?.value ?? 'Pagado')
         : 'Pagado';
+      const categoria = esGasto
+        ? (body.querySelector('#pm-categoria')?.value ?? '')
+        : '';
+      const incluye_iva = esGasto
+        ? body.querySelector('#pm-coniva')?.checked ?? false
+        : false;
 
       const valid = validateFields([
         { el: body.querySelector('#pm-fecha'),   msg: 'Selecciona una fecha' },
@@ -321,9 +439,44 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
       ]);
       if (!valid) return;
 
+      if (esGasto && !categoria) {
+        const catEl = body.querySelector('#pm-categoria');
+        catEl.classList.add('error');
+        const errEl = document.createElement('span');
+        errEl.className = 'form-error-msg';
+        errEl.textContent = 'Selecciona una categoría';
+        catEl.parentElement.appendChild(errEl);
+        catEl.focus();
+        return;
+      }
+
       const monto = esGasto ? -montoRaw : montoRaw;
 
-      const data = { fecha, monto, concepto, subcontratista: subcon, status, tipo, proyecto_id: proyectoId };
+      // Handle factura upload
+      let factura_url = mov?.factura_url ?? '';
+      if (esGasto && incluye_iva) {
+        const fileInput = body.querySelector('#pm-factura');
+        if (fileInput?.files?.length > 0) {
+          try {
+            btn.disabled = true;
+            btn.textContent = 'Subiendo factura…';
+            factura_url = await uploadFactura(fileInput.files[0], mov?.id || generateId());
+          } catch (err) {
+            console.error('Error al subir factura:', err);
+            showToast('No se pudo subir la factura. El gasto se guardará sin ella.', 'warning');
+          }
+          btn.disabled = false;
+        }
+      }
+
+      const data = {
+        fecha, monto, concepto,
+        subcontratista: subcon,
+        status, tipo, proyecto_id: proyectoId,
+        categoria,
+        incluye_iva,
+        factura_url,
+      };
 
       if (mov) {
         updateItem(KEYS.PROY_MOVIMIENTOS, id, data);
@@ -336,6 +489,7 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
       closeModal();
       refreshDetalleKPIs(proyectoId);
       refreshDetalleTable(proyectoId);
+      refreshDetalleCharts(proyectoId);
     },
   });
 }
@@ -394,6 +548,202 @@ function abrirModalRecibirSOGRUB(proyectoId) {
 }
 
 // =====================================================
+// MODAL: PROVEEDORES DEL PROYECTO
+// Importar de global, exportar a global, gestionar
+// =====================================================
+function abrirModalProveedoresProyecto(proyectoId) {
+  const body = document.createElement('div');
+  body.style.cssText = 'display:flex;flex-direction:column;gap:14px';
+
+  function renderContenido() {
+    const provProy = (getCollection(KEYS.PROY_PROVEEDORES) ?? [])
+      .filter(p => p.proyecto_id === proyectoId);
+
+    body.innerHTML = `
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+        <button class="btn btn-secondary btn-sm" id="prov-importar">⬇ Importar de Global</button>
+        <button class="btn btn-secondary btn-sm" id="prov-exportar">⬆ Exportar a Global</button>
+        <button class="btn btn-primary btn-sm" id="prov-nuevo">＋ Nuevo proveedor</button>
+      </div>
+      ${provProy.length === 0
+        ? '<p class="text-muted text-sm">Sin proveedores. Importa de la lista global o agrega uno nuevo.</p>'
+        : `<div class="prov-list">
+            ${provProy.map(p => `
+              <div class="fondo-item">
+                <span class="fondo-nombre">${p.nombre}</span>
+                <button class="btn btn-ghost btn-icon btn-del-prov" data-id="${p.id}" title="Eliminar">✕</button>
+              </div>
+            `).join('')}
+          </div>`
+      }
+    `;
+
+    // Import from global
+    body.querySelector('#prov-importar').addEventListener('click', () => {
+      abrirModalImportarProveedores(proyectoId, () => renderContenido());
+    });
+
+    // Export to global
+    body.querySelector('#prov-exportar').addEventListener('click', () => {
+      abrirModalExportarProveedores(proyectoId);
+    });
+
+    // New provider
+    body.querySelector('#prov-nuevo').addEventListener('click', () => {
+      abrirModalNuevoProveedorProyecto(proyectoId, () => renderContenido());
+    });
+
+    // Delete
+    body.querySelectorAll('.btn-del-prov').forEach(btn => {
+      btn.addEventListener('click', () => {
+        deleteItem(KEYS.PROY_PROVEEDORES, btn.dataset.id);
+        showToast('Proveedor eliminado del proyecto', 'success');
+        renderContenido();
+      });
+    });
+  }
+
+  renderContenido();
+
+  openModal({
+    title: 'Proveedores del proyecto',
+    body,
+    confirmText: 'Cerrar',
+    onConfirm: () => closeModal(),
+    large: true,
+  });
+}
+
+// ---- Importar proveedores de global a proyecto ----
+function abrirModalImportarProveedores(proyectoId, onDone) {
+  const globales = getCollection(KEYS.PROVEEDORES) ?? [];
+  const yaEnProy = (getCollection(KEYS.PROY_PROVEEDORES) ?? [])
+    .filter(p => p.proyecto_id === proyectoId)
+    .map(p => p.nombre);
+
+  const disponibles = globales.filter(g => !yaEnProy.includes(g.nombre));
+
+  if (disponibles.length === 0) {
+    showToast('No hay proveedores nuevos en la lista global', 'info');
+    return;
+  }
+
+  const body = document.createElement('div');
+  body.style.cssText = 'display:flex;flex-direction:column;gap:10px';
+  body.innerHTML = `
+    <p class="text-muted text-sm">Selecciona los proveedores a importar al proyecto:</p>
+    ${disponibles.map(g => `
+      <label class="prov-check-item">
+        <input type="checkbox" value="${g.id}" data-nombre="${g.nombre}">
+        <span>${g.nombre}</span>
+      </label>
+    `).join('')}
+  `;
+
+  openModal({
+    title: 'Importar proveedores',
+    body,
+    confirmText: 'Importar seleccionados',
+    onConfirm: () => {
+      const checks = body.querySelectorAll('input[type="checkbox"]:checked');
+      let count = 0;
+      checks.forEach(ch => {
+        addItem(KEYS.PROY_PROVEEDORES, {
+          proyecto_id: proyectoId,
+          nombre: ch.dataset.nombre,
+          proveedor_global_id: ch.value,
+        });
+        count++;
+      });
+      closeModal();
+      showToast(`${count} proveedor(es) importado(s)`, 'success');
+      if (onDone) setTimeout(() => abrirModalProveedoresProyecto(proyectoId), 100);
+    },
+  });
+}
+
+// ---- Exportar proveedores de proyecto a global ----
+function abrirModalExportarProveedores(proyectoId) {
+  const provProy = (getCollection(KEYS.PROY_PROVEEDORES) ?? [])
+    .filter(p => p.proyecto_id === proyectoId);
+  const globales = (getCollection(KEYS.PROVEEDORES) ?? []).map(g => g.nombre);
+
+  const noEnGlobal = provProy.filter(p => !globales.includes(p.nombre));
+
+  if (noEnGlobal.length === 0) {
+    showToast('Todos los proveedores ya están en la lista global', 'info');
+    return;
+  }
+
+  const body = document.createElement('div');
+  body.style.cssText = 'display:flex;flex-direction:column;gap:10px';
+  body.innerHTML = `
+    <p class="text-muted text-sm">Selecciona los proveedores a exportar a la lista global:</p>
+    ${noEnGlobal.map(p => `
+      <label class="prov-check-item">
+        <input type="checkbox" value="${p.id}" data-nombre="${p.nombre}">
+        <span>${p.nombre}</span>
+      </label>
+    `).join('')}
+  `;
+
+  openModal({
+    title: 'Exportar a lista global',
+    body,
+    confirmText: 'Exportar seleccionados',
+    onConfirm: () => {
+      const checks = body.querySelectorAll('input[type="checkbox"]:checked');
+      let count = 0;
+      checks.forEach(ch => {
+        addItem(KEYS.PROVEEDORES, {
+          nombre: ch.dataset.nombre,
+          telefono: '',
+          email: '',
+          rfc: '',
+          notas: '',
+        });
+        count++;
+      });
+      closeModal();
+      showToast(`${count} proveedor(es) exportado(s) a la lista global`, 'success');
+    },
+  });
+}
+
+// ---- Nuevo proveedor directo en proyecto ----
+function abrirModalNuevoProveedorProyecto(proyectoId, onDone) {
+  const body = document.createElement('div');
+  body.style.cssText = 'display:flex;flex-direction:column;gap:14px';
+  body.innerHTML = `
+    <div class="form-group">
+      <label class="form-label" for="np-nombre">Nombre del proveedor</label>
+      <input type="text" id="np-nombre" class="form-input" placeholder="Ej: Ferretería Cumbres">
+    </div>
+  `;
+
+  openModal({
+    title: 'Nuevo proveedor',
+    body,
+    confirmText: 'Agregar',
+    onConfirm: () => {
+      const nombre = body.querySelector('#np-nombre').value.trim();
+      if (!nombre) {
+        showToast('Escribe un nombre', 'warning');
+        return;
+      }
+      addItem(KEYS.PROY_PROVEEDORES, {
+        proyecto_id: proyectoId,
+        nombre,
+        proveedor_global_id: null,
+      });
+      closeModal();
+      showToast(`Proveedor "${nombre}" agregado`, 'success');
+      if (onDone) setTimeout(() => abrirModalProveedoresProyecto(proyectoId), 100);
+    },
+  });
+}
+
+// =====================================================
 // MODAL: EDITAR PROYECTO (desde detalle)
 // =====================================================
 function abrirModalEditarProyecto(proyectoId) {
@@ -416,6 +766,7 @@ function confirmarEliminarMovProy(id, proyectoId) {
       showToast('Movimiento eliminado', 'success');
       refreshDetalleKPIs(proyectoId);
       refreshDetalleTable(proyectoId);
+      refreshDetalleCharts(proyectoId);
     },
   });
 }

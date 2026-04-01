@@ -24,13 +24,17 @@ const _db    = firebase.database();
 let _fbReady    = false;   // true cuando la primera carga de datos terminó
 let _fbOnline   = false;   // true cuando hay conexión activa
 
+// Firebase Storage
+const _storage = firebase.storage();
+
 // Cache local en memoria (espejo de Firebase)
-// Estructura: { sogrub_config:{}, sogrub_movimientos:[], sogrub_proyectos:[], sogrub_proy_movimientos:[] }
 const _cache = {
   sogrub_config:           null,
   sogrub_movimientos:      null,
   sogrub_proyectos:        null,
   sogrub_proy_movimientos: null,
+  sogrub_proveedores:      null,
+  sogrub_proy_proveedores: null,
 };
 
 // Callbacks suscritos a cambios (vista actual los registra)
@@ -119,6 +123,8 @@ const KEYS = Object.freeze({
   MOVIMIENTOS:      'sogrub_movimientos',
   PROYECTOS:        'sogrub_proyectos',
   PROY_MOVIMIENTOS: 'sogrub_proy_movimientos',
+  PROVEEDORES:      'sogrub_proveedores',
+  PROY_PROVEEDORES: 'sogrub_proy_proveedores',
 });
 
 // =====================================================
@@ -131,6 +137,8 @@ const _COLECCIONES = [
   'sogrub_movimientos',
   'sogrub_proyectos',
   'sogrub_proy_movimientos',
+  'sogrub_proveedores',
+  'sogrub_proy_proveedores',
 ];
 
 let _loadedCount = 0;
@@ -210,11 +218,12 @@ function _onRemoteChange(changedKey) {
   if (typeof _activeView === 'undefined') return;
 
   const rerender = {
-    dashboard:  () => renderDashboard(),
-    caja:       () => renderCaja(),
-    proyectos:  () => renderProyectos(),
-    detalle:    () => renderDetalle(_activeProyecto),
-    importar:   () => {},   // importar no necesita re-render reactivo
+    dashboard:   () => renderDashboard(),
+    caja:        () => renderCaja(),
+    proyectos:   () => renderProyectos(),
+    detalle:     () => renderDetalle(_activeProyecto),
+    proveedores: () => renderProveedores(),
+    importar:    () => {},   // importar no necesita re-render reactivo
   };
 
   rerender[_activeView]?.();
@@ -295,6 +304,15 @@ async function initializeData() {
     // Reintentar en 3s
     setTimeout(initializeData, 3000);
   }
+}
+
+// =====================================================
+// FIREBASE STORAGE — Upload de facturas (PDF)
+// =====================================================
+async function uploadFactura(file, movimientoId) {
+  const ref = _storage.ref(`facturas/${movimientoId}_${file.name}`);
+  const snap = await ref.put(file);
+  return snap.ref.getDownloadURL();
 }
 
 // _initApp se define en app.js y es llamado por _onFirebaseReady

@@ -1279,3 +1279,142 @@ img, svg { display: block; }
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
+
+/* =====================================================
+   BAR CHARTS (CSS-based)
+   ===================================================== */
+.bar-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.bar-chart-row {
+  display: grid;
+  grid-template-columns: 140px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  font-size: 12px;
+}
+@media (max-width: 600px) {
+  .bar-chart-row {
+    grid-template-columns: 100px 1fr auto;
+  }
+}
+.bar-chart-label {
+  color: var(--text);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bar-chart-track {
+  height: 18px;
+  background: var(--surface2);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.bar-chart-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 500ms ease;
+  min-width: 2px;
+}
+.bar-chart-value {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  min-width: 100px;
+  text-align: right;
+}
+.chart-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 8px;
+}
+
+/* Charts grid (2 cols) */
+.charts-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+@media (max-width: 900px) {
+  .charts-grid { grid-template-columns: 1fr; }
+}
+
+/* =====================================================
+   IVA INFO BUTTON + DESGLOSE
+   ===================================================== */
+.btn-iva-info {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--accent);
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 6px;
+  transition: background var(--transition), border-color var(--transition);
+  vertical-align: middle;
+  line-height: 1;
+  padding: 0;
+}
+.btn-iva-info:hover {
+  background: var(--accent-glow);
+  border-color: var(--accent);
+}
+.iva-desglose {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 8px 10px;
+  background: var(--surface2);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+.iva-desglose strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* =====================================================
+   PROVEEDORES — Checkbox items
+   ===================================================== */
+.prov-check-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: border-color var(--transition);
+  font-size: 13px;
+}
+.prov-check-item:hover {
+  border-color: var(--accent);
+}
+.prov-check-item input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 16px;
+  height: 16px;
+}
+.prov-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
