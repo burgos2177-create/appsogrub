@@ -3,7 +3,7 @@
    ===================================================== */
 'use strict';
 
-const _detalleState = { filtroTipo: 'todos', filtroStatus: 'Todos' };
+const _detalleState = { filtroTipo: 'todos', filtroStatus: 'Todos', filtroCategoria: 'Todas', filtroProveedor: 'Todos' };
 
 function renderDetalle(proyectoId) {
   const root = document.getElementById('detalle-root');
@@ -180,9 +180,14 @@ function refreshDetalleTable(proyectoId) {
   const wrap = document.getElementById('detalle-table-wrap');
   if (!wrap) return;
 
+  // Proveedores únicos del proyecto para el filtro
+  const allMovs      = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? []).filter(m => m.proyecto_id === proyectoId);
+  const proveedores  = [...new Set(allMovs.map(m => m.subcontratista).filter(Boolean))].sort();
+
   // Filtros toolbar
   const filterBar = document.createElement('div');
   filterBar.className = 'toolbar mb-16';
+  filterBar.style.flexWrap = 'wrap';
   filterBar.innerHTML = `
     <span class="text-muted text-sm">Filtrar:</span>
     <select class="filter-select" id="dt-filter-tipo">
@@ -190,6 +195,14 @@ function refreshDetalleTable(proyectoId) {
       <option value="gasto">Gastos</option>
       <option value="abono_cliente">Abonos cliente</option>
       <option value="transferencia_sogrub">De SOGRUB</option>
+    </select>
+    <select class="filter-select" id="dt-filter-categoria">
+      <option value="Todas">Todas las categorías</option>
+      ${CATEGORIAS.map(c => `<option value="${c}">${c}</option>`).join('')}
+    </select>
+    <select class="filter-select" id="dt-filter-proveedor">
+      <option value="Todos">Todos los proveedores</option>
+      ${proveedores.map(p => `<option value="${p}">${p}</option>`).join('')}
     </select>
     <select class="filter-select" id="dt-filter-status">
       <option value="Todos">Todos los status</option>
@@ -202,11 +215,21 @@ function refreshDetalleTable(proyectoId) {
   wrap.appendChild(filterBar);
 
   // Restore filter values
-  filterBar.querySelector('#dt-filter-tipo').value   = _detalleState.filtroTipo;
-  filterBar.querySelector('#dt-filter-status').value = _detalleState.filtroStatus;
+  filterBar.querySelector('#dt-filter-tipo').value       = _detalleState.filtroTipo;
+  filterBar.querySelector('#dt-filter-categoria').value  = _detalleState.filtroCategoria;
+  filterBar.querySelector('#dt-filter-proveedor').value  = _detalleState.filtroProveedor;
+  filterBar.querySelector('#dt-filter-status').value     = _detalleState.filtroStatus;
 
   filterBar.querySelector('#dt-filter-tipo').addEventListener('change', e => {
     _detalleState.filtroTipo = e.target.value;
+    renderDetalleTableOnly(proyectoId, wrap);
+  });
+  filterBar.querySelector('#dt-filter-categoria').addEventListener('change', e => {
+    _detalleState.filtroCategoria = e.target.value;
+    renderDetalleTableOnly(proyectoId, wrap);
+  });
+  filterBar.querySelector('#dt-filter-proveedor').addEventListener('change', e => {
+    _detalleState.filtroProveedor = e.target.value;
     renderDetalleTableOnly(proyectoId, wrap);
   });
   filterBar.querySelector('#dt-filter-status').addEventListener('change', e => {
@@ -226,6 +249,12 @@ function renderDetalleTableOnly(proyectoId, wrap) {
 
   if (_detalleState.filtroTipo !== 'todos') {
     movs = movs.filter(m => m.tipo === _detalleState.filtroTipo);
+  }
+  if (_detalleState.filtroCategoria !== 'Todas') {
+    movs = movs.filter(m => m.categoria === _detalleState.filtroCategoria);
+  }
+  if (_detalleState.filtroProveedor !== 'Todos') {
+    movs = movs.filter(m => m.subcontratista === _detalleState.filtroProveedor);
   }
   if (_detalleState.filtroStatus !== 'Todos') {
     movs = movs.filter(m => m.status === _detalleState.filtroStatus);
