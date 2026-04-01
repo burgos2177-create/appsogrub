@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "SOGRUB Bitácora (npx serve)",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", ".", "--listen", "3000", "--no-clipboard"],
+      "port": 3000
+    },
+    {
+      "name": "SOGRUB Bitácora (Python http.server)",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "3001"],
+      "port": 3001
+    }
+  ]
+}

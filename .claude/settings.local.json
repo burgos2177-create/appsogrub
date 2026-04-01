@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__Claude_Preview__preview_start",
+      "Bash(python \"C:\\\\Users\\\\Dell\\\\AppData\\\\Roaming\\\\Claude\\\\local-agent-mode-sessions\\\\skills-plugin\\\\db7d6f5b-6137-4578-90d8-9b2d8c239607\\\\427fad30-331b-4964-bdf0-6c0e18112a1a\\\\skills\\\\xlsx\\\\scripts\\\\recalc.py\" --version)",
+      "Bash(py --version)",
+      "Bash(pip install:*)",
+      "Bash(py -m pip install openpyxl pandas)",
+      "Bash(py -c \":*)",
+      "Bash(gh auth:*)",
+      "Bash(git config:*)"
+    ]
+  }
+}

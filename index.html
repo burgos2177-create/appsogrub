@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SOGRUB Bitácora</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+
+  <!-- ===================== HEADER ===================== -->
+  <header class="app-header">
+    <div class="header-brand">
+      <svg class="brand-logo" viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <path d="M4 38 L4 18 L17 9 L17 29 Z" fill="#1a9fd4"/>
+        <path d="M20 38 L20 18 L33 9 L33 29 Z" fill="#1a9fd4" opacity="0.65"/>
+        <line x1="4" y1="9" x2="33" y2="9" stroke="#1a9fd4" stroke-width="2.5" stroke-linecap="round" opacity="0.4"/>
+      </svg>
+      <div class="brand-text">
+        <span class="brand-name">SOGRUB</span>
+        <span class="brand-sub">Bitácora Financiera</span>
+      </div>
+    </div>
+
+    <nav class="main-nav" role="navigation" aria-label="Navegación principal">
+      <button class="nav-tab active" data-view="dashboard">Dashboard</button>
+      <button class="nav-tab" data-view="caja">Caja SOGRUB</button>
+      <button class="nav-tab" data-view="proyectos">Proyectos</button>
+      <button class="nav-tab" data-view="importar">Importar</button>
+    </nav>
+
+    <!-- Indicador de conexión Firebase -->
+    <div id="db-status" class="db-status db-status--connecting" title="Estado de conexión con Firebase">
+      <span class="db-status__dot"></span>
+      <span class="db-status__label">Conectando…</span>
+    </div>
+  </header>
+
+  <!-- ===================== LOADING SCREEN ===================== -->
+  <div id="app-loading" class="app-loading">
+    <div class="app-loading__inner">
+      <svg viewBox="0 0 44 44" fill="none" width="48" height="48">
+        <path d="M4 38 L4 18 L17 9 L17 29 Z" fill="#1a9fd4"/>
+        <path d="M20 38 L20 18 L33 9 L33 29 Z" fill="#1a9fd4" opacity="0.65"/>
+      </svg>
+      <span class="app-loading__name">SOGRUB</span>
+      <span class="app-loading__msg" id="loading-msg">Conectando con Firebase…</span>
+      <div class="app-loading__spinner"></div>
+    </div>
+  </div>
+
+  <!-- ===================== MAIN ===================== -->
+  <main class="app-main" id="app-main" style="display:none">
+
+    <section id="view-dashboard" class="view active"><div id="dashboard-root"></div></section>
+    <section id="view-caja"      class="view"><div id="caja-root"></div></section>
+    <section id="view-proyectos" class="view"><div id="proyectos-root"></div></section>
+    <section id="view-detalle"   class="view"><div id="detalle-root"></div></section>
+    <section id="view-importar"  class="view"><div id="importar-root"></div></section>
+
+  </main>
+
+  <!-- ===================== MODAL ===================== -->
+  <div id="modal-overlay" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-card" id="modal-card">
+      <div class="modal-header">
+        <h3 id="modal-title">Modal</h3>
+        <button class="modal-close-btn" id="modal-close-btn" aria-label="Cerrar modal">&times;</button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+      <div class="modal-footer" id="modal-footer"></div>
+    </div>
+  </div>
+
+  <!-- ===================== TOASTS ===================== -->
+  <div id="toast-container" aria-live="polite" aria-atomic="false"></div>
+
+  <!-- ===================== FIREBASE SDK (CDN compat) ===================== -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
+
+  <!-- ===================== APP SCRIPTS ===================== -->
+  <script src="js/firebase.js"></script>
+  <script src="js/storage.js"></script>
+  <script src="js/calculations.js"></script>
+  <script src="js/components.js"></script>
+  <script src="js/views/dashboard.js"></script>
+  <script src="js/views/caja.js"></script>
+  <script src="js/views/proyectos.js"></script>
+  <script src="js/views/detalle.js"></script>
+  <script src="js/views/importar.js"></script>
+  <script src="js/app.js"></script>
+
+</body>
+</html>

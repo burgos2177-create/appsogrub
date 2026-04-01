@@ -1,0 +1,25 @@
+# Dependencias / build
+node_modules/
+dist/
+.cache/
+
+# Entorno local
+.env
+.env.local
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editores
+.vscode/settings.json
+*.suo
+*.user
+
+# Logs
+*.log
+npm-debug.log*
+
+# Seed (datos históricos — ya están en Firebase)
+js/seed.js
