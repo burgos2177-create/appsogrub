@@ -268,8 +268,8 @@ function renderDetalleTableOnly(proyectoId, wrap) {
             const ivaLabel = m.tipo === 'gasto'
               ? (m.incluye_iva ? '<span class="badge badge-success badge-no-dot" style="font-size:10px">Con IVA</span>' : '<span class="badge badge-muted badge-no-dot" style="font-size:10px">Sin IVA</span>')
               : '—';
-            const facturaIcon = m.factura_url
-              ? `<a href="${m.factura_url}" target="_blank" class="btn btn-ghost btn-icon" title="Ver factura" style="font-size:12px">📄</a>`
+            const facturaIcon = m.factura_nombre
+              ? `<span class="badge badge-muted badge-no-dot" title="${m.factura_nombre}" style="font-size:10px;cursor:default">📄 Factura</span>`
               : '';
             return `
               <tr>
@@ -377,7 +377,8 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
     <div class="form-group hidden" id="pm-factura-group">
       <label class="form-label" for="pm-factura">Factura PDF <span class="text-dim">(opcional)</span></label>
       <input type="file" id="pm-factura" class="form-input" accept=".pdf" style="padding:6px 10px">
-      ${mov?.factura_url ? `<a href="${mov.factura_url}" target="_blank" class="text-sm" style="color:var(--accent)">📄 Ver factura actual</a>` : ''}
+      ${mov?.factura_nombre ? `<div class="text-sm text-muted" style="margin-top:4px">📄 ${mov.factura_nombre}</div>` : ''}
+      <div id="pm-ocr-result" class="ocr-result hidden"></div>
     </div>
     <div class="form-group">
       <label class="form-label">Status</label>
@@ -399,7 +400,7 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
     `}
   `;
 
-  // Show/hide factura field based on IVA toggle
+  // Show/hide factura field + wire OCR on file selection
   if (esGasto) {
     setTimeout(() => {
       const toggleIVA = () => {
@@ -410,6 +411,80 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
       body.querySelectorAll('input[name="pm-iva"]').forEach(r =>
         r.addEventListener('change', toggleIVA));
       toggleIVA();
+
+      // OCR: when a PDF is selected, extract the amount
+      const fileInput  = body.querySelector('#pm-factura');
+      const ocrResult  = body.querySelector('#pm-ocr-result');
+      const montoInput = body.querySelector('#pm-monto');
+
+      fileInput?.addEventListener('change', async () => {
+        if (!fileInput.files?.length) return;
+        const file = fileInput.files[0];
+
+        ocrResult.className = 'ocr-result ocr-loading';
+        ocrResult.textContent = '🔍 Analizando factura…';
+        ocrResult.classList.remove('hidden');
+
+        try {
+          const montoOCR = await leerMontoFactura(file);
+
+          if (montoOCR === null) {
+            ocrResult.className = 'ocr-result ocr-warn';
+            ocrResult.textContent = '⚠ No se pudo detectar el monto en el PDF';
+            return;
+          }
+
+          const montoIngresado = parseFloat(montoInput.value);
+
+          if (!montoInput.value || isNaN(montoIngresado)) {
+            // Sin monto ingresado → sugerir
+            ocrResult.className = 'ocr-result ocr-suggest';
+            ocrResult.innerHTML = `💡 La factura indica <strong>${formatMXN(montoOCR)}</strong>. <button class="btn-ocr-usar" style="color:var(--accent);background:none;border:none;cursor:pointer;font-weight:600;font-size:12px">Usar este monto</button>`;
+            ocrResult.querySelector('.btn-ocr-usar')?.addEventListener('click', () => {
+              montoInput.value = montoOCR.toFixed(2);
+              ocrResult.className = 'ocr-result ocr-ok';
+              ocrResult.textContent = `✓ Monto de factura coincide con monto ingresado (${formatMXN(montoOCR)})`;
+            });
+          } else {
+            const diff = Math.abs(montoOCR - montoIngresado);
+            const pct  = montoIngresado > 0 ? diff / montoIngresado : 1;
+            if (pct < 0.01) {
+              // Coincide (margen < 1%)
+              ocrResult.className = 'ocr-result ocr-ok';
+              ocrResult.textContent = `✓ Monto de factura coincide con monto ingresado (${formatMXN(montoOCR)})`;
+            } else {
+              // No coincide
+              ocrResult.className = 'ocr-result ocr-mismatch';
+              ocrResult.innerHTML = `⚠ El monto ingresado (${formatMXN(montoIngresado)}) no coincide con la factura (${formatMXN(montoOCR)})`;
+            }
+          }
+
+          // Guardar monto OCR en el input como data attribute para usarlo al guardar
+          fileInput.dataset.ocrMonto = montoOCR;
+
+        } catch (err) {
+          console.error('[OCR]', err);
+          ocrResult.className = 'ocr-result ocr-warn';
+          ocrResult.textContent = '⚠ Error al leer el PDF — el gasto se guardará sin verificación';
+        }
+      });
+
+      // Re-evaluar al cambiar monto manualmente (si ya hay un OCR result)
+      montoInput?.addEventListener('input', () => {
+        const montoOCR = parseFloat(fileInput?.dataset.ocrMonto);
+        if (!ocrResult || ocrResult.classList.contains('hidden') || isNaN(montoOCR)) return;
+        const montoIngresado = parseFloat(montoInput.value);
+        if (isNaN(montoIngresado)) return;
+        const diff = Math.abs(montoOCR - montoIngresado);
+        const pct  = montoIngresado > 0 ? diff / montoIngresado : 1;
+        if (pct < 0.01) {
+          ocrResult.className = 'ocr-result ocr-ok';
+          ocrResult.textContent = `✓ Monto de factura coincide con monto ingresado (${formatMXN(montoOCR)})`;
+        } else {
+          ocrResult.className = 'ocr-result ocr-mismatch';
+          ocrResult.innerHTML = `⚠ El monto ingresado (${formatMXN(montoIngresado)}) no coincide con la factura (${formatMXN(montoOCR)})`;
+        }
+      });
     }, 0);
   }
 
@@ -452,20 +527,15 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
 
       const monto = esGasto ? -montoRaw : montoRaw;
 
-      // Handle factura upload
-      let factura_url = mov?.factura_url ?? '';
+      // Guardar referencia al PDF (nombre de archivo) sin subir a Storage
+      let factura_nombre = mov?.factura_nombre ?? '';
+      let factura_monto_ocr = mov?.factura_monto_ocr ?? null;
       if (esGasto && incluye_iva) {
         const fileInput = body.querySelector('#pm-factura');
         if (fileInput?.files?.length > 0) {
-          try {
-            btn.disabled = true;
-            btn.textContent = 'Subiendo factura…';
-            factura_url = await uploadFactura(fileInput.files[0], mov?.id || generateId());
-          } catch (err) {
-            console.error('Error al subir factura:', err);
-            showToast('No se pudo subir la factura. El gasto se guardará sin ella.', 'warning');
-          }
-          btn.disabled = false;
+          factura_nombre = fileInput.files[0].name;
+          const ocrVal = parseFloat(fileInput.dataset.ocrMonto);
+          if (!isNaN(ocrVal)) factura_monto_ocr = ocrVal;
         }
       }
 
@@ -475,7 +545,8 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
         status, tipo, proyecto_id: proyectoId,
         categoria,
         incluye_iva,
-        factura_url,
+        factura_nombre,
+        factura_monto_ocr,
       };
 
       if (mov) {

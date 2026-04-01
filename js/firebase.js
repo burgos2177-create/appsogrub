@@ -24,9 +24,6 @@ const _db    = firebase.database();
 let _fbReady    = false;   // true cuando la primera carga de datos terminó
 let _fbOnline   = false;   // true cuando hay conexión activa
 
-// Firebase Storage
-const _storage = firebase.storage();
-
 // Cache local en memoria (espejo de Firebase)
 const _cache = {
   sogrub_config:           null,
@@ -304,15 +301,6 @@ async function initializeData() {
     // Reintentar en 3s
     setTimeout(initializeData, 3000);
   }
-}
-
-// =====================================================
-// FIREBASE STORAGE — Upload de facturas (PDF)
-// =====================================================
-async function uploadFactura(file, movimientoId) {
-  const ref = _storage.ref(`facturas/${movimientoId}_${file.name}`);
-  const snap = await ref.put(file);
-  return snap.ref.getDownloadURL();
 }
 
 // _initApp se define en app.js y es llamado por _onFirebaseReady

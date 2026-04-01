@@ -1418,3 +1418,44 @@ img, svg { display: block; }
   flex-direction: column;
   gap: 6px;
 }
+
+/* =====================================================
+   OCR RESULT — validación de factura
+   ===================================================== */
+.ocr-result {
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 500;
+  margin-top: 6px;
+  line-height: 1.5;
+  border: 1px solid transparent;
+  transition: all var(--transition);
+}
+.ocr-loading {
+  background: var(--surface2);
+  color: var(--text-muted);
+  border-color: var(--border);
+  animation: shimmer 1.5s infinite;
+  background-size: 200% 100%;
+}
+.ocr-ok {
+  background: var(--success-glow);
+  color: var(--success);
+  border-color: rgba(76,175,130,0.3);
+}
+.ocr-mismatch {
+  background: var(--warning-glow);
+  color: var(--warning);
+  border-color: rgba(224,167,82,0.3);
+}
+.ocr-warn {
+  background: rgba(138,138,138,0.1);
+  color: var(--text-muted);
+  border-color: var(--border);
+}
+.ocr-suggest {
+  background: var(--accent-glow);
+  color: var(--accent);
+  border-color: rgba(26,159,212,0.3);
+}
