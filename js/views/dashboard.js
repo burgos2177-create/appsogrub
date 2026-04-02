@@ -34,10 +34,63 @@ function renderDashboard() {
   kpiGrid.innerHTML = `
     ${kpiCard('💳', 'Saldo Mifel',               saldoMifel,     'Cuenta principal SOGRUB')}
     ${kpiCard('🌐', 'Saldo Global',               saldoGlobal,    'Mifel + fondos de inversión')}
-    ${kpiCard('🔒', 'Comprometido en proyectos',  comprometido,   'Asignado a proyectos activos', false)}
+    <div class="kpi-card">
+      <div class="kpi-label">🔒 Comprometido en proyectos</div>
+      <div class="kpi-value text-warning">${formatMXN(comprometido)}</div>
+      <div class="kpi-sub" style="display:flex;align-items:center;justify-content:space-between">
+        <span>Asignado a proyectos activos</span>
+        <button class="btn-comprometido-detail" title="Ver desglose por proyecto" style="background:none;border:1px solid var(--border);border-radius:4px;color:var(--accent);font-size:11px;font-weight:600;padding:2px 7px;cursor:pointer;transition:background var(--transition)">
+          Desglose
+        </button>
+      </div>
+    </div>
     ${kpiCard('✅', 'Disponible real',             disponibleReal, 'Mifel libre de compromisos')}
   `;
   root.appendChild(kpiGrid);
+
+  // Botón desglose comprometido
+  kpiGrid.querySelector('.btn-comprometido-detail').addEventListener('click', () => {
+    const proyectos = (getCollection(KEYS.PROYECTOS) ?? []).filter(p => p.estado === 'activo');
+    const filas = proyectos
+      .map(p => ({ nombre: p.nombre, saldo: calcSaldoCajaProyecto(p.id) }))
+      .filter(r => r.saldo > 0)
+      .sort((a, b) => b.saldo - a.saldo);
+
+    const body = document.createElement('div');
+    body.style.cssText = 'display:flex;flex-direction:column;gap:0';
+
+    if (filas.length === 0) {
+      body.innerHTML = '<p class="text-muted text-sm" style="padding:8px 0">Ningún proyecto activo tiene saldo positivo.</p>';
+    } else {
+      const total = filas.reduce((a, r) => a + r.saldo, 0);
+      body.innerHTML = `
+        <div style="display:flex;flex-direction:column;gap:6px">
+          ${filas.map(r => {
+            const pct = total > 0 ? (r.saldo / total * 100).toFixed(1) : '0';
+            return `
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm)">
+                <span style="font-weight:500;font-size:13px">${r.nombre}</span>
+                <div style="display:flex;align-items:center;gap:10px">
+                  <span style="font-size:11px;color:var(--text-muted)">${pct}%</span>
+                  <span style="font-weight:600;font-variant-numeric:tabular-nums;color:var(--warning)">${formatMXN(r.saldo)}</span>
+                </div>
+              </div>`;
+          }).join('')}
+          <div style="display:flex;justify-content:space-between;padding:10px 14px;border-top:1px solid var(--border);margin-top:4px">
+            <span style="font-size:12px;color:var(--text-muted);font-weight:600">TOTAL</span>
+            <span style="font-weight:700;font-variant-numeric:tabular-nums;color:var(--warning)">${formatMXN(total)}</span>
+          </div>
+        </div>
+      `;
+    }
+
+    openModal({
+      title: '🔒 Comprometido por proyecto',
+      body,
+      confirmText: 'Cerrar',
+      onConfirm: () => closeModal(),
+    });
+  });
 
   // ---- Fondos de Inversión ----
   root.appendChild(renderFondosCard());
