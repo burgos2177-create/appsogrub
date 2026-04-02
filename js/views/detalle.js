@@ -5,6 +5,9 @@
 
 const _detalleState = { filtroTipo: 'todos', filtroStatus: 'Todos', filtroCategoria: 'Todas', filtroProveedor: 'Todos' };
 
+const _driveIcon = (size = 12) =>
+  `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="currentColor"><path d="M4.433 22l-2.775-4.8 5.775-10h5.55L4.433 22zm9.042-10H22l-4.8 8.35-2.725-4.675L19.567 12h-6.092zm-1.15-2L9.55 5.65l2.725-4.65L19.567 12h-7.242zM7.258 5.65L4.433 10.8l2.825-5.15 2.725 4.675L7.258 5.65z"/></svg>`;
+
 function renderDetalle(proyectoId) {
   const root = document.getElementById('detalle-root');
   root.innerHTML = '';
@@ -321,17 +324,17 @@ function renderDetalleTableOnly(proyectoId, wrap) {
             const ivaLabel = m.tipo === 'gasto'
               ? (m.incluye_iva ? '<span class="badge badge-success badge-no-dot" style="font-size:10px">Con IVA</span>' : '<span class="badge badge-muted badge-no-dot" style="font-size:10px">Sin IVA</span>')
               : '—';
-            const facturaIcon = m.factura_drive_url
-              ? `<a href="${m.factura_drive_url}" target="_blank" rel="noopener noreferrer"
-                    class="badge badge-info badge-no-dot drive-badge"
-                    title="Ver ${m.factura_nombre ?? 'factura'} en Drive"
-                    style="font-size:10px;text-decoration:none;display:inline-flex;align-items:center;gap:3px">
-                    <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M4.433 22l-2.775-4.8 5.775-10h5.55L4.433 22zm9.042-10H22l-4.8 8.35-2.725-4.675L19.567 12h-6.092zm-1.15-2L9.55 5.65l2.725-4.65L19.567 12h-7.242zM7.258 5.65L4.433 10.8l2.825-5.15 2.725 4.675L7.258 5.65z"/></svg>
-                    Ver factura
-                  </a>`
-              : m.factura_nombre
-                ? `<span class="badge badge-muted badge-no-dot" title="${m.factura_nombre}" style="font-size:10px;cursor:default">📄 ${m.factura_nombre.length > 18 ? m.factura_nombre.substring(0,15) + '…' : m.factura_nombre}</span>`
-                : '';
+            const _driveBadge = (url, label) =>
+              `<a href="${url}" target="_blank" rel="noopener noreferrer"
+                  class="badge badge-info badge-no-dot drive-badge"
+                  style="font-size:10px;text-decoration:none;display:inline-flex;align-items:center;gap:3px">
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M4.433 22l-2.775-4.8 5.775-10h5.55L4.433 22zm9.042-10H22l-4.8 8.35-2.725-4.675L19.567 12h-6.092zm-1.15-2L9.55 5.65l2.725-4.65L19.567 12h-7.242zM7.258 5.65L4.433 10.8l2.825-5.15 2.725 4.675L7.258 5.65z"/></svg>
+                  ${label}
+                </a>`;
+            const facturaIcon = [
+              m.factura_drive_url ? _driveBadge(m.factura_drive_url, 'PDF') : m.factura_nombre ? `<span class="badge badge-muted badge-no-dot" style="font-size:10px">📄 PDF</span>` : '',
+              m.factura_xml_url   ? _driveBadge(m.factura_xml_url,   'XML') : m.factura_xml_nombre ? `<span class="badge badge-muted badge-no-dot" style="font-size:10px">📄 XML</span>` : '',
+            ].filter(Boolean).join(' ');
             return `
               <tr>
                 <td class="text-muted">${formatDate(m.fecha)}</td>
@@ -436,21 +439,37 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
       </div>
     </div>
     <div class="form-group hidden" id="pm-factura-group">
-      <label class="form-label" for="pm-factura">Factura PDF / XML <span class="text-dim">(opcional)</span></label>
-      <input type="file" id="pm-factura" class="form-input" accept=".pdf,.xml" style="padding:6px 10px">
-      ${mov?.factura_drive_url
-        ? `<div style="margin-top:6px;display:flex;align-items:center;gap:6px">
-             <a href="${mov.factura_drive_url}" target="_blank" rel="noopener noreferrer"
-                class="btn btn-secondary btn-sm" style="font-size:11px;display:inline-flex;align-items:center;gap:4px">
-               <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M4.433 22l-2.775-4.8 5.775-10h5.55L4.433 22zm9.042-10H22l-4.8 8.35-2.725-4.675L19.567 12h-6.092zm-1.15-2L9.55 5.65l2.725-4.65L19.567 12h-7.242zM7.258 5.65L4.433 10.8l2.825-5.15 2.725 4.675L7.258 5.65z"/></svg>
-               Ver en Drive
-             </a>
-             <span class="text-sm text-muted">${mov.factura_nombre ?? ''}</span>
-           </div>`
-        : mov?.factura_nombre
-          ? `<div class="text-sm text-muted" style="margin-top:4px">📄 ${mov.factura_nombre}</div>`
-          : ''
-      }
+      <label class="form-label">Factura <span class="text-dim">(opcional)</span></label>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div>
+          <div class="text-sm" style="color:var(--text-muted);margin-bottom:4px;font-weight:500">PDF</div>
+          <input type="file" id="pm-factura-pdf" class="form-input" accept=".pdf" style="padding:6px 10px">
+          ${mov?.factura_drive_url
+            ? `<div style="margin-top:4px;display:flex;align-items:center;gap:6px">
+                 <a href="${mov.factura_drive_url}" target="_blank" rel="noopener noreferrer"
+                    class="btn btn-secondary btn-sm drive-link-btn" style="font-size:11px">
+                   ${_driveIcon(12)} Ver PDF en Drive
+                 </a>
+                 <span class="text-sm text-muted">${mov.factura_nombre ?? ''}</span>
+               </div>`
+            : mov?.factura_nombre ? `<div class="text-sm text-muted" style="margin-top:4px">📄 ${mov.factura_nombre}</div>` : ''
+          }
+        </div>
+        <div>
+          <div class="text-sm" style="color:var(--text-muted);margin-bottom:4px;font-weight:500">XML (CFDI)</div>
+          <input type="file" id="pm-factura-xml" class="form-input" accept=".xml" style="padding:6px 10px">
+          ${mov?.factura_xml_url
+            ? `<div style="margin-top:4px;display:flex;align-items:center;gap:6px">
+                 <a href="${mov.factura_xml_url}" target="_blank" rel="noopener noreferrer"
+                    class="btn btn-secondary btn-sm drive-link-btn" style="font-size:11px">
+                   ${_driveIcon(12)} Ver XML en Drive
+                 </a>
+                 <span class="text-sm text-muted">${mov.factura_xml_nombre ?? ''}</span>
+               </div>`
+            : mov?.factura_xml_nombre ? `<div class="text-sm text-muted" style="margin-top:4px">📄 ${mov.factura_xml_nombre}</div>` : ''
+          }
+        </div>
+      </div>
       <div id="pm-ocr-result" class="ocr-result hidden"></div>
     </div>
     <div class="form-group">
@@ -485,70 +504,66 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
         r.addEventListener('change', toggleIVA));
       toggleIVA();
 
-      // OCR: when a PDF is selected, extract the amount
-      const fileInput  = body.querySelector('#pm-factura');
+      // OCR: leer monto desde XML (preferido) o PDF
+      const pdfInput   = body.querySelector('#pm-factura-pdf');
+      const xmlInput   = body.querySelector('#pm-factura-xml');
       const ocrResult  = body.querySelector('#pm-ocr-result');
       const montoInput = body.querySelector('#pm-monto');
 
-      fileInput?.addEventListener('change', async () => {
-        if (!fileInput.files?.length) return;
-        const file = fileInput.files[0];
+      const _runOCR = async () => {
+        const xmlFile = xmlInput?.files?.[0];
+        const pdfFile = pdfInput?.files?.[0];
+        const file    = xmlFile ?? pdfFile;
+        if (!file) return;
 
         ocrResult.className = 'ocr-result ocr-loading';
-        ocrResult.textContent = '🔍 Analizando factura…';
+        ocrResult.textContent = `🔍 Analizando ${xmlFile ? 'XML' : 'PDF'}…`;
         ocrResult.classList.remove('hidden');
 
         try {
-          const esXML   = esArchivoXML(file);
-          const label   = esXML ? 'XML' : 'PDF';
-          ocrResult.textContent = `🔍 Analizando ${label}…`;
-
           const montoOCR = await leerMontoArchivo(file);
 
           if (montoOCR === null) {
             ocrResult.className = 'ocr-result ocr-warn';
-            ocrResult.textContent = `⚠ No se pudo detectar el monto en el ${label}`;
+            ocrResult.textContent = `⚠ No se pudo detectar el monto en el ${xmlFile ? 'XML' : 'PDF'}`;
             return;
           }
 
           const montoIngresado = parseFloat(montoInput.value);
+          ocrResult.dataset.ocrMonto = montoOCR;
 
           if (!montoInput.value || isNaN(montoIngresado)) {
-            // Sin monto ingresado → sugerir
             ocrResult.className = 'ocr-result ocr-suggest';
             ocrResult.innerHTML = `💡 La factura indica <strong>${formatMXN(montoOCR)}</strong>. <button class="btn-ocr-usar" style="color:var(--accent);background:none;border:none;cursor:pointer;font-weight:600;font-size:12px">Usar este monto</button>`;
             ocrResult.querySelector('.btn-ocr-usar')?.addEventListener('click', () => {
               montoInput.value = montoOCR.toFixed(2);
               ocrResult.className = 'ocr-result ocr-ok';
-              ocrResult.textContent = `✓ Monto de factura coincide con monto ingresado (${formatMXN(montoOCR)})`;
+              ocrResult.textContent = `✓ Monto de factura coincide (${formatMXN(montoOCR)})`;
             });
           } else {
             const diff = Math.abs(montoOCR - montoIngresado);
             const pct  = montoIngresado > 0 ? diff / montoIngresado : 1;
             if (pct < 0.01) {
-              // Coincide (margen < 1%)
               ocrResult.className = 'ocr-result ocr-ok';
-              ocrResult.textContent = `✓ Monto de factura coincide con monto ingresado (${formatMXN(montoOCR)})`;
+              ocrResult.textContent = `✓ Monto coincide con la factura (${formatMXN(montoOCR)})`;
             } else {
-              // No coincide
               ocrResult.className = 'ocr-result ocr-mismatch';
-              ocrResult.innerHTML = `⚠ El monto ingresado (${formatMXN(montoIngresado)}) no coincide con la factura (${formatMXN(montoOCR)})`;
+              ocrResult.innerHTML = `⚠ Monto ingresado (${formatMXN(montoIngresado)}) ≠ factura (${formatMXN(montoOCR)})`;
             }
           }
-
-          // Guardar monto OCR en el input como data attribute para usarlo al guardar
-          fileInput.dataset.ocrMonto = montoOCR;
-
         } catch (err) {
           console.error('[OCR]', err);
           ocrResult.className = 'ocr-result ocr-warn';
-          ocrResult.textContent = '⚠ Error al leer el PDF — el gasto se guardará sin verificación';
+          ocrResult.textContent = '⚠ Error al leer el archivo';
         }
-      });
+      };
 
-      // Re-evaluar al cambiar monto manualmente (si ya hay un OCR result)
+      pdfInput?.addEventListener('change', _runOCR);
+      xmlInput?.addEventListener('change',  _runOCR);
+
+      // Re-evaluar al cambiar monto manualmente
       montoInput?.addEventListener('input', () => {
-        const montoOCR = parseFloat(fileInput?.dataset.ocrMonto);
+        const montoOCR = parseFloat(ocrResult?.dataset.ocrMonto);
         if (!ocrResult || ocrResult.classList.contains('hidden') || isNaN(montoOCR)) return;
         const montoIngresado = parseFloat(montoInput.value);
         if (isNaN(montoIngresado)) return;
@@ -556,10 +571,10 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
         const pct  = montoIngresado > 0 ? diff / montoIngresado : 1;
         if (pct < 0.01) {
           ocrResult.className = 'ocr-result ocr-ok';
-          ocrResult.textContent = `✓ Monto de factura coincide con monto ingresado (${formatMXN(montoOCR)})`;
+          ocrResult.textContent = `✓ Monto coincide con la factura (${formatMXN(montoOCR)})`;
         } else {
           ocrResult.className = 'ocr-result ocr-mismatch';
-          ocrResult.innerHTML = `⚠ El monto ingresado (${formatMXN(montoIngresado)}) no coincide con la factura (${formatMXN(montoOCR)})`;
+          ocrResult.innerHTML = `⚠ Monto ingresado (${formatMXN(montoIngresado)}) ≠ factura (${formatMXN(montoOCR)})`;
         }
       });
     }, 0);
@@ -604,25 +619,37 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
 
       const monto = esGasto ? -montoRaw : montoRaw;
 
-      // Guardar referencia al PDF (nombre de archivo)
-      let factura_nombre         = mov?.factura_nombre         ?? '';
-      let factura_monto_ocr      = mov?.factura_monto_ocr      ?? null;
-      let factura_drive_url      = mov?.factura_drive_url      ?? '';
-      let factura_drive_id       = mov?.factura_drive_id       ?? '';
+      // Archivos de factura
+      let factura_nombre          = mov?.factura_nombre          ?? '';
+      let factura_monto_ocr       = mov?.factura_monto_ocr       ?? null;
+      let factura_drive_url       = mov?.factura_drive_url       ?? '';
+      let factura_drive_id        = mov?.factura_drive_id        ?? '';
+      let factura_xml_nombre      = mov?.factura_xml_nombre      ?? '';
+      let factura_xml_url         = mov?.factura_xml_url         ?? '';
+      let factura_xml_id          = mov?.factura_xml_id          ?? '';
       let factura_drive_folder_id = mov?.factura_drive_folder_id ?? '';
-      let uploadFile = null;
+      let uploadPDF = null;
+      let uploadXML = null;
 
       if (esGasto && incluye_iva) {
-        const fileInput = body.querySelector('#pm-factura');
-        if (fileInput?.files?.length > 0) {
-          uploadFile        = fileInput.files[0];
-          factura_nombre    = uploadFile.name;
+        const pdfIn = body.querySelector('#pm-factura-pdf');
+        const xmlIn = body.querySelector('#pm-factura-xml');
+        if (pdfIn?.files?.length > 0) {
+          uploadPDF      = pdfIn.files[0];
+          factura_nombre = uploadPDF.name;
           factura_drive_url = '';
           factura_drive_id  = '';
           factura_drive_folder_id = '';
-          const ocrVal = parseFloat(fileInput.dataset.ocrMonto);
-          if (!isNaN(ocrVal)) factura_monto_ocr = ocrVal;
         }
+        if (xmlIn?.files?.length > 0) {
+          uploadXML         = xmlIn.files[0];
+          factura_xml_nombre = uploadXML.name;
+          factura_xml_url    = '';
+          factura_xml_id     = '';
+          factura_drive_folder_id = '';
+        }
+        const ocrVal = parseFloat(body.querySelector('#pm-ocr-result')?.dataset.ocrMonto);
+        if (!isNaN(ocrVal)) factura_monto_ocr = ocrVal;
       }
 
       const data = {
@@ -635,6 +662,9 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
         factura_monto_ocr,
         factura_drive_url,
         factura_drive_id,
+        factura_xml_nombre,
+        factura_xml_url,
+        factura_xml_id,
         factura_drive_folder_id,
       };
 
@@ -654,26 +684,31 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
       refreshDetalleTable(proyectoId);
       refreshDetalleCharts(proyectoId);
 
-      // Subir archivo a Drive en segundo plano (si hay archivo nuevo)
-      if (uploadFile && driveAvailable()) {
-        const ext = uploadFile.name.toLowerCase().endsWith('.xml') ? 'XML' : 'PDF';
-        showToast(`📤 Subiendo ${ext} a Drive…`, 'info');
-        driveUploadFactura(uploadFile, proyectoId, { concepto, fecha })
+      // Subir PDF y/o XML a Drive en segundo plano
+      if ((uploadPDF || uploadXML) && driveAvailable()) {
+        const label = [uploadPDF && 'PDF', uploadXML && 'XML'].filter(Boolean).join(' + ');
+        showToast(`📤 Subiendo ${label} a Drive…`, 'info');
+        driveUploadFactura({ pdf: uploadPDF, xml: uploadXML }, proyectoId, { concepto, fecha })
           .then(result => {
-            updateItem(KEYS.PROY_MOVIMIENTOS, savedId, {
-              factura_drive_url:       result.webViewLink,
-              factura_drive_id:        result.id,
-              factura_drive_folder_id: result.folderId,
-            });
-            showToast('✅ Factura guardada en Google Drive', 'success');
+            const updates = { factura_drive_folder_id: result.folderId };
+            if (result.pdf) {
+              updates.factura_drive_url = result.pdf.webViewLink;
+              updates.factura_drive_id  = result.pdf.id;
+            }
+            if (result.xml) {
+              updates.factura_xml_url = result.xml.webViewLink;
+              updates.factura_xml_id  = result.xml.id;
+            }
+            updateItem(KEYS.PROY_MOVIMIENTOS, savedId, updates);
+            showToast('✅ Archivos guardados en Google Drive', 'success');
             refreshDetalleTable(proyectoId);
           })
           .catch(err => {
             console.error('[Drive upload]', err);
             showToast('⚠ No se pudo subir a Drive: ' + err.message, 'warning');
           });
-      } else if (uploadFile && !driveAvailable()) {
-        showToast('⚠ Google Drive no disponible — factura guardada solo localmente', 'warning');
+      } else if ((uploadPDF || uploadXML) && !driveAvailable()) {
+        showToast('⚠ Google Drive no disponible — archivos guardados solo localmente', 'warning');
       }
     },
   });
