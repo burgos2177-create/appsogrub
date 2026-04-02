@@ -182,6 +182,7 @@ function renderDetalleToolbar(proyectoId, proyecto) {
     <button class="btn btn-secondary" id="btn-abono">＋ Abono del cliente</button>
     <button class="btn btn-secondary" id="btn-recibir">⇄ Recibir de SOGRUB</button>
     <button class="btn btn-secondary" id="btn-proveedores-proy">📋 Proveedores</button>
+    <button class="btn btn-secondary" id="btn-facturas-lote">📄 Cargar facturas</button>
     <div class="toolbar-spacer"></div>
     <button class="btn btn-ghost btn-sm" id="btn-editar-proy">✏️ Editar proyecto</button>
   `;
@@ -194,6 +195,8 @@ function renderDetalleToolbar(proyectoId, proyecto) {
     abrirModalRecibirSOGRUB(proyectoId));
   bar.querySelector('#btn-proveedores-proy').addEventListener('click', () =>
     abrirModalProveedoresProyecto(proyectoId));
+  bar.querySelector('#btn-facturas-lote').addEventListener('click', () =>
+    abrirModalFacturasLote(proyectoId));
   bar.querySelector('#btn-editar-proy').addEventListener('click', () =>
     abrirModalEditarProyecto(proyectoId));
 
@@ -989,6 +992,282 @@ function confirmarEliminarMovProy(id, proyectoId) {
       refreshDetalleCharts(proyectoId);
     },
   });
+}
+
+// =====================================================
+// MODAL: CARGA MASIVA DE FACTURAS (PDF + XML)
+// =====================================================
+function abrirModalFacturasLote(proyectoId) {
+  const body = document.createElement('div');
+  body.style.cssText = 'display:flex;flex-direction:column;gap:14px';
+  body.innerHTML = `
+    <p class="text-muted text-sm">
+      Selecciona todos los PDF y XML de facturas. La app emparejará automáticamente cada factura
+      con un gasto registrado que coincida en monto.
+    </p>
+    <div class="form-group">
+      <label class="form-label">Archivos (PDF y XML)</label>
+      <input type="file" id="lote-files" class="form-input" accept=".pdf,.xml" multiple style="padding:6px 10px">
+    </div>
+    <div id="lote-preview" class="hidden"></div>
+    <div id="lote-results" class="hidden"></div>
+  `;
+
+  openModal({
+    title: '📄 Cargar facturas por lote',
+    body,
+    confirmText: 'Analizar y emparejar',
+    large: true,
+    onConfirm: async (btn) => {
+      const fileInput = body.querySelector('#lote-files');
+      if (!fileInput?.files?.length) {
+        showToast('Selecciona al menos un archivo', 'warning');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Analizando…';
+
+      try {
+        await _procesarLoteFacturas(proyectoId, Array.from(fileInput.files), body);
+      } catch (err) {
+        console.error('[Lote]', err);
+        showToast('Error al procesar archivos: ' + err.message, 'danger');
+        btn.disabled = false;
+        btn.textContent = 'Analizar y emparejar';
+      }
+    },
+  });
+}
+
+// ---- Agrupador: emparejar PDF y XML por nombre base ----
+function _agruparArchivos(files) {
+  const groups = {};
+
+  for (const f of files) {
+    const name = f.name;
+    const ext  = name.split('.').pop().toLowerCase();
+    // Nombre base sin extensión
+    const base = name.replace(/\.[^.]+$/, '').trim().toLowerCase();
+
+    if (!groups[base]) groups[base] = { pdf: null, xml: null, baseName: name.replace(/\.[^.]+$/, '') };
+
+    if (ext === 'xml') groups[base].xml = f;
+    else if (ext === 'pdf') groups[base].pdf = f;
+  }
+
+  return Object.values(groups);
+}
+
+// ---- Core: procesar lote ----
+async function _procesarLoteFacturas(proyectoId, files, body) {
+  const resultsDiv = body.querySelector('#lote-results');
+  resultsDiv.classList.remove('hidden');
+  resultsDiv.innerHTML = '<div class="ocr-result ocr-loading">🔍 Leyendo archivos…</div>';
+
+  // 1. Agrupar archivos por nombre base (emparejar PDF ↔ XML)
+  const grupos = _agruparArchivos(files);
+
+  // 2. Leer monto de cada grupo (preferir XML)
+  const parsed = [];
+  for (const g of grupos) {
+    let monto = null;
+    let source = null;
+    try {
+      if (g.xml) {
+        monto  = await leerMontoXML(g.xml);
+        source = 'XML';
+      }
+      if (monto === null && g.pdf) {
+        monto  = await leerMontoFactura(g.pdf);
+        source = 'PDF (OCR)';
+      }
+    } catch (e) {
+      console.warn(`[Lote] Error leyendo ${g.baseName}:`, e);
+    }
+    parsed.push({ ...g, monto, source });
+  }
+
+  // 3. Obtener gastos con IVA sin factura vinculada
+  const gastos = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
+    .filter(m =>
+      m.proyecto_id === proyectoId &&
+      m.tipo === 'gasto' &&
+      m.incluye_iva &&
+      !m.factura_drive_url &&
+      !m.factura_xml_url
+    );
+
+  // 4. Emparejar: para cada grupo con monto, buscar gasto que coincida (margen 1%)
+  const matched   = [];
+  const unmatched = [];
+  const usedGastoIds = new Set();
+
+  for (const p of parsed) {
+    if (p.monto === null) {
+      unmatched.push({ ...p, reason: 'No se pudo leer el monto' });
+      continue;
+    }
+
+    // Buscar gasto cuyo monto absoluto coincida (dentro de 1%)
+    let bestMatch = null;
+    for (const g of gastos) {
+      if (usedGastoIds.has(g.id)) continue;
+      const gastoMonto = Math.abs(g.monto);
+      const diff = Math.abs(p.monto - gastoMonto);
+      const pct  = gastoMonto > 0 ? diff / gastoMonto : 1;
+      if (pct < 0.01) {
+        bestMatch = g;
+        break;
+      }
+    }
+
+    if (bestMatch) {
+      usedGastoIds.add(bestMatch.id);
+      matched.push({ grupo: p, gasto: bestMatch });
+    } else {
+      unmatched.push({ ...p, reason: `Sin gasto para ${formatMXN(p.monto)}` });
+    }
+  }
+
+  // 5. Mostrar resultado para confirmar
+  let html = '';
+
+  if (matched.length > 0) {
+    html += `<div style="margin-bottom:12px">
+      <div style="font-weight:600;font-size:13px;margin-bottom:6px;color:var(--success)">
+        ✓ ${matched.length} factura${matched.length > 1 ? 's' : ''} emparejada${matched.length > 1 ? 's' : ''}
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        ${matched.map(({ grupo, gasto }) => `
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px">
+            <div>
+              <span style="font-weight:500">${grupo.baseName}</span>
+              <span class="text-muted" style="margin-left:6px">[${[grupo.pdf && 'PDF', grupo.xml && 'XML'].filter(Boolean).join(' + ')}]</span>
+            </div>
+            <div style="text-align:right">
+              <span style="color:var(--accent);font-weight:600;font-variant-numeric:tabular-nums">${formatMXN(grupo.monto)}</span>
+              <span class="text-muted" style="margin-left:8px">→ ${gasto.concepto}</span>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </div>`;
+  }
+
+  if (unmatched.length > 0) {
+    html += `<div style="margin-bottom:12px">
+      <div style="font-weight:600;font-size:13px;margin-bottom:6px;color:var(--warning)">
+        ⚠ ${unmatched.length} archivo${unmatched.length > 1 ? 's' : ''} sin emparejar
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        ${unmatched.map(u => `
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:rgba(138,138,138,0.06);border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px;color:var(--text-muted)">
+            <span>${u.baseName}</span>
+            <span>${u.reason}</span>
+          </div>
+        `).join('')}
+      </div>
+    </div>`;
+  }
+
+  if (matched.length === 0) {
+    html += `<p class="text-muted text-sm">Ninguna factura coincidió con gastos pendientes de factura.</p>`;
+  }
+
+  resultsDiv.innerHTML = html;
+
+  // 6. Cambiar botón a "Subir a Drive" o "Cerrar"
+  const footerEl = document.getElementById('modal-footer');
+  footerEl.innerHTML = '';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'btn btn-secondary';
+  cancelBtn.textContent = 'Cerrar';
+  cancelBtn.addEventListener('click', closeModal);
+  footerEl.appendChild(cancelBtn);
+
+  if (matched.length > 0 && driveAvailable()) {
+    const uploadBtn = document.createElement('button');
+    uploadBtn.className = 'btn btn-primary';
+    uploadBtn.textContent = `Subir ${matched.length} factura${matched.length > 1 ? 's' : ''} a Drive`;
+    uploadBtn.addEventListener('click', async () => {
+      uploadBtn.disabled    = true;
+      uploadBtn.textContent = 'Subiendo…';
+
+      let ok = 0;
+      let fail = 0;
+
+      for (const { grupo, gasto } of matched) {
+        try {
+          const result = await driveUploadFactura(
+            { pdf: grupo.pdf, xml: grupo.xml },
+            proyectoId,
+            { concepto: gasto.concepto, fecha: gasto.fecha }
+          );
+
+          const updates = {
+            factura_drive_folder_id: result.folderId,
+            factura_monto_ocr:       grupo.monto,
+          };
+          if (result.pdf) {
+            updates.factura_nombre    = grupo.pdf.name;
+            updates.factura_drive_url = result.pdf.webViewLink;
+            updates.factura_drive_id  = result.pdf.id;
+          }
+          if (result.xml) {
+            updates.factura_xml_nombre = grupo.xml.name;
+            updates.factura_xml_url    = result.xml.webViewLink;
+            updates.factura_xml_id     = result.xml.id;
+          }
+
+          updateItem(KEYS.PROY_MOVIMIENTOS, gasto.id, updates);
+          ok++;
+          uploadBtn.textContent = `Subiendo… (${ok}/${matched.length})`;
+        } catch (err) {
+          console.error(`[Lote Drive] Error subiendo ${grupo.baseName}:`, err);
+          fail++;
+        }
+      }
+
+      closeModal();
+
+      if (fail === 0) {
+        showToast(`🎉 ¡Enhorabuena! ${ok} factura${ok > 1 ? 's' : ''} vinculada${ok > 1 ? 's' : ''} exitosamente`, 'success');
+      } else {
+        showToast(`${ok} subida${ok > 1 ? 's' : ''}, ${fail} fallida${fail > 1 ? 's' : ''}`, 'warning');
+      }
+
+      refreshDetalleTable(proyectoId);
+    });
+
+    footerEl.appendChild(uploadBtn);
+  } else if (matched.length > 0 && !driveAvailable()) {
+    // Guardar solo metadata sin Drive
+    const saveBtn = document.createElement('button');
+    saveBtn.className = 'btn btn-primary';
+    saveBtn.textContent = `Vincular ${matched.length} factura${matched.length > 1 ? 's' : ''}`;
+    saveBtn.addEventListener('click', () => {
+      for (const { grupo, gasto } of matched) {
+        const updates = { factura_monto_ocr: grupo.monto };
+        if (grupo.pdf) updates.factura_nombre    = grupo.pdf.name;
+        if (grupo.xml) updates.factura_xml_nombre = grupo.xml.name;
+        updateItem(KEYS.PROY_MOVIMIENTOS, gasto.id, updates);
+      }
+      closeModal();
+      showToast(`${matched.length} factura${matched.length > 1 ? 's' : ''} vinculada${matched.length > 1 ? 's' : ''}`, 'success');
+      refreshDetalleTable(proyectoId);
+    });
+    footerEl.appendChild(saveBtn);
+  }
+
+  if (matched.length > 0 && unmatched.length === 0) {
+    // All matched — replace header with celebration
+    const successBanner = document.createElement('div');
+    successBanner.style.cssText = 'text-align:center;padding:8px 0;font-size:14px;font-weight:600;color:var(--success)';
+    successBanner.textContent = '🎉 ¡Todas las facturas coinciden con gastos registrados!';
+    resultsDiv.prepend(successBanner);
+  }
 }
 
 // =====================================================
