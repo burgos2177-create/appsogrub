@@ -436,8 +436,8 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
       </div>
     </div>
     <div class="form-group hidden" id="pm-factura-group">
-      <label class="form-label" for="pm-factura">Factura PDF <span class="text-dim">(opcional)</span></label>
-      <input type="file" id="pm-factura" class="form-input" accept=".pdf" style="padding:6px 10px">
+      <label class="form-label" for="pm-factura">Factura PDF / XML <span class="text-dim">(opcional)</span></label>
+      <input type="file" id="pm-factura" class="form-input" accept=".pdf,.xml" style="padding:6px 10px">
       ${mov?.factura_drive_url
         ? `<div style="margin-top:6px;display:flex;align-items:center;gap:6px">
              <a href="${mov.factura_drive_url}" target="_blank" rel="noopener noreferrer"
@@ -499,11 +499,15 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
         ocrResult.classList.remove('hidden');
 
         try {
-          const montoOCR = await leerMontoFactura(file);
+          const esXML   = esArchivoXML(file);
+          const label   = esXML ? 'XML' : 'PDF';
+          ocrResult.textContent = `🔍 Analizando ${label}…`;
+
+          const montoOCR = await leerMontoArchivo(file);
 
           if (montoOCR === null) {
             ocrResult.className = 'ocr-result ocr-warn';
-            ocrResult.textContent = '⚠ No se pudo detectar el monto en el PDF';
+            ocrResult.textContent = `⚠ No se pudo detectar el monto en el ${label}`;
             return;
           }
 
@@ -601,19 +605,21 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
       const monto = esGasto ? -montoRaw : montoRaw;
 
       // Guardar referencia al PDF (nombre de archivo)
-      let factura_nombre    = mov?.factura_nombre    ?? '';
-      let factura_monto_ocr = mov?.factura_monto_ocr ?? null;
-      let factura_drive_url = mov?.factura_drive_url ?? '';
-      let factura_drive_id  = mov?.factura_drive_id  ?? '';
-      let pdfFile = null;
+      let factura_nombre         = mov?.factura_nombre         ?? '';
+      let factura_monto_ocr      = mov?.factura_monto_ocr      ?? null;
+      let factura_drive_url      = mov?.factura_drive_url      ?? '';
+      let factura_drive_id       = mov?.factura_drive_id       ?? '';
+      let factura_drive_folder_id = mov?.factura_drive_folder_id ?? '';
+      let uploadFile = null;
 
       if (esGasto && incluye_iva) {
         const fileInput = body.querySelector('#pm-factura');
         if (fileInput?.files?.length > 0) {
-          pdfFile = fileInput.files[0];
-          factura_nombre    = pdfFile.name;
-          factura_drive_url = '';   // se actualizará tras upload
+          uploadFile        = fileInput.files[0];
+          factura_nombre    = uploadFile.name;
+          factura_drive_url = '';
           factura_drive_id  = '';
+          factura_drive_folder_id = '';
           const ocrVal = parseFloat(fileInput.dataset.ocrMonto);
           if (!isNaN(ocrVal)) factura_monto_ocr = ocrVal;
         }
@@ -629,6 +635,7 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
         factura_monto_ocr,
         factura_drive_url,
         factura_drive_id,
+        factura_drive_folder_id,
       };
 
       let savedId;
@@ -647,14 +654,16 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
       refreshDetalleTable(proyectoId);
       refreshDetalleCharts(proyectoId);
 
-      // Subir PDF a Drive en segundo plano (si hay archivo nuevo)
-      if (pdfFile && driveAvailable()) {
-        showToast('📤 Subiendo factura a Drive…', 'info');
-        driveUploadFactura(pdfFile, proyectoId)
+      // Subir archivo a Drive en segundo plano (si hay archivo nuevo)
+      if (uploadFile && driveAvailable()) {
+        const ext = uploadFile.name.toLowerCase().endsWith('.xml') ? 'XML' : 'PDF';
+        showToast(`📤 Subiendo ${ext} a Drive…`, 'info');
+        driveUploadFactura(uploadFile, proyectoId, { concepto, fecha })
           .then(result => {
             updateItem(KEYS.PROY_MOVIMIENTOS, savedId, {
-              factura_drive_url: result.webViewLink,
-              factura_drive_id:  result.id,
+              factura_drive_url:       result.webViewLink,
+              factura_drive_id:        result.id,
+              factura_drive_folder_id: result.folderId,
             });
             showToast('✅ Factura guardada en Google Drive', 'success');
             refreshDetalleTable(proyectoId);
@@ -663,7 +672,7 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
             console.error('[Drive upload]', err);
             showToast('⚠ No se pudo subir a Drive: ' + err.message, 'warning');
           });
-      } else if (pdfFile && !driveAvailable()) {
+      } else if (uploadFile && !driveAvailable()) {
         showToast('⚠ Google Drive no disponible — factura guardada solo localmente', 'warning');
       }
     },
