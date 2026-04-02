@@ -622,6 +622,8 @@ img, svg { display: block; }
 .badge-danger   { background: var(--danger-glow);  color: var(--danger);  }
 .badge-info     { background: var(--accent-glow);  color: var(--accent);  }
 .badge-muted    { background: rgba(138,138,138,0.12); color: var(--text-muted); }
+.drive-badge    { transition: background var(--transition); }
+.drive-badge:hover { background: rgba(26,159,212,0.22); }
 
 /* =====================================================
    PROGRESS BARS
