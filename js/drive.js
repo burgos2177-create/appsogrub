@@ -160,7 +160,7 @@ async function _uploadFile(file, fileName, folderId) {
  * Estructura:
  *   SOGRUB Facturas/{proyecto}/{fecha} - {concepto}/
  *     {concepto}.pdf
- *     {concepto}.xml
+ *     {nombre-original}.xml
  *
  * Retorna { folderId, folderUrl, pdf?: {id,webViewLink}, xml?: {id,webViewLink} }
  */
@@ -181,7 +181,7 @@ async function driveUploadFactura(files, proyectoId, { concepto = '', fecha = ''
     result.pdf = await _uploadFile(files.pdf, `${safeName}.pdf`, subfolderId);
   }
   if (files.xml) {
-    result.xml = await _uploadFile(files.xml, `${safeName}.xml`, subfolderId);
+    result.xml = await _uploadFile(files.xml, files.xml.name, subfolderId);
   }
 
   return result;
