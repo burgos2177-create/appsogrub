@@ -98,10 +98,10 @@ function calcAvanceFinanciero(proyectoId) {
 }
 
 // =====================================================
-// REGLA 8 — Utilidad estimada
-// suma de abono_cliente − suma de gastos Pagados
+// REGLA 8A — Utilidad real a la fecha
+// Total cobrado al cliente − total gastado (pagado)
 // =====================================================
-function calcUtilidadEstimada(proyectoId) {
+function calcUtilidadReal(proyectoId) {
   const movs = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
     .filter(m => m.proyecto_id === proyectoId);
 
@@ -114,6 +114,21 @@ function calcUtilidadEstimada(proyectoId) {
     .reduce((acc, m) => acc + Math.abs(m.monto), 0);
 
   return cobrado - gastado;
+}
+
+// =====================================================
+// REGLA 8B — Utilidad estimada (al 100% del contrato)
+// Presupuesto del contrato − total gastado (pagado)
+// =====================================================
+function calcUtilidadEstimada(proyectoId) {
+  const proyecto = getItem(KEYS.PROYECTOS, proyectoId);
+  const presupuesto = proyecto?.presupuesto_contrato ?? 0;
+
+  const gastado = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
+    .filter(m => m.proyecto_id === proyectoId && m.tipo === 'gasto' && m.status === 'Pagado')
+    .reduce((acc, m) => acc + Math.abs(m.monto), 0);
+
+  return presupuesto - gastado;
 }
 
 // =====================================================
@@ -155,10 +170,11 @@ function ejecutarTransferenciaSOGRUB(proyectoId, monto, concepto, fecha) {
 // =====================================================
 function calcResumenProyecto(proyectoId) {
   return {
-    saldoCaja:         calcSaldoCajaProyecto(proyectoId),
-    deudaPendiente:    calcDeudaPendiente(proyectoId),
-    avancePct:         calcAvanceFinanciero(proyectoId),
-    utilidadEstimada:  calcUtilidadEstimada(proyectoId),
+    saldoCaja:        calcSaldoCajaProyecto(proyectoId),
+    deudaPendiente:   calcDeudaPendiente(proyectoId),
+    avancePct:        calcAvanceFinanciero(proyectoId),
+    utilidadReal:     calcUtilidadReal(proyectoId),
+    utilidadEstimada: calcUtilidadEstimada(proyectoId),
   };
 }
 

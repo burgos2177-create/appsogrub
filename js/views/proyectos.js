@@ -94,7 +94,7 @@ function refreshProyectosGrid() {
         ${estadoBadge(p.estado)}
       </div>
 
-      <div class="proyecto-metrics">
+      <div class="proyecto-metrics" style="grid-template-columns:repeat(4,1fr)">
         <div class="metric-item">
           <span class="metric-label">Saldo caja</span>
           <span class="metric-value ${r.saldoCaja >= 0 ? 'text-success' : 'text-danger'}">
@@ -108,7 +108,13 @@ function refreshProyectosGrid() {
           </span>
         </div>
         <div class="metric-item">
-          <span class="metric-label">Utilidad est.</span>
+          <span class="metric-label">Util. real</span>
+          <span class="metric-value ${r.utilidadReal >= 0 ? 'text-success' : 'text-danger'}">
+            ${formatMXN(r.utilidadReal)}
+          </span>
+        </div>
+        <div class="metric-item">
+          <span class="metric-label">Util. estimada</span>
           <span class="metric-value ${r.utilidadEstimada >= 0 ? 'text-success' : 'text-danger'}">
             ${formatMXN(r.utilidadEstimada)}
           </span>
