@@ -53,7 +53,8 @@ function renderDetalleKPIs(proyectoId, proyecto) {
   const saldoCaja        = calcSaldoCajaProyecto(proyectoId);
   const totalCobrado     = calcTotalCobradoCliente(proyectoId);
   const totalGastado     = calcTotalGastadoPagado(proyectoId);
-  const utilidad         = calcUtilidadEstimada(proyectoId);
+  const utilidadReal     = calcUtilidadReal(proyectoId);
+  const utilidadEst      = calcUtilidadEstimada(proyectoId);
   const avance           = calcAvanceFinanciero(proyectoId);
   const deudaPend        = calcDeudaPendiente(proyectoId);
   const iva              = calcIVADesglose(proyectoId);
@@ -77,7 +78,19 @@ function renderDetalleKPIs(proyectoId, proyecto) {
         <div style="color:var(--warning)">IVA por cobrar: <strong>${formatMXN(iva.ivaPorCobrar)}</strong></div>
       </div>
     </div>
-    ${detalleKPI('📈', 'Utilidad estimada',    formatMXN(utilidad),      utilidad >= 0 ? 'text-success' : 'text-danger')}
+    <div class="kpi-card">
+      <div class="kpi-label">📈 Utilidad</div>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:4px">
+        <div>
+          <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:2px">Real a la fecha</div>
+          <div class="kpi-value ${utilidadReal >= 0 ? 'text-success' : 'text-danger'}" style="font-size:17px">${formatMXN(utilidadReal)}</div>
+        </div>
+        <div style="border-top:1px solid var(--border);padding-top:8px">
+          <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:2px">Estimada (100% contrato)</div>
+          <div class="kpi-value ${utilidadEst >= 0 ? 'text-success' : 'text-danger'}" style="font-size:17px">${formatMXN(utilidadEst)}</div>
+        </div>
+      </div>
+    </div>
     <div class="kpi-card">
       <div class="kpi-label">📊 Avance financiero</div>
       <div class="kpi-value" style="font-size:20px">${avance.toFixed(1)}%</div>
