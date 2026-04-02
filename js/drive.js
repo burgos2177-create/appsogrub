@@ -120,20 +120,24 @@ async function _getProjectFolderId(proyectoId) {
 // API PÚBLICA
 // =====================================================
 
-/**
- * Sube un archivo PDF a la carpeta del proyecto en Drive.
- * Retorna { id, webViewLink } del archivo creado.
- */
-async function driveUploadFactura(file, proyectoId) {
-  const folderId = await _getProjectFolderId(proyectoId);
+// ---- Sanitizar nombre para usarlo en Drive ----
+function _sanitizeName(str) {
+  return (str ?? 'sin-concepto')
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .substring(0, 80) || 'factura';
+}
 
-  const meta = JSON.stringify({ name: file.name, parents: [folderId] });
-  const form = new FormData();
+// ---- Subir un archivo a una carpeta de Drive ----
+async function _uploadFile(file, fileName, folderId) {
+  const token = await driveGetToken();
+  const meta  = JSON.stringify({ name: fileName, parents: [folderId] });
+  const form  = new FormData();
   form.append('metadata', new Blob([meta], { type: 'application/json' }));
   form.append('file', file);
 
-  const token = await driveGetToken();
-  const resp  = await fetch(
+  const resp = await fetch(
     'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink',
     {
       method:  'POST',
@@ -141,13 +145,47 @@ async function driveUploadFactura(file, proyectoId) {
       body:    form,
     }
   );
-
   if (!resp.ok) {
     const text = await resp.text().catch(() => '');
     throw new Error(`Drive upload ${resp.status}: ${text}`);
   }
-
   return resp.json();  // { id, webViewLink }
+}
+
+/**
+ * Sube un archivo de factura (PDF o XML) a Drive.
+ *
+ * Estructura:
+ *   SOGRUB Facturas/
+ *     {proyecto}/
+ *       {fecha} - {concepto}/
+ *         {concepto}.pdf   ← o .xml
+ *
+ * Retorna { id, webViewLink, folderId }
+ *   folderId = ID de la subcarpeta de esta factura
+ *   (guárdalo en Firebase para poder agregar el XML después)
+ */
+async function driveUploadFactura(file, proyectoId, { concepto = '', fecha = '' } = {}) {
+  const proyFolderId = await _getProjectFolderId(proyectoId);
+
+  // Nombre de la subcarpeta: "2026-04-02 - Materiales cemento"
+  const safeName    = _sanitizeName(concepto);
+  const folderLabel = fecha ? `${fecha} - ${safeName}` : safeName;
+  const subfolder   = await _createFolder(folderLabel, proyFolderId);
+  const subfolderId = subfolder.id;
+
+  // Nombre del archivo: "Materiales cemento.pdf"
+  const ext      = file.name.includes('.') ? file.name.split('.').pop().toLowerCase() : 'pdf';
+  const fileName = `${safeName}.${ext}`;
+
+  const result = await _uploadFile(file, fileName, subfolderId);
+
+  return {
+    id:         result.id,
+    webViewLink: result.webViewLink,
+    folderId:   subfolderId,
+    folderUrl:  `https://drive.google.com/drive/folders/${subfolderId}`,
+  };
 }
 
 /** Comprueba si la librería GIS ya está cargada */

@@ -187,3 +187,40 @@ async function leerMontoFactura(file) {
   const texto = await extraerTextoPDF(file);
   return detectarMontoTotal(texto);
 }
+
+// =====================================================
+// API PÚBLICA — lee un XML CFDI y retorna el Total
+// Funciona con CFDI 3.3 y 4.0
+// =====================================================
+async function leerMontoXML(file) {
+  const text = await file.text();
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(text, 'application/xml');
+
+  // El total está en el atributo "Total" del nodo raíz cfdi:Comprobante
+  // querySelector no distingue prefijos de namespace, buscar por local name
+  const comprobante =
+    doc.querySelector('Comprobante') ??
+    doc.getElementsByTagNameNS('http://www.sat.gob.mx/cfd/4', 'Comprobante')[0] ??
+    doc.getElementsByTagNameNS('http://www.sat.gob.mx/cfd/3', 'Comprobante')[0];
+
+  if (!comprobante) return null;
+
+  const total = parseFloat(comprobante.getAttribute('Total'));
+  return (!isNaN(total) && total > 0) ? total : null;
+}
+
+// Detecta si un archivo es XML por su extensión o tipo MIME
+function esArchivoXML(file) {
+  return file.type === 'text/xml' ||
+         file.type === 'application/xml' ||
+         file.name.toLowerCase().endsWith('.xml');
+}
+
+// =====================================================
+// API UNIFICADA — detecta PDF o XML automáticamente
+// =====================================================
+async function leerMontoArchivo(file) {
+  if (esArchivoXML(file)) return leerMontoXML(file);
+  return leerMontoFactura(file);
+}
