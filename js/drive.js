@@ -8,9 +8,30 @@ const DRIVE_CLIENT_ID        = '1058194321879-dv2ptsmgio75cpom21v0js21blk9mtnh.a
 const DRIVE_SCOPE            = 'https://www.googleapis.com/auth/drive.file';
 const DRIVE_ROOT_FOLDER_NAME = 'SOGRUB Facturas';
 
+const _LS_TOKEN  = 'sogrub_drive_token';
+const _LS_EXPIRY = 'sogrub_drive_expiry';
+
 let _tokenClient = null;
 let _accessToken = null;
 let _tokenExpiry = 0;
+
+// ---- Restaurar token desde localStorage al cargar ----
+(function _restoreToken() {
+  const t = localStorage.getItem(_LS_TOKEN);
+  const e = parseInt(localStorage.getItem(_LS_EXPIRY) ?? '0', 10);
+  if (t && Date.now() < e) {
+    _accessToken = t;
+    _tokenExpiry = e;
+  }
+})();
+
+// ---- Persistir token ----
+function _saveToken(token, expiresIn) {
+  _accessToken = token;
+  _tokenExpiry = Date.now() + (expiresIn - 60) * 1000;
+  localStorage.setItem(_LS_TOKEN,  _accessToken);
+  localStorage.setItem(_LS_EXPIRY, String(_tokenExpiry));
+}
 
 // ---- Inicialización lazy ----
 function _initTokenClient() {
@@ -23,7 +44,7 @@ function _initTokenClient() {
   });
 }
 
-// ---- Obtener token válido (pide login si es necesario) ----
+// ---- Obtener token válido (pide login solo si expiró) ----
 function driveGetToken() {
   _initTokenClient();
   return new Promise((resolve, reject) => {
@@ -32,6 +53,7 @@ function driveGetToken() {
       return;
     }
 
+    // Token en memoria o restaurado de localStorage todavía válido
     if (_accessToken && Date.now() < _tokenExpiry) {
       resolve(_accessToken);
       return;
@@ -39,13 +61,12 @@ function driveGetToken() {
 
     _tokenClient.callback = (resp) => {
       if (resp.error) { reject(new Error(resp.error_description ?? resp.error)); return; }
-      _accessToken = resp.access_token;
-      _tokenExpiry = Date.now() + (resp.expires_in - 60) * 1000;
+      _saveToken(resp.access_token, resp.expires_in);
       resolve(_accessToken);
     };
 
-    // Si ya tuvimos token antes, renovar silenciosamente; si no, pedir consent
-    _tokenClient.requestAccessToken({ prompt: _accessToken ? '' : 'select_account' });
+    // prompt:'' intenta renovar silenciosamente si la sesión Google sigue activa
+    _tokenClient.requestAccessToken({ prompt: '' });
   });
 }
 
