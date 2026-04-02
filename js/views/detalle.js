@@ -58,6 +58,8 @@ function renderDetalleKPIs(proyectoId, proyecto) {
   const avance           = calcAvanceFinanciero(proyectoId);
   const deudaPend        = calcDeudaPendiente(proyectoId);
   const iva              = calcIVADesglose(proyectoId);
+  const presupuesto      = proyecto?.presupuesto_contrato ?? 0;
+  const restantePorCobrar = Math.max(0, presupuesto - totalCobrado);
 
   const cls = avance < 60 ? 'low' : avance < 85 ? 'medium' : 'high';
 
@@ -66,7 +68,16 @@ function renderDetalleKPIs(proyectoId, proyecto) {
   grid.id = 'detalle-kpi-grid';
   grid.innerHTML = `
     ${detalleKPI('💰', 'Saldo en caja',       formatMXN(saldoCaja),     saldoCaja >= 0 ? 'text-success' : 'text-danger')}
-    ${detalleKPI('📥', 'Total cobrado',        formatMXN(totalCobrado),  'text-success')}
+    <div class="kpi-card">
+      <div class="kpi-label">📥 Total cobrado</div>
+      <div class="kpi-value text-success" style="font-size:20px">${formatMXN(totalCobrado)}</div>
+      <div class="kpi-sub" style="display:flex;flex-direction:column;gap:2px;margin-top:4px">
+        <div style="display:flex;justify-content:space-between">
+          <span>Restante por cobrar</span>
+          <strong style="color:${restantePorCobrar > 0 ? 'var(--warning)' : 'var(--text-muted)'};font-variant-numeric:tabular-nums">${formatMXN(restantePorCobrar)}</strong>
+        </div>
+      </div>
+    </div>
     <div class="kpi-card">
       <div class="kpi-label">📤 Total gastado
         <button class="btn-iva-info" title="Ver desglose IVA" data-proyecto="${proyectoId}">ℹ</button>
