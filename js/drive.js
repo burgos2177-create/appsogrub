@@ -153,39 +153,38 @@ async function _uploadFile(file, fileName, folderId) {
 }
 
 /**
- * Sube un archivo de factura (PDF o XML) a Drive.
+ * Sube PDF y/o XML a la subcarpeta del gasto en Drive.
+ *
+ * files = { pdf: File|null, xml: File|null }
  *
  * Estructura:
- *   SOGRUB Facturas/
- *     {proyecto}/
- *       {fecha} - {concepto}/
- *         {concepto}.pdf   ← o .xml
+ *   SOGRUB Facturas/{proyecto}/{fecha} - {concepto}/
+ *     {concepto}.pdf
+ *     {concepto}.xml
  *
- * Retorna { id, webViewLink, folderId }
- *   folderId = ID de la subcarpeta de esta factura
- *   (guárdalo en Firebase para poder agregar el XML después)
+ * Retorna { folderId, folderUrl, pdf?: {id,webViewLink}, xml?: {id,webViewLink} }
  */
-async function driveUploadFactura(file, proyectoId, { concepto = '', fecha = '' } = {}) {
+async function driveUploadFactura(files, proyectoId, { concepto = '', fecha = '' } = {}) {
   const proyFolderId = await _getProjectFolderId(proyectoId);
 
-  // Nombre de la subcarpeta: "2026-04-02 - Materiales cemento"
   const safeName    = _sanitizeName(concepto);
   const folderLabel = fecha ? `${fecha} - ${safeName}` : safeName;
   const subfolder   = await _createFolder(folderLabel, proyFolderId);
   const subfolderId = subfolder.id;
 
-  // Nombre del archivo: "Materiales cemento.pdf"
-  const ext      = file.name.includes('.') ? file.name.split('.').pop().toLowerCase() : 'pdf';
-  const fileName = `${safeName}.${ext}`;
-
-  const result = await _uploadFile(file, fileName, subfolderId);
-
-  return {
-    id:         result.id,
-    webViewLink: result.webViewLink,
-    folderId:   subfolderId,
-    folderUrl:  `https://drive.google.com/drive/folders/${subfolderId}`,
+  const result = {
+    folderId:  subfolderId,
+    folderUrl: `https://drive.google.com/drive/folders/${subfolderId}`,
   };
+
+  if (files.pdf) {
+    result.pdf = await _uploadFile(files.pdf, `${safeName}.pdf`, subfolderId);
+  }
+  if (files.xml) {
+    result.xml = await _uploadFile(files.xml, `${safeName}.xml`, subfolderId);
+  }
+
+  return result;
 }
 
 /** Comprueba si la librería GIS ya está cargada */
