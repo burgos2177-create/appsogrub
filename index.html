@@ -35,9 +35,17 @@
     </nav>
 
     <!-- Indicador de conexión Firebase -->
-    <div id="db-status" class="db-status db-status--connecting" title="Estado de conexión con Firebase">
-      <span class="db-status__dot"></span>
-      <span class="db-status__label">Conectando…</span>
+    <div style="display:flex;align-items:center;gap:8px">
+      <button id="btn-hard-refresh" title="Recargar app" onclick="location.reload(true)"
+        style="background:none;border:1px solid var(--border);border-radius:20px;padding:4px 10px;cursor:pointer;color:var(--text-muted);font-size:12px;line-height:1;transition:all var(--transition);display:flex;align-items:center;gap:5px"
+        onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'"
+        onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-muted)'">
+        &#x21BB;
+      </button>
+      <div id="db-status" class="db-status db-status--connecting" title="Estado de conexión con Firebase">
+        <span class="db-status__dot"></span>
+        <span class="db-status__label">Conectando…</span>
+      </div>
     </div>
   </header>
 
