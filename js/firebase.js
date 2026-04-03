@@ -144,20 +144,10 @@ const _COLECCIONES = [
 let _loadedCount = 0;
 
 function _suscribirColecciones() {
-  // Timeout de seguridad: si en 6s no responden todos, arrancar con lo que haya
-  const fallback = setTimeout(() => {
-    if (!_fbReady) {
-      console.warn('[Firebase] Timeout de sincronización — arrancando con datos parciales');
-      _fbReady = true;
-      _onFirebaseReady();
-    }
-  }, 6000);
-
   function _contarCarga() {
     if (_fbReady) return;
     _loadedCount++;
     if (_loadedCount >= _COLECCIONES.length) {
-      clearTimeout(fallback);
       _fbReady = true;
       _onFirebaseReady();
     }
