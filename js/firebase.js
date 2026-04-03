@@ -144,10 +144,24 @@ const _COLECCIONES = [
 let _loadedCount = 0;
 
 function _suscribirColecciones() {
+  // Si Firebase tarda más de 20s, arrancar con datos vacíos.
+  // Cuando conecte después, los listeners dispararán _onRemoteChange
+  // y la vista activa se re-renderizará con los datos reales.
+  const _fallbackTimer = setTimeout(() => {
+    if (!_fbReady) {
+      console.warn('[Firebase] Sin respuesta en 20s — arrancando sin datos');
+      const msgEl = document.getElementById('loading-msg');
+      if (msgEl) msgEl.textContent = 'Sin conexión — intenta recargar';
+      _fbReady = true;
+      _onFirebaseReady();
+    }
+  }, 20000);
+
   function _contarCarga() {
     if (_fbReady) return;
     _loadedCount++;
     if (_loadedCount >= _COLECCIONES.length) {
+      clearTimeout(_fallbackTimer);
       _fbReady = true;
       _onFirebaseReady();
     }
