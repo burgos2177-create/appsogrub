@@ -11,6 +11,11 @@ let _analProyId  = '';
 let _analSubTab  = 'bitacora';
 let _analBitPage = 0;
 const _ANAL_PG   = 50;
+let _analChartPer   = '6m';   // '3m'|'6m'|'1y'|'2y'|'all'
+let _bitFiltOrig    = '';      // ''|'sogrub'|'proyecto'
+let _bitFiltTipo    = '';      // ''|tipo value
+let _bitFiltCat     = '';      // ''|categoria
+let _bitFiltProv    = '';      // ''|text search
 
 // =====================================================
 // PUNTO DE ENTRADA
@@ -449,23 +454,66 @@ function _aBitacora(movs) {
 }
 
 // =====================================================
-// TAB: POR PERIODO (grafica dual ingresos/egresos)
+// TAB: POR PERIODO — TradingView-style canvas chart
 // =====================================================
 function _aMensual(todos, desde, hasta) {
+  const MESES   = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  const MESES_L = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+
   const wrap = document.createElement('div');
   wrap.className = 'card';
 
-  const d0   = new Date(desde + 'T00:00:00');
-  const d1   = new Date(hasta  + 'T00:00:00');
-  const dias  = (d1 - d0) / 86400000;
-  const gran  = dias <= 14 ? 'dia' : dias <= 90 ? 'semana' : 'mes';
+  // Period selector row
+  const periods = [
+    { key: '3m', label: '3M' },
+    { key: '6m', label: '6M' },
+    { key: '1y', label: '1Y' },
+    { key: '2y', label: '2Y' },
+    { key: 'all', label: 'ALL' },
+  ];
 
+  const perRow = document.createElement('div');
+  perRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px';
+  perRow.innerHTML = `
+    <h3 class="section-title" style="margin:0">Evoluci\u00f3n por per\u00edodo</h3>
+    <div style="display:flex;gap:4px">
+      ${periods.map(p => `<button class="period-pill${_analChartPer === p.key ? ' active' : ''}" data-cper="${p.key}" style="min-width:36px">${p.label}</button>`).join('')}
+    </div>
+  `;
+  perRow.querySelectorAll('[data-cper]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      _analChartPer = btn.dataset.cper;
+      const c = document.getElementById('anal-content');
+      if (c) {
+        const {desde: d0, hasta: d1} = _aRange();
+        const t = _aAllMovs(), p = _aFiltrar(t, d0, d1), k = _aCalcKPIs(p);
+        c.innerHTML = '';
+        _aFillContent(c, t, p, k, d0, d1);
+      }
+    });
+  });
+  wrap.appendChild(perRow);
+
+  // Compute date range for selected chart period
+  const now = new Date();
+  function chartCutoff(per) {
+    const d = new Date(now);
+    if (per === '3m')  { d.setMonth(d.getMonth() - 3); return d.toISOString().slice(0, 10); }
+    if (per === '6m')  { d.setMonth(d.getMonth() - 6); return d.toISOString().slice(0, 10); }
+    if (per === '1y')  { d.setFullYear(d.getFullYear() - 1); return d.toISOString().slice(0, 10); }
+    if (per === '2y')  { d.setFullYear(d.getFullYear() - 2); return d.toISOString().slice(0, 10); }
+    return null; // all
+  }
+  const cutoff = chartCutoff(_analChartPer);
+  const useWeeks = _analChartPer === '3m';
+  const gran = useWeeks ? 'semana' : 'mes';
+  const granLab = useWeeks ? 'Semana' : 'Mes';
+
+  // Build groups from ALL todos (not filtered by date range)
   const grupos = {};
-  todos.filter(m => m.fecha && m.fecha >= desde && m.fecha <= hasta && !m._interno).forEach(m => {
+  todos.filter(m => m.fecha && !m._interno && (!cutoff || m.fecha >= cutoff)).forEach(m => {
     let key;
-    if (gran === 'dia') {
-      key = m.fecha;
-    } else if (gran === 'semana') {
+    if (gran === 'semana') {
       const d = new Date(m.fecha + 'T00:00:00');
       const dow = d.getDay() === 0 ? -6 : 1 - d.getDay();
       const mon = new Date(d); mon.setDate(d.getDate() + dow);
@@ -478,72 +526,36 @@ function _aMensual(todos, desde, hasta) {
     if (_aEsEgreso(m))  { grupos[key].egresos  += m._abs; grupos[key].count++; }
   });
 
-  const keys   = Object.keys(grupos).sort();
-  const maxVal = Math.max(...keys.map(k => Math.max(grupos[k].ingresos, grupos[k].egresos)), 1);
-  const granLab = { dia: 'D\u00eda', semana: 'Semana', mes: 'Mes' }[gran];
-  const MESES   = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
-  const MESES_L = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  const keys = Object.keys(grupos).sort();
 
   function keyLabel(k, short) {
-    if (gran === 'mes') { const [y,m] = k.split('-'); return `${(short ? MESES : MESES_L)[parseInt(m)-1]} ${y}`; }
-    if (gran === 'semana') return `Sem. ${formatDate(k)}`;
-    return formatDate(k);
+    if (gran === 'mes') {
+      const [y, mo] = k.split('-');
+      const label = (short ? MESES : MESES_L)[parseInt(mo) - 1];
+      return short ? label : `${label} ${y}`;
+    }
+    return `Sem. ${formatDate(k)}`;
+  }
+  function keyLabelLong(k) {
+    if (gran === 'mes') { const [y, mo] = k.split('-'); return `${MESES_L[parseInt(mo)-1]} ${y}`; }
+    return `Semana del ${formatDate(k)}`;
   }
 
-  wrap.innerHTML = `
-    <div class="card-header">
-      <h3 class="section-title" style="margin:0">Evoluci\u00f3n por ${granLab}</h3>
-      <span class="badge badge-info">${keys.length} per\u00edodo${keys.length !== 1 ? 's' : ''}</span>
-    </div>
-    <div style="display:flex;gap:16px;margin-bottom:16px;font-size:12px">
-      <span style="display:flex;align-items:center;gap:5px">
-        <span style="width:10px;height:10px;border-radius:2px;background:var(--success);display:inline-block"></span>Ingresos
-      </span>
-      <span style="display:flex;align-items:center;gap:5px">
-        <span style="width:10px;height:10px;border-radius:2px;background:var(--danger);display:inline-block"></span>Egresos
-      </span>
-    </div>
-  `;
+  if (keys.length === 0) {
+    wrap.appendChild(emptyState({ title: 'Sin movimientos en este per\u00edodo' }));
+    return wrap;
+  }
 
-  if (keys.length === 0) { wrap.appendChild(emptyState({ title: 'Sin movimientos en este per\u00edodo' })); return wrap; }
+  // Build groups array for chart
+  const groups = keys.map(k => ({ key: k, label: keyLabel(k, false), ingresos: grupos[k].ingresos, egresos: grupos[k].egresos }));
 
-  const chartEl = document.createElement('div');
-  chartEl.style.cssText = 'display:flex;flex-direction:column;gap:10px;margin-bottom:20px';
-  keys.forEach(k => {
-    const g   = grupos[k];
-    const bal = g.ingresos - g.egresos;
-    const pI  = (g.ingresos / maxVal * 100).toFixed(1);
-    const pE  = (g.egresos  / maxVal * 100).toFixed(1);
-    const div = document.createElement('div');
-    div.className = 'anal-period-bar';
-    div.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-        <span style="font-size:13px;font-weight:600">${keyLabel(k, true)}</span>
-        <span style="font-size:12px;font-weight:700;color:${bal>=0?'var(--success)':'var(--danger)'}">
-          ${bal>=0?'+':''}${formatMXN(bal)}
-        </span>
-      </div>
-      <div style="display:flex;flex-direction:column;gap:5px">
-        <div style="display:flex;align-items:center;gap:8px">
-          <span style="font-size:11px;color:var(--text-muted);width:60px;text-align:right;flex-shrink:0">Ingresos</span>
-          <div style="flex:1;height:8px;background:var(--surface3);border-radius:2px;overflow:hidden">
-            <div style="height:100%;width:${pI}%;background:var(--success);border-radius:2px"></div>
-          </div>
-          <span style="font-size:11px;font-weight:600;color:var(--success);min-width:100px;text-align:right">${formatMXN(g.ingresos)}</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px">
-          <span style="font-size:11px;color:var(--text-muted);width:60px;text-align:right;flex-shrink:0">Egresos</span>
-          <div style="flex:1;height:8px;background:var(--surface3);border-radius:2px;overflow:hidden">
-            <div style="height:100%;width:${pE}%;background:var(--danger);border-radius:2px"></div>
-          </div>
-          <span style="font-size:11px;font-weight:600;color:var(--danger);min-width:100px;text-align:right">${formatMXN(g.egresos)}</span>
-        </div>
-      </div>
-    `;
-    chartEl.appendChild(div);
-  });
-  wrap.appendChild(chartEl);
+  // Canvas chart container
+  const chartContainer = document.createElement('div');
+  chartContainer.style.cssText = 'position:relative;margin-bottom:20px';
+  wrap.appendChild(chartContainer);
+  _aTVChart(chartContainer, groups);
 
+  // Summary table
   const totIng = keys.reduce((a,k)=>a+grupos[k].ingresos,0);
   const totEgr = keys.reduce((a,k)=>a+grupos[k].egresos,0);
   const totBal = totIng - totEgr;
@@ -561,7 +573,7 @@ function _aMensual(todos, desde, hasta) {
       <tbody>
         ${keys.map(k=>{const g=grupos[k];const bal=g.ingresos-g.egresos;return `
           <tr>
-            <td><strong>${keyLabel(k)}</strong></td>
+            <td><strong>${keyLabelLong(k)}</strong></td>
             <td style="text-align:right" class="amount-positive">+${formatMXN(g.ingresos)}</td>
             <td style="text-align:right" class="amount-negative">-${formatMXN(g.egresos)}</td>
             <td style="text-align:right" class="${bal>=0?'amount-positive':'amount-negative'}">${bal>=0?'+':''}${formatMXN(bal)}</td>
@@ -579,6 +591,224 @@ function _aMensual(todos, desde, hasta) {
   `;
   wrap.appendChild(tw);
   return wrap;
+}
+
+// =====================================================
+// HELPER: TradingView-style canvas chart
+// =====================================================
+function _aTVChart(container, groups) {
+  const PAD = { top: 20, right: 16, bottom: 40, left: 72 };
+  const H = 280;
+
+  // Closure state
+  let _canvas, _ctx, _W, _scales, _groups;
+
+  function fmtAmt(v) {
+    if (Math.abs(v) >= 1e6) return '$' + (v/1e6).toFixed(1).replace(/\.0$/,'') + 'M';
+    if (Math.abs(v) >= 1e3) return '$' + (v/1e3).toFixed(0) + 'K';
+    return '$' + Math.round(v);
+  }
+
+  function buildScales(w) {
+    const cW = w - PAD.left - PAD.right;
+    const cH = H - PAD.top - PAD.bottom;
+    const n  = groups.length;
+
+    const maxIE = Math.max(...groups.map(g => Math.max(g.ingresos, g.egresos)), 1);
+    const rawBals = groups.map(g => g.ingresos - g.egresos);
+    const maxAbsBal = Math.max(...rawBals.map(Math.abs), 1);
+    const balMid  = (Math.max(...rawBals) + Math.min(...rawBals)) / 2;
+    const balRange = maxAbsBal * 1.5;
+
+    const xPos = (i) => PAD.left + (n <= 1 ? cW / 2 : i / (n - 1) * cW);
+    const yIE  = (v) => PAD.top + cH - (v / (maxIE * 1.1)) * cH;
+    const yBal = (v) => PAD.top + cH / 2 - ((v - balMid) / balRange) * cH;
+
+    return { cW, cH, n, maxIE, rawBals, balMid, balRange, xPos, yIE, yBal };
+  }
+
+  function drawChart(hoverIdx) {
+    const ctx = _ctx;
+    const w = _W;
+    const sc = _scales;
+    const { cW, cH, n, maxIE, xPos, yIE, yBal } = sc;
+
+    ctx.clearRect(0, 0, w, H);
+
+    // Chart area background
+    ctx.fillStyle = '#0d1117';
+    ctx.fillRect(PAD.left, PAD.top, cW, cH);
+
+    // Horizontal grid lines + Y labels
+    const nLines = 5;
+    for (let i = 0; i <= nLines; i++) {
+      const frac = i / nLines;
+      const val  = maxIE * 1.1 * (1 - frac);
+      const y    = PAD.top + frac * cH;
+      ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(PAD.left + cW, y); ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,0.4)';
+      ctx.font = '11px system-ui,sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText(fmtAmt(val), PAD.left - 6, y + 4);
+    }
+
+    // X-axis labels (max 8)
+    const maxLabels = 8;
+    const step = Math.max(1, Math.ceil(n / maxLabels));
+    for (let i = 0; i < n; i += step) {
+      const x = xPos(i);
+      // Vertical grid line
+      ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x, PAD.top); ctx.lineTo(x, PAD.top + cH); ctx.stroke();
+      // Label
+      ctx.fillStyle = 'rgba(255,255,255,0.4)';
+      ctx.font = '11px system-ui,sans-serif';
+      ctx.textAlign = 'center';
+      const lbl = groups[i].label;
+      ctx.fillText(lbl, x, PAD.top + cH + 16);
+    }
+
+    // Ingresos area
+    ctx.beginPath();
+    ctx.moveTo(xPos(0), PAD.top + cH);
+    for (let i = 0; i < n; i++) ctx.lineTo(xPos(i), yIE(groups[i].ingresos));
+    ctx.lineTo(xPos(n - 1), PAD.top + cH);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(34,197,94,0.12)';
+    ctx.fill();
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) { if (i === 0) ctx.moveTo(xPos(i), yIE(groups[i].ingresos)); else ctx.lineTo(xPos(i), yIE(groups[i].ingresos)); }
+    ctx.strokeStyle = '#22c55e';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Egresos area
+    ctx.beginPath();
+    ctx.moveTo(xPos(0), PAD.top + cH);
+    for (let i = 0; i < n; i++) ctx.lineTo(xPos(i), yIE(groups[i].egresos));
+    ctx.lineTo(xPos(n - 1), PAD.top + cH);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(239,68,68,0.12)';
+    ctx.fill();
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) { if (i === 0) ctx.moveTo(xPos(i), yIE(groups[i].egresos)); else ctx.lineTo(xPos(i), yIE(groups[i].egresos)); }
+    ctx.strokeStyle = '#ef4444';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Balance dashed line
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) {
+      const x = xPos(i);
+      const y = yBal(groups[i].ingresos - groups[i].egresos);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = '#60a5fa';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 3]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Hover crosshair
+    if (hoverIdx != null && hoverIdx >= 0 && hoverIdx < n) {
+      const hx = xPos(hoverIdx);
+      ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(hx, PAD.top); ctx.lineTo(hx, PAD.top + cH); ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Dots
+      [[yIE(groups[hoverIdx].ingresos), '#22c55e'],
+       [yIE(groups[hoverIdx].egresos),  '#ef4444'],
+       [yBal(groups[hoverIdx].ingresos - groups[hoverIdx].egresos), '#60a5fa']
+      ].forEach(([hy, color]) => {
+        ctx.beginPath();
+        ctx.arc(hx, hy, 4, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+        ctx.strokeStyle = '#1a2030';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      });
+    }
+  }
+
+  function initCanvas() {
+    _canvas = document.createElement('canvas');
+    _W = container.offsetWidth || 600;
+    _canvas.width  = _W;
+    _canvas.height = H;
+    _canvas.style.cssText = 'width:100%;height:' + H + 'px;display:block';
+    _ctx    = _canvas.getContext('2d');
+    _groups = groups;
+    _scales = buildScales(_W);
+    container.appendChild(_canvas);
+    drawChart(null);
+
+    // Legend
+    const legend = document.createElement('div');
+    legend.style.cssText = 'display:flex;gap:16px;justify-content:center;margin-top:10px;font-size:12px;color:rgba(255,255,255,0.6)';
+    legend.innerHTML = [
+      ['#22c55e', 'Ingresos'],
+      ['#ef4444', 'Egresos'],
+      ['#60a5fa', 'Balance neto'],
+    ].map(([color, label]) =>
+      `<span style="display:flex;align-items:center;gap:5px">
+        <span style="width:10px;height:10px;border-radius:2px;background:${color};display:inline-block;flex-shrink:0"></span>${label}
+      </span>`
+    ).join('');
+    container.appendChild(legend);
+
+    // Tooltip
+    const tooltip = document.createElement('div');
+    tooltip.style.cssText = 'position:absolute;pointer-events:none;background:rgba(15,20,30,0.92);border:1px solid rgba(255,255,255,0.12);border-radius:6px;padding:8px 12px;font-size:12px;color:#e2e8f0;display:none;z-index:10;min-width:160px;white-space:nowrap';
+    container.appendChild(tooltip);
+
+    _canvas.addEventListener('mousemove', (e) => {
+      const rect = _canvas.getBoundingClientRect();
+      const mx   = (e.clientX - rect.left) * (_W / rect.width);
+      if (!_scales || _scales.n < 1) return;
+      const { n, xPos } = _scales;
+      // Find nearest index
+      let nearest = 0, minDist = Infinity;
+      for (let i = 0; i < n; i++) {
+        const dist = Math.abs(xPos(i) - mx);
+        if (dist < minDist) { minDist = dist; nearest = i; }
+      }
+      drawChart(nearest);
+      const g   = groups[nearest];
+      const bal = g.ingresos - g.egresos;
+      tooltip.innerHTML = `
+        <div style="font-weight:600;margin-bottom:5px;color:#94a3b8">${g.label}</div>
+        <div style="color:#22c55e">Ingresos &nbsp;+${formatMXN(g.ingresos)}</div>
+        <div style="color:#ef4444">Egresos &nbsp;&nbsp;-${formatMXN(g.egresos)}</div>
+        <div style="color:#60a5fa;margin-top:3px;border-top:1px solid rgba(255,255,255,0.08);padding-top:3px">Balance &nbsp;${bal>=0?'+':''}${formatMXN(bal)}</div>
+      `;
+      // Position tooltip
+      const hx   = xPos(nearest);
+      const flip  = hx > _W * 0.65;
+      tooltip.style.display  = 'block';
+      tooltip.style.top      = (PAD.top + 4) + 'px';
+      tooltip.style.left     = flip ? '' : (hx + 12) + 'px';
+      tooltip.style.right    = flip ? (_W - hx + 12) + 'px' : '';
+    });
+
+    _canvas.addEventListener('mouseleave', () => {
+      tooltip.style.display = 'none';
+      drawChart(null);
+    });
+  }
+
+  // Defer so container has layout
+  if (container.offsetWidth > 0) {
+    initCanvas();
+  } else {
+    requestAnimationFrame(() => { if (container.offsetWidth > 0) initCanvas(); });
+  }
 }
 
 // =====================================================
