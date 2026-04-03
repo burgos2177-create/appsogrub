@@ -1529,14 +1529,10 @@ function _generarEstadoDeCuentaImpl(proyectoId) {
   const montoUti = acum * (pctUti / 100); acum += montoUti;
   const subtotal = acum;
 
-  // IVA restante = IVA por cobrar de gastos S/IVA
   const iva = calcIVADesglose(proyectoId);
-  const ivaRestante = iva.ivaPorCobrar;
 
-  const totalFactura = subtotal + ivaRestante;
-
-  // Balance
-  const balance = totalCobrado - totalFactura;
+  // Balance se calcula con total factura completa (subtotal + IVA restante)
+  const balance = totalCobrado - (subtotal + iva.ivaPorCobrar);
 
   // ---------- PDF ----------
   const doc = new jsPDF({ unit: 'mm', format: 'letter' });
@@ -1625,17 +1621,51 @@ function _generarEstadoDeCuentaImpl(proyectoId) {
     y += 2;
   }
 
-  // ---------- TOTALES ----------
+  // ---------- DESGLOSE FISCAL ----------
+  const baseGravable = subtotal - iva.ivaPagado;
+  const ivaReal      = iva.ivaPagado;
+  const ivaRestante  = iva.ivaPorCobrar;
+  const totalConIvaReal = subtotal;             // base gravable + IVA ya pagado
+  const totalFactura    = subtotal + ivaRestante; // factura completa
+
   doc.setFontSize(11);
   doc.setFont('helvetica', 'bold');
-  doc.text(`SUBTOTAL: ${_fmtMXN(subtotal)}`, marginL, y);
-  y += 7;
-  doc.text(`IVA RESTANTE: ${_fmtMXN(ivaRestante)}`, marginL, y);
-  y += 7;
+
+  doc.text('SUBTOTAL (Base gravable):', marginL, y);
+  doc.text(_fmtMXN(baseGravable), marginL + usable, y, { align: 'right' });
+  y += 6;
+  doc.text('+ IVA PAGADO (IVA real c/factura):', marginL, y);
+  doc.text(_fmtMXN(ivaReal), marginL + usable, y, { align: 'right' });
+  y += 2;
+  doc.setLineWidth(0.3);
+  doc.line(marginL, y, marginL + usable, y);
+  y += 6;
+  doc.setFontSize(12);
+  doc.text('COSTO + IVA REAL:', marginL, y);
+  doc.text(_fmtMXN(totalConIvaReal), marginL + usable, y, { align: 'right' });
+  y += 8;
+
+  doc.setFontSize(11);
+  doc.text('+ IVA RESTANTE*:', marginL, y);
+  doc.text(_fmtMXN(ivaRestante), marginL + usable, y, { align: 'right' });
+  y += 2;
+  doc.setLineWidth(0.3);
+  doc.line(marginL, y, marginL + usable, y);
+  y += 6;
+
   doc.setFontSize(13);
   doc.setTextColor(180, 30, 30);
-  doc.text(`TOTAL FACTURA: ${_fmtMXN(totalFactura)}`, marginL, y);
+  doc.text('TOTAL FACTURA COMPLETA:', marginL, y);
+  doc.text(_fmtMXN(totalFactura), marginL + usable, y, { align: 'right' });
   doc.setTextColor(0, 0, 0);
+  y += 5;
+
+  doc.setFontSize(7.5);
+  doc.setFont('helvetica', 'italic');
+  doc.setTextColor(100, 100, 100);
+  doc.text('*IVA que aplica si el cliente requiere factura sobre gastos registrados sin comprobante fiscal (16% sobre gastos S/IVA)', marginL, y);
+  doc.setTextColor(0, 0, 0);
+  doc.setFont('helvetica', 'bold');
   y += 14;
 
   // ---------- BALANCE ----------
