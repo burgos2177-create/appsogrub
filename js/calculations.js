@@ -185,6 +185,23 @@ function calcTotalCobradoCliente(proyectoId) {
   return movs.reduce((acc, m) => acc + m.monto, 0);
 }
 
+// Desglose IVA de lo cobrado al cliente
+function calcIVACobradoCliente(proyectoId) {
+  const movs = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
+    .filter(m => m.proyecto_id === proyectoId && m.tipo === 'abono_cliente');
+  let netoTotal = 0, ivaTotal = 0;
+  movs.forEach(m => {
+    const abs = Math.abs(m.monto ?? 0);
+    if (m.incluye_iva) {
+      netoTotal += abs / 1.16;
+      ivaTotal  += abs - abs / 1.16;
+    } else {
+      netoTotal += abs;
+    }
+  });
+  return { netoTotal, ivaTotal, total: netoTotal + ivaTotal };
+}
+
 // Total gastado pagado (para detalle)
 function calcTotalGastadoPagado(proyectoId) {
   const movs = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])

@@ -55,6 +55,7 @@ function renderDetalle(proyectoId) {
 function renderDetalleKPIs(proyectoId, proyecto) {
   const saldoCaja        = calcSaldoCajaProyecto(proyectoId);
   const totalCobrado     = calcTotalCobradoCliente(proyectoId);
+  const ivaCobrado       = calcIVACobradoCliente(proyectoId);
   const totalGastado     = calcTotalGastadoPagado(proyectoId);
   const utilidadReal     = calcUtilidadReal(proyectoId);
   const utilidadEst      = calcUtilidadEstimada(proyectoId);
@@ -63,6 +64,7 @@ function renderDetalleKPIs(proyectoId, proyecto) {
   const iva              = calcIVADesglose(proyectoId);
   const presupuesto      = proyecto?.presupuesto_contrato ?? 0;
   const restantePorCobrar = Math.max(0, presupuesto - totalCobrado);
+  const ivaBalance       = ivaCobrado.ivaTotal - iva.ivaPagado;
 
   const cls = avance < 60 ? 'low' : avance < 85 ? 'medium' : 'high';
 
@@ -74,8 +76,23 @@ function renderDetalleKPIs(proyectoId, proyecto) {
     <div class="kpi-card">
       <div class="kpi-label">📥 Total cobrado</div>
       <div class="kpi-value text-success" style="font-size:20px">${formatMXN(totalCobrado)}</div>
-      <div class="kpi-sub" style="display:flex;flex-direction:column;gap:2px;margin-top:4px">
+      <div class="kpi-sub" style="display:flex;flex-direction:column;gap:3px;margin-top:4px">
+        ${ivaCobrado.ivaTotal > 0 ? `
         <div style="display:flex;justify-content:space-between">
+          <span>Neto cobrado</span>
+          <strong style="font-variant-numeric:tabular-nums">${formatMXN(ivaCobrado.netoTotal)}</strong>
+        </div>
+        <div style="display:flex;justify-content:space-between">
+          <span>IVA cobrado al cliente</span>
+          <strong style="color:var(--accent);font-variant-numeric:tabular-nums">${formatMXN(ivaCobrado.ivaTotal)}</strong>
+        </div>
+        <div style="border-top:1px solid var(--border);margin-top:2px;padding-top:3px;display:flex;justify-content:space-between">
+          <span style="color:${ivaBalance >= 0 ? 'var(--success)' : 'var(--warning)'}">Balance IVA</span>
+          <strong style="color:${ivaBalance >= 0 ? 'var(--success)' : 'var(--warning)'};font-variant-numeric:tabular-nums"
+            title="IVA cobrado al cliente minus IVA pagado en gastos">${ivaBalance >= 0 ? '+' : ''}${formatMXN(ivaBalance)}</strong>
+        </div>
+        ` : ''}
+        <div style="display:flex;justify-content:space-between;${ivaCobrado.ivaTotal > 0 ? '' : ''}">
           <span>Restante por cobrar</span>
           <strong style="color:${restantePorCobrar > 0 ? 'var(--warning)' : 'var(--text-muted)'};font-variant-numeric:tabular-nums">${formatMXN(restantePorCobrar)}</strong>
         </div>
@@ -87,10 +104,17 @@ function renderDetalleKPIs(proyectoId, proyecto) {
       </div>
       <div class="kpi-value text-danger" style="font-size:20px">${formatMXN(totalGastado)}</div>
       <div class="kpi-sub iva-desglose hidden" id="iva-desglose-${proyectoId}">
-        <div>Neto: <strong>${formatMXN(iva.gastoNeto)}</strong></div>
-        <div>IVA real: <strong>${formatMXN(iva.ivaPagado)}</strong></div>
+        <div style="font-weight:600;color:var(--text-muted);margin-bottom:3px;font-size:10px;text-transform:uppercase;letter-spacing:.05em">Gastos</div>
+        <div>Neto gastado: <strong>${formatMXN(iva.gastoNeto)}</strong></div>
+        <div>IVA pagado (gastos): <strong style="color:var(--danger)">${formatMXN(iva.ivaPagado)}</strong></div>
         <div style="color:var(--success)">IVA verificado c/facturas: <strong>${formatMXN(iva.ivaVerificado)}</strong></div>
-        <div style="color:var(--warning)">IVA por cobrar: <strong>${formatMXN(iva.ivaPorCobrar)}</strong></div>
+        <div style="color:var(--warning)">IVA por acreditar: <strong>${formatMXN(iva.ivaPorCobrar)}</strong></div>
+        <div style="border-top:1px solid var(--border);margin-top:4px;padding-top:4px;font-weight:600;color:var(--text-muted);font-size:10px;text-transform:uppercase;letter-spacing:.05em">Cobrado al cliente</div>
+        <div>IVA cobrado: <strong style="color:var(--accent)">${formatMXN(ivaCobrado.ivaTotal)}</strong></div>
+        <div style="margin-top:3px">Balance IVA:
+          <strong style="color:${ivaBalance >= 0 ? 'var(--success)' : 'var(--warning)'}">${ivaBalance >= 0 ? '+' : ''}${formatMXN(ivaBalance)}</strong>
+          <span style="font-size:10px;color:var(--text-dim)">(cobrado &minus; pagado)</span>
+        </div>
       </div>
       <button class="btn btn-secondary btn-sm" id="btn-estado-cuenta-${proyectoId}"
         style="margin-top:8px;font-size:11px;padding:4px 10px">
@@ -495,12 +519,51 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
     </div>
     ` : `
     <div class="form-group">
+      <label class="form-label">IVA</label>
+      <div class="toggle-group" style="max-width:280px">
+        <input type="radio" name="pm-iva-abono" id="pm-siniva-abono" value="false" class="toggle-option"
+          ${!mov?.incluye_iva ? 'checked' : ''}>
+        <label for="pm-siniva-abono" class="toggle-label">Sin IVA</label>
+        <input type="radio" name="pm-iva-abono" id="pm-coniva-abono" value="true" class="toggle-option"
+          ${mov?.incluye_iva ? 'checked' : ''}>
+        <label for="pm-coniva-abono" class="toggle-label">Con IVA (16%)</label>
+      </div>
+      <div id="pm-abono-iva-desglose" style="display:none;margin-top:8px;padding:8px 12px;background:var(--surface2);border-radius:var(--radius);font-size:12px;color:var(--text-muted)">
+        Neto: <strong id="pm-abono-neto">—</strong> &nbsp;+&nbsp; IVA 16%: <strong id="pm-abono-iva">—</strong>
+      </div>
+    </div>
+    <div class="form-group">
       <label class="form-label" for="pm-nota">Nota <span class="text-dim">(opcional)</span></label>
       <input type="text" id="pm-nota" class="form-input" placeholder="Nota adicional"
         value="${mov?.subcontratista ?? ''}">
     </div>
     `}
   `;
+
+  // Abono: toggle IVA desglose en tiempo real
+  if (!esGasto) {
+    setTimeout(() => {
+      const montoEl   = body.querySelector('#pm-monto');
+      const desglose  = body.querySelector('#pm-abono-iva-desglose');
+      const netoEl    = body.querySelector('#pm-abono-neto');
+      const ivaEl     = body.querySelector('#pm-abono-iva');
+      const updateAbono = () => {
+        const conIva = body.querySelector('#pm-coniva-abono')?.checked;
+        const monto  = parseFloat(montoEl?.value) || 0;
+        if (desglose) desglose.style.display = conIva ? 'block' : 'none';
+        if (conIva && netoEl && ivaEl) {
+          const neto = monto / 1.16;
+          const iva  = monto - neto;
+          netoEl.textContent = formatMXN(neto);
+          ivaEl.textContent  = formatMXN(iva);
+        }
+      };
+      body.querySelectorAll('input[name="pm-iva-abono"]').forEach(r =>
+        r.addEventListener('change', updateAbono));
+      montoEl?.addEventListener('input', updateAbono);
+      updateAbono();
+    }, 0);
+  }
 
   // Show/hide factura field + wire OCR on file selection
   if (esGasto) {
@@ -607,7 +670,7 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
         : '';
       const incluye_iva = esGasto
         ? body.querySelector('#pm-coniva')?.checked ?? false
-        : false;
+        : body.querySelector('#pm-coniva-abono')?.checked ?? false;
 
       const valid = validateFields([
         { el: body.querySelector('#pm-fecha'),   msg: 'Selecciona una fecha' },
