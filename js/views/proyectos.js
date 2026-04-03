@@ -180,6 +180,26 @@ function abrirModalProyecto(id = null) {
         value="${proy?.presupuesto_contrato ?? ''}">
     </div>
     <div class="form-group">
+      <label class="form-label">Sobrecostos (%)</label>
+      <div class="form-row" style="gap:8px">
+        <div class="form-group" style="flex:1">
+          <label class="form-label" for="proy-indirectos" style="font-size:11px;color:var(--text-muted)">Indirectos</label>
+          <input type="number" id="proy-indirectos" class="form-input" placeholder="0" min="0" max="100" step="0.1"
+            value="${proy?.sobrecosto_indirectos ?? ''}">
+        </div>
+        <div class="form-group" style="flex:1">
+          <label class="form-label" for="proy-financiamiento" style="font-size:11px;color:var(--text-muted)">Financiamiento</label>
+          <input type="number" id="proy-financiamiento" class="form-input" placeholder="0" min="0" max="100" step="0.1"
+            value="${proy?.sobrecosto_financiamiento ?? ''}">
+        </div>
+        <div class="form-group" style="flex:1">
+          <label class="form-label" for="proy-utilidad" style="font-size:11px;color:var(--text-muted)">Utilidad</label>
+          <input type="number" id="proy-utilidad" class="form-input" placeholder="0" min="0" max="100" step="0.1"
+            value="${proy?.sobrecosto_utilidad ?? ''}">
+        </div>
+      </div>
+    </div>
+    <div class="form-group">
       <label class="form-label" for="proy-estado">Estado</label>
       <select id="proy-estado" class="form-select">
         <option value="activo"     ${(proy?.estado ?? 'activo') === 'activo'    ? 'selected' : ''}>Activo</option>
@@ -199,6 +219,9 @@ function abrirModalProyecto(id = null) {
       const fecha_inicio = body.querySelector('#proy-fecha').value;
       const presupuesto  = parseFloat(body.querySelector('#proy-presupuesto').value);
       const estado       = body.querySelector('#proy-estado').value;
+      const sobrecosto_indirectos     = parseFloat(body.querySelector('#proy-indirectos').value) || 0;
+      const sobrecosto_financiamiento = parseFloat(body.querySelector('#proy-financiamiento').value) || 0;
+      const sobrecosto_utilidad       = parseFloat(body.querySelector('#proy-utilidad').value) || 0;
 
       const valid = validateFields([
         { el: body.querySelector('#proy-nombre'),       msg: 'Escribe el nombre del proyecto' },
@@ -208,11 +231,14 @@ function abrirModalProyecto(id = null) {
       ]);
       if (!valid) return;
 
+      const data = { nombre, cliente, fecha_inicio, presupuesto_contrato: presupuesto, estado,
+                     sobrecosto_indirectos, sobrecosto_financiamiento, sobrecosto_utilidad };
+
       if (proy) {
-        updateItem(KEYS.PROYECTOS, id, { nombre, cliente, fecha_inicio, presupuesto_contrato: presupuesto, estado });
+        updateItem(KEYS.PROYECTOS, id, data);
         showToast('Proyecto actualizado', 'success');
       } else {
-        addItem(KEYS.PROYECTOS, { nombre, cliente, fecha_inicio, presupuesto_contrato: presupuesto, estado });
+        addItem(KEYS.PROYECTOS, data);
         showToast(`Proyecto "${nombre}" creado`, 'success');
       }
 
