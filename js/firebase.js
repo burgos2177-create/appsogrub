@@ -166,6 +166,14 @@ function _suscribirColecciones() {
       }
     }, err => {
       console.error(`[Firebase] Error listener "${key}":`, err);
+      // Contar igual para no colgar la app si un listener falla
+      if (!_fbReady) {
+        _loadedCount++;
+        if (_loadedCount >= _COLECCIONES.length) {
+          _fbReady = true;
+          _onFirebaseReady();
+        }
+      }
     });
   });
 }
@@ -240,10 +248,25 @@ async function _migrarLocalStorageSiEsNecesario() {
   if (_migracionRealizada) return;
   _migracionRealizada = true;
 
-  const snap = await _db.ref('sogrub_movimientos').get();
+  let snap;
+  try {
+    // Timeout de 8s para no colgar la app si Firebase tarda
+    snap = await Promise.race([
+      _db.ref('sogrub_movimientos').get(),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('migration-timeout')), 8000)
+      ),
+    ]);
+  } catch (e) {
+    console.warn('[Firebase] Omitiendo migración (timeout/error):', e.message);
+    return; // Continuar sin migrar — los listeners traerán los datos
+  }
 
   // Si ya hay datos en Firebase, no migrar
-  if (snap.exists() && Array.isArray(snap.val()) && snap.val().length > 0) {
+  const val = snap.val();
+  const yaExiste = snap.exists() && val !== null &&
+    (Array.isArray(val) ? val.length > 0 : Object.keys(val).length > 0);
+  if (yaExiste) {
     console.log('[Firebase] Datos ya existen en Firebase, sin migración.');
     return;
   }
