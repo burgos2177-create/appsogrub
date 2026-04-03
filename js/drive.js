@@ -173,11 +173,12 @@ async function _uploadFile(file, fileName, folderId) {
   return resp.json();  // { id, webViewLink }
 }
 
-// ---- Sobreescribir un archivo existente en Drive (PATCH) ----
+// ---- Sobreescribir un archivo en Drive (PATCH) — también lo saca de papelera ----
 async function _patchFile(file, fileId) {
   const token = await driveGetToken();
   const form  = new FormData();
-  form.append('metadata', new Blob(['{}'], { type: 'application/json' }));
+  // trashed:false saca el archivo de la papelera si estaba ahí
+  form.append('metadata', new Blob(['{"trashed":false}'], { type: 'application/json' }));
   form.append('file', file);
 
   const resp = await fetch(
@@ -201,11 +202,21 @@ async function _overwriteOrUpload(file, fileName, folderId, existingId) {
     try {
       return await _patchFile(file, existingId);
     } catch (err) {
-      // El archivo fue borrado de Drive — crear uno nuevo
       console.warn('[Drive] Archivo previo no encontrado, creando nuevo:', err.message);
     }
   }
   return await _uploadFile(file, fileName, folderId);
+}
+
+// ---- Limpiar IDs obsoletos del proyecto y reconstruir carpeta raíz ----
+async function _resetDriveFolders(proyectoId) {
+  // Limpiar carpeta raíz en config
+  const cfg = getConfig();
+  cfg.drive_root_folder_id = '';
+  saveConfig(cfg);
+  // Limpiar carpeta del proyecto
+  const proyecto = getItem(KEYS.PROYECTOS, proyectoId);
+  if (proyecto) updateItem(KEYS.PROYECTOS, proyectoId, { drive_folder_id: '' });
 }
 
 /**
@@ -214,21 +225,14 @@ async function _overwriteOrUpload(file, fileName, folderId, existingId) {
  * files = { pdf: File|null, xml: File|null }
  * existing = { pdfId, xmlId, folderId } — IDs previos para sobreescribir
  *
- * Estructura:
- *   SOGRUB Facturas/{proyecto}/{fecha} - {concepto}/
- *     {concepto}.pdf
- *     {nombre-original}.xml
- *
  * Retorna { folderId, folderUrl, pdf?: {id,webViewLink}, xml?: {id,webViewLink} }
  */
 async function driveUploadFactura(files, proyectoId, { concepto = '', fecha = '', existing = {} } = {}) {
-  const proyFolderId = await _getProjectFolderId(proyectoId);
-
   const safeName    = _sanitizeName(concepto);
   const folderLabel = fecha ? `${fecha} - ${safeName}` : safeName;
 
-  // Reusar carpeta existente o crear nueva
-  let subfolderId = existing.folderId
+  let proyFolderId = await _getProjectFolderId(proyectoId);
+  let subfolderId  = existing.folderId
     ?? (await _createFolder(folderLabel, proyFolderId)).id;
 
   const result = {
@@ -236,18 +240,25 @@ async function driveUploadFactura(files, proyectoId, { concepto = '', fecha = ''
     folderUrl: `https://drive.google.com/drive/folders/${subfolderId}`,
   };
 
-  // Sube un archivo; si la carpeta fue eliminada, la recrea y reintenta
+  // Sube un archivo con doble intento:
+  // 1º: usa carpeta/archivo existentes (PATCH o POST)
+  // 2º: si falla (carpeta en papelera o eliminada), reconstruye toda la jerarquía y reintenta
   const _safeUpload = async (file, fileName, existingFileId) => {
     try {
       return await _overwriteOrUpload(file, fileName, subfolderId, existingFileId);
-    } catch (err) {
-      // La carpeta ya no existe en Drive — crear una nueva y reintentar
-      console.warn('[Drive] Carpeta eliminada, recreando:', err.message);
-      subfolderId      = (await _createFolder(folderLabel, proyFolderId)).id;
-      result.folderId  = subfolderId;
-      result.folderUrl = `https://drive.google.com/drive/folders/${subfolderId}`;
-      return await _uploadFile(file, fileName, subfolderId);
+    } catch (firstErr) {
+      console.warn('[Drive] Primer intento fallido, reconstruyendo jerarquía:', firstErr.message);
     }
+
+    // Limpiar todos los IDs obsoletos y reconstruir desde cero
+    await _resetDriveFolders(proyectoId);
+    proyFolderId     = await _getProjectFolderId(proyectoId);
+    subfolderId      = (await _createFolder(folderLabel, proyFolderId)).id;
+    result.folderId  = subfolderId;
+    result.folderUrl = `https://drive.google.com/drive/folders/${subfolderId}`;
+
+    // Segundo intento siempre crea archivo nuevo (los IDs anteriores son inválidos)
+    return await _uploadFile(file, fileName, subfolderId);
   };
 
   if (files.pdf) {
