@@ -1363,9 +1363,11 @@ function _generarEstadoDeCuentaImpl(proyectoId) {
 
   // ---------- Cálculos ----------
   let costoDirecto = 0;
+  let gastoIndirectoReal = 0;  // gastos categoría "Indirecto" ya pagados
   const filas = gastos.map(g => {
     const abs = Math.abs(g.monto);
     costoDirecto += abs;
+    if ((g.categoria ?? '').toLowerCase() === 'indirecto') gastoIndirectoReal += abs;
     const ivaTag = g.incluye_iva ? 'C/IVA' : 'S/IVA';
     return [
       (g.fecha ?? '').replace(/^(\d{4})-(\d{2})-(\d{2})$/, '$3/$2/$1'),
@@ -1380,7 +1382,10 @@ function _generarEstadoDeCuentaImpl(proyectoId) {
   const pctUti = proyecto.sobrecosto_utilidad       ?? 0;
 
   let acum = costoDirecto;
-  const montoInd = acum * (pctInd / 100); acum += montoInd;
+  // Restar gastos indirectos ya registrados para no cobrar doble
+  const montoIndCalc = acum * (pctInd / 100);
+  const montoInd = Math.max(0, montoIndCalc - gastoIndirectoReal);
+  acum += montoInd;
   const montoFin = acum * (pctFin / 100); acum += montoFin;
   const montoUti = acum * (pctUti / 100); acum += montoUti;
   const subtotal = acum;
@@ -1447,8 +1452,11 @@ function _generarEstadoDeCuentaImpl(proyectoId) {
     const sobrecostosBody = [];
     let runningTotal = costoDirecto;
     if (pctInd > 0) {
-      const m = runningTotal * (pctInd / 100); runningTotal += m;
-      sobrecostosBody.push([`Indirectos ${pctInd}%`, _fmtMXN(m), _fmtMXN(runningTotal)]);
+      const indLabel = gastoIndirectoReal > 0
+        ? `Indirectos ${pctInd}% (- ${_fmtMXN(gastoIndirectoReal)} ya gastados)`
+        : `Indirectos ${pctInd}%`;
+      runningTotal += montoInd;
+      sobrecostosBody.push([indLabel, _fmtMXN(montoInd), _fmtMXN(runningTotal)]);
     }
     if (pctFin > 0) {
       const m = runningTotal * (pctFin / 100); runningTotal += m;
