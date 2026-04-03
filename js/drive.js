@@ -198,8 +198,7 @@ async function _uploadFile(file, fileName, folderId) {
 async function _patchFile(file, fileId) {
   const token = await driveGetToken();
   const form  = new FormData();
-  // trashed:false saca el archivo de la papelera si estaba ahí
-  form.append('metadata', new Blob(['{"trashed":false}'], { type: 'application/json' }));
+  form.append('metadata', new Blob(['{}'], { type: 'application/json' }));
   form.append('file', file);
 
   const resp = await fetch(
@@ -268,11 +267,18 @@ async function _doUpload(files, proyectoId, { concepto = '', fecha = '', existin
 
   // Verificar que la subcarpeta existe y no está en papelera
   let subfolderId;
+  let folderReused = false;
   if (existing.folderId && await _folderAlive(existing.folderId)) {
-    subfolderId = existing.folderId;
+    subfolderId  = existing.folderId;
+    folderReused = true;
   } else {
     subfolderId = (await _createFolder(folderLabel, proyFolderId)).id;
   }
+
+  // Si la carpeta fue recreada, los IDs de archivos viejos apuntan a archivos
+  // dentro de la carpeta eliminada/papelera — NO intentar PATCH, siempre subir nuevos
+  const safePdfId = folderReused ? (existing.pdfId ?? null) : null;
+  const safeXmlId = folderReused ? (existing.xmlId ?? null) : null;
 
   const result = {
     folderId:  subfolderId,
@@ -280,10 +286,10 @@ async function _doUpload(files, proyectoId, { concepto = '', fecha = '', existin
   };
 
   if (files.pdf) {
-    result.pdf = await _overwriteOrUpload(files.pdf, `${safeName}.pdf`, subfolderId, existing.pdfId ?? null);
+    result.pdf = await _overwriteOrUpload(files.pdf, `${safeName}.pdf`, subfolderId, safePdfId);
   }
   if (files.xml) {
-    result.xml = await _overwriteOrUpload(files.xml, files.xml.name, subfolderId, existing.xmlId ?? null);
+    result.xml = await _overwriteOrUpload(files.xml, files.xml.name, subfolderId, safeXmlId);
   }
 
   return result;
