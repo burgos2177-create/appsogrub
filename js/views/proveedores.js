@@ -21,9 +21,12 @@ function renderProveedores() {
   toolbar.className = 'toolbar mb-20';
   toolbar.innerHTML = `
     <button class="btn btn-primary" id="btn-nuevo-prov">＋ Nuevo proveedor</button>
+    <button class="btn btn-secondary" id="btn-sync-rfc" title="Extrae RFC de facturas XML ya cargadas en Drive">🔍 Sincronizar RFCs</button>
   `;
   toolbar.querySelector('#btn-nuevo-prov').addEventListener('click', () =>
     abrirModalProveedorGlobal());
+  toolbar.querySelector('#btn-sync-rfc').addEventListener('click', (e) =>
+    sincronizarRFCsDesdeFacturas(e.currentTarget));
   root.appendChild(toolbar);
 
   // ---- Lista ----
@@ -396,6 +399,88 @@ async function descargarTodasFacturasProveedor(proveedorNombre, resumen, btnEl) 
     showToast('Error al generar ZIP: ' + err.message, 'error');
   } finally {
     if (btnEl) { btnEl.disabled = false; btnEl.textContent = '⬇ Descargar todas las facturas (ZIP)'; }
+  }
+}
+
+// =====================================================
+// SINCRONIZAR RFCs DESDE FACTURAS XML EN DRIVE
+// Solo procesa proveedores globales sin RFC que tengan
+// al menos un gasto con XML en Drive
+// =====================================================
+async function sincronizarRFCsDesdeFacturas(btn) {
+  const proveedores = (getCollection(KEYS.PROVEEDORES) ?? [])
+    .filter(p => !p.rfc || p.rfc.trim() === '');
+
+  if (proveedores.length === 0) {
+    return showToast('Todos los proveedores ya tienen RFC', 'info');
+  }
+
+  const movimientos = getCollection(KEYS.PROY_MOVIMIENTOS) ?? [];
+
+  // Por cada proveedor sin RFC, buscar el primer gasto con XML en Drive
+  const pendientes = proveedores.map(p => {
+    const mov = movimientos.find(m =>
+      m.subcontratista === p.nombre && m.factura_xml_id
+    );
+    return mov ? { proveedor: p, xmlId: mov.factura_xml_id } : null;
+  }).filter(Boolean);
+
+  if (pendientes.length === 0) {
+    return showToast('No hay facturas XML en Drive para extraer RFCs', 'info');
+  }
+
+  if (btn) { btn.disabled = true; btn.textContent = `Sincronizando…`; }
+
+  let token;
+  try {
+    token = await driveGetToken();
+  } catch (err) {
+    if (btn) { btn.disabled = false; btn.textContent = '🔍 Sincronizar RFCs'; }
+    return showToast('Error de autenticación: ' + err.message, 'error');
+  }
+
+  let actualizados = 0;
+  let sinRFC = 0;
+
+  for (const { proveedor, xmlId } of pendientes) {
+    try {
+      // Descargar el XML desde Drive
+      const resp = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${xmlId}?alt=media`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (!resp.ok) { sinRFC++; continue; }
+
+      const text = await resp.text();
+      const doc  = new DOMParser().parseFromString(text, 'application/xml');
+
+      // Buscar nodo Emisor en CFDI 3.3 / 4.0
+      const emisor =
+        doc.querySelector('Emisor') ??
+        doc.getElementsByTagNameNS('http://www.sat.gob.mx/cfd/4', 'Emisor')[0] ??
+        doc.getElementsByTagNameNS('http://www.sat.gob.mx/cfd/3', 'Emisor')[0];
+
+      const rfc = emisor?.getAttribute('Rfc')?.trim();
+      if (!rfc) { sinRFC++; continue; }
+
+      updateItem(KEYS.PROVEEDORES, proveedor.id, { rfc });
+      actualizados++;
+    } catch (e) {
+      console.warn(`[RFC sync] ${proveedor.nombre}:`, e.message);
+      sinRFC++;
+    }
+  }
+
+  if (btn) { btn.disabled = false; btn.textContent = '🔍 Sincronizar RFCs'; }
+
+  if (actualizados > 0) {
+    refreshProveedoresList();
+    const msg = sinRFC > 0
+      ? `${actualizados} RFC(s) sincronizados (${sinRFC} sin XML disponible)`
+      : `${actualizados} RFC(s) sincronizados correctamente`;
+    showToast(msg, 'success');
+  } else {
+    showToast('No se encontró RFC en ningún XML disponible', 'warning');
   }
 }
 
