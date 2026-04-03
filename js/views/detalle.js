@@ -1054,13 +1054,19 @@ function _agruparArchivos(files) {
   for (const f of files) {
     const name = f.name;
     const ext  = name.split('.').pop().toLowerCase();
-    // Nombre base sin extensión
-    const base = name.replace(/\.[^.]+$/, '').trim().toLowerCase();
+    // Nombre base: quitar extensión y sufijo de duplicado del SO " (1)", " (2)", etc.
+    const baseName = name.replace(/\.[^.]+$/, '').replace(/\s*\(\d+\)$/, '').trim();
+    const key      = baseName.toLowerCase();
 
-    if (!groups[base]) groups[base] = { pdf: null, xml: null, baseName: name.replace(/\.[^.]+$/, '') };
+    if (!groups[key]) groups[key] = { pdf: null, xml: null, baseName };
 
-    if (ext === 'xml') groups[base].xml = f;
-    else if (ext === 'pdf') groups[base].pdf = f;
+    if (ext === 'xml') {
+      // Preferir el XML sin sufijo de duplicado
+      if (!groups[key].xml || !f.name.match(/\s*\(\d+\)\.[^.]+$/)) groups[key].xml = f;
+    } else if (ext === 'pdf') {
+      // Preferir el PDF sin sufijo de duplicado
+      if (!groups[key].pdf || !f.name.match(/\s*\(\d+\)\.[^.]+$/)) groups[key].pdf = f;
+    }
   }
 
   return Object.values(groups);
