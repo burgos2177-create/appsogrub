@@ -1344,10 +1344,15 @@ async function _procesarLoteFacturas(proyectoId, files, body) {
 // GENERAR ESTADO DE CUENTA (PDF)
 // =====================================================
 function generarEstadoDeCuenta(proyectoId) {
+  try { _generarEstadoDeCuentaImpl(proyectoId); }
+  catch (err) { console.error('[PDF]', err); showToast('Error al generar PDF: ' + err.message, 'error'); }
+}
+
+function _generarEstadoDeCuentaImpl(proyectoId) {
   const proyecto = getItem(KEYS.PROYECTOS, proyectoId);
   if (!proyecto) return showToast('Proyecto no encontrado', 'error');
 
-  const { jsPDF } = window.jspdf;
+  const jsPDF = window.jspdf?.jsPDF;
   if (!jsPDF) return showToast('jsPDF no disponible, recarga la página', 'error');
 
   const gastos = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
