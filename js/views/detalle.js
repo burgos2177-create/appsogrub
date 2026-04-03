@@ -92,6 +92,10 @@ function renderDetalleKPIs(proyectoId, proyecto) {
         <div style="color:var(--success)">IVA verificado c/facturas: <strong>${formatMXN(iva.ivaVerificado)}</strong></div>
         <div style="color:var(--warning)">IVA por cobrar: <strong>${formatMXN(iva.ivaPorCobrar)}</strong></div>
       </div>
+      <button class="btn btn-secondary btn-sm" id="btn-estado-cuenta-${proyectoId}"
+        style="margin-top:8px;font-size:11px;padding:4px 10px">
+        📄 Generar estado de cuenta
+      </button>
     </div>
     <div class="kpi-card">
       <div class="kpi-label">📈 Utilidad</div>
@@ -117,7 +121,7 @@ function renderDetalleKPIs(proyectoId, proyecto) {
     ${detalleKPI('⚠️', 'Deuda pendiente',      formatMXN(deudaPend),     deudaPend > 0 ? 'text-warning' : 'text-muted')}
   `;
 
-  // Toggle IVA info
+  // Toggle IVA info + botón estado de cuenta
   setTimeout(() => {
     grid.querySelectorAll('.btn-iva-info').forEach(btn => {
       btn.addEventListener('click', (e) => {
@@ -126,6 +130,8 @@ function renderDetalleKPIs(proyectoId, proyecto) {
         if (el) el.classList.toggle('hidden');
       });
     });
+    const btnEC = grid.querySelector(`#btn-estado-cuenta-${proyectoId}`);
+    if (btnEC) btnEC.addEventListener('click', () => generarEstadoDeCuenta(proyectoId));
   }, 0);
 
   return grid;
@@ -1332,6 +1338,190 @@ async function _procesarLoteFacturas(proyectoId, files, body) {
     successBanner.textContent = '🎉 ¡Todas las facturas coinciden con gastos registrados!';
     resultsDiv.prepend(successBanner);
   }
+}
+
+// =====================================================
+// GENERAR ESTADO DE CUENTA (PDF)
+// =====================================================
+function generarEstadoDeCuenta(proyectoId) {
+  const proyecto = getItem(KEYS.PROYECTOS, proyectoId);
+  if (!proyecto) return showToast('Proyecto no encontrado', 'error');
+
+  const { jsPDF } = window.jspdf;
+  if (!jsPDF) return showToast('jsPDF no disponible, recarga la página', 'error');
+
+  const gastos = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
+    .filter(m => m.proyecto_id === proyectoId && m.tipo === 'gasto' && m.status === 'Pagado')
+    .sort((a, b) => (a.fecha ?? '').localeCompare(b.fecha ?? ''));
+
+  const totalCobrado = calcTotalCobradoCliente(proyectoId);
+
+  // ---------- Cálculos ----------
+  let costoDirecto = 0;
+  const filas = gastos.map(g => {
+    const abs = Math.abs(g.monto);
+    costoDirecto += abs;
+    const ivaTag = g.incluye_iva ? 'C/IVA' : 'S/IVA';
+    return [
+      (g.fecha ?? '').replace(/^(\d{4})-(\d{2})-(\d{2})$/, '$3/$2/$1'),
+      `${(g.concepto ?? '').toUpperCase()} ${ivaTag}`,
+      _fmtMXN(abs),
+    ];
+  });
+
+  // Sobrecostos acumulativos
+  const pctInd = proyecto.sobrecosto_indirectos     ?? 0;
+  const pctFin = proyecto.sobrecosto_financiamiento ?? 0;
+  const pctUti = proyecto.sobrecosto_utilidad       ?? 0;
+
+  let acum = costoDirecto;
+  const montoInd = acum * (pctInd / 100); acum += montoInd;
+  const montoFin = acum * (pctFin / 100); acum += montoFin;
+  const montoUti = acum * (pctUti / 100); acum += montoUti;
+  const subtotal = acum;
+
+  // IVA restante = IVA por cobrar de gastos S/IVA
+  const iva = calcIVADesglose(proyectoId);
+  const ivaRestante = iva.ivaPorCobrar;
+
+  const totalFactura = subtotal + ivaRestante;
+
+  // Balance
+  const balance = totalCobrado - totalFactura;
+
+  // ---------- PDF ----------
+  const doc = new jsPDF({ unit: 'mm', format: 'letter' });
+  const pageW = doc.internal.pageSize.getWidth();
+  const marginL = 18;
+  const marginR = 18;
+  const usable  = pageW - marginL - marginR;
+  let y = 20;
+
+  // Header
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.text(`Cliente: ${proyecto.cliente ?? '—'}`, marginL, y);
+  y += 6;
+  doc.text(`Proyecto: ${proyecto.nombre ?? '—'}`, marginL, y);
+  y += 10;
+
+  // ---------- DESGLOSE DE COSTOS DIRECTOS ----------
+  doc.setFontSize(12);
+  doc.setTextColor(180, 30, 30);
+  doc.text('DESGLOSE DE COSTOS DIRECTOS', marginL, y);
+  doc.setTextColor(0, 0, 0);
+  y += 4;
+
+  doc.autoTable({
+    startY: y,
+    margin: { left: marginL, right: marginR },
+    head: [['Fecha', 'Descripción', 'Importe']],
+    body: filas,
+    foot: [['', 'COSTO DIRECTO', _fmtMXN(costoDirecto)]],
+    styles: { fontSize: 9, cellPadding: 2.5 },
+    headStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: 'bold', lineColor: [0,0,0], lineWidth: 0.3 },
+    footStyles: { fillColor: [220, 220, 220], textColor: [0, 0, 0], fontStyle: 'bold', lineColor: [0,0,0], lineWidth: 0.3 },
+    bodyStyles: { lineColor: [0, 0, 0], lineWidth: 0.2 },
+    columnStyles: {
+      0: { cellWidth: 24 },
+      2: { cellWidth: 28, halign: 'right' },
+    },
+    theme: 'grid',
+  });
+
+  y = doc.lastAutoTable.finalY + 10;
+
+  // ---------- SOBRECOSTOS ----------
+  if (pctInd > 0 || pctFin > 0 || pctUti > 0) {
+    doc.setFontSize(12);
+    doc.setTextColor(180, 30, 30);
+    doc.text('SOBRECOSTOS', marginL, y);
+    doc.setTextColor(0, 0, 0);
+    y += 4;
+
+    const sobrecostosBody = [];
+    let runningTotal = costoDirecto;
+    if (pctInd > 0) {
+      const m = runningTotal * (pctInd / 100); runningTotal += m;
+      sobrecostosBody.push([`Indirectos ${pctInd}%`, _fmtMXN(m), _fmtMXN(runningTotal)]);
+    }
+    if (pctFin > 0) {
+      const m = runningTotal * (pctFin / 100); runningTotal += m;
+      sobrecostosBody.push([`Financiamiento ${pctFin}%`, _fmtMXN(m), _fmtMXN(runningTotal)]);
+    }
+    if (pctUti > 0) {
+      const m = runningTotal * (pctUti / 100); runningTotal += m;
+      sobrecostosBody.push([`Utilidad ${pctUti}%`, _fmtMXN(m), _fmtMXN(runningTotal)]);
+    }
+
+    doc.autoTable({
+      startY: y,
+      margin: { left: marginL, right: marginR },
+      body: sobrecostosBody,
+      styles: { fontSize: 9, cellPadding: 2.5 },
+      bodyStyles: { lineColor: [0, 0, 0], lineWidth: 0.2 },
+      columnStyles: {
+        0: { fontStyle: 'bold' },
+        1: { halign: 'right', cellWidth: 28 },
+        2: { halign: 'right', cellWidth: 28 },
+      },
+      theme: 'grid',
+    });
+
+    y = doc.lastAutoTable.finalY + 8;
+  } else {
+    y += 2;
+  }
+
+  // ---------- TOTALES ----------
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`SUBTOTAL: ${_fmtMXN(subtotal)}`, marginL, y);
+  y += 7;
+  doc.text(`IVA RESTANTE: ${_fmtMXN(ivaRestante)}`, marginL, y);
+  y += 7;
+  doc.setFontSize(13);
+  doc.setTextColor(180, 30, 30);
+  doc.text(`TOTAL FACTURA: ${_fmtMXN(totalFactura)}`, marginL, y);
+  doc.setTextColor(0, 0, 0);
+  y += 14;
+
+  // ---------- BALANCE ----------
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'bold');
+  doc.setDrawColor(0);
+  doc.setLineWidth(0.4);
+  doc.line(marginL, y, marginL + usable, y);
+  y += 7;
+
+  doc.text(`Total cobrado al cliente:`, marginL, y);
+  doc.text(_fmtMXN(totalCobrado), marginL + usable, y, { align: 'right' });
+  y += 6;
+  doc.text(`Total estado de cuenta:`, marginL, y);
+  doc.text(_fmtMXN(totalFactura), marginL + usable, y, { align: 'right' });
+  y += 6;
+  doc.line(marginL, y, marginL + usable, y);
+  y += 7;
+
+  const balanceLabel = balance >= 0
+    ? `Balance a favor del CLIENTE:`
+    : `Balance a favor de SOGRUB:`;
+  const balanceColor = balance >= 0 ? [30, 130, 60] : [180, 30, 30];
+  doc.setTextColor(...balanceColor);
+  doc.setFontSize(12);
+  doc.text(balanceLabel, marginL, y);
+  doc.text(_fmtMXN(Math.abs(balance)), marginL + usable, y, { align: 'right' });
+  doc.setTextColor(0, 0, 0);
+
+  // Guardar
+  const safeName = (proyecto.nombre ?? 'proyecto').replace(/[^a-zA-Z0-9áéíóúñÁÉÍÓÚÑ ]/g, '').trim().replace(/\s+/g, '_');
+  doc.save(`Estado_de_Cuenta_${safeName}.pdf`);
+  showToast('PDF generado', 'success');
+}
+
+// Formateador corto para PDF (sin símbolo de peso extra)
+function _fmtMXN(n) {
+  return '$' + n.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 // =====================================================
