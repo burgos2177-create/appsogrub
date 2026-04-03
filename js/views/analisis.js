@@ -813,12 +813,14 @@ function _aTVChart(container, groups) {
   }
 
   function initCanvas() {
+    const dpr = window.devicePixelRatio || 1;
+    _W = container.offsetWidth || container.parentElement?.offsetWidth || 680;
     _canvas = document.createElement('canvas');
-    _W = container.offsetWidth || 600;
-    _canvas.width  = _W;
-    _canvas.height = H;
+    _canvas.width  = _W * dpr;
+    _canvas.height = H  * dpr;
     _canvas.style.cssText = 'width:100%;height:' + H + 'px;display:block';
-    _ctx    = _canvas.getContext('2d');
+    _ctx = _canvas.getContext('2d');
+    _ctx.scale(dpr, dpr);
     _groups = groups;
     _scales = buildScales(_W);
     container.appendChild(_canvas);
@@ -878,12 +880,17 @@ function _aTVChart(container, groups) {
     });
   }
 
-  // Defer so container has layout
-  if (container.offsetWidth > 0) {
-    initCanvas();
-  } else {
-    requestAnimationFrame(() => { if (container.offsetWidth > 0) initCanvas(); });
+  // Defer so container has layout — retry hasta 5 veces con RAF
+  let _retries = 0;
+  function tryInit() {
+    if (container.offsetWidth > 0 || _retries >= 5) {
+      initCanvas();
+    } else {
+      _retries++;
+      requestAnimationFrame(tryInit);
+    }
   }
+  requestAnimationFrame(tryInit);
 }
 
 // =====================================================
