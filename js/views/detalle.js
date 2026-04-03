@@ -1734,8 +1734,10 @@ function _generarEstadoDeCuentaImpl(proyectoId) {
     .filter(m => m.proyecto_id === proyectoId && m.tipo === 'abono_cliente')
     .sort((a, b) => (a.fecha ?? '').localeCompare(b.fecha ?? ''));
 
-  let ivaRunning  = ivaReal;
-  let baseRunning = baseGravable;
+  // Orden de cobertura: 1º base gravable → 2º IVA real → 3º IVA restante (factura completa)
+  let baseRunning        = baseGravable;
+  let ivaRealRunning     = ivaReal;
+  let ivaRestanteRunning = ivaRestante;
 
   if (abonos.length === 0) {
     doc.setFont('helvetica', 'italic');
@@ -1751,12 +1753,18 @@ function _generarEstadoDeCuentaImpl(proyectoId) {
     const fechaStr = (abono.fecha ?? '').replace(/^(\d{4})-(\d{2})-(\d{2})$/, '$3/$2/$1');
     const concepto = abono.concepto ?? 'Abono';
 
-    // IVA se cubre primero, el resto va a base gravable
-    const ivaAplicado  = Math.min(monto, ivaRunning);
-    const baseAplicada = monto - ivaAplicado;
-    ivaRunning  = Math.max(0, ivaRunning  - ivaAplicado);
-    baseRunning = Math.max(0, baseRunning - baseAplicada);
-    const remanente = ivaRunning + baseRunning;
+    // Aplicar en orden: base → IVA real → IVA restante
+    let restante = monto;
+    const baseAplicada        = Math.min(restante, baseRunning);       restante -= baseAplicada;
+    const ivaRealAplicado     = Math.min(restante, ivaRealRunning);    restante -= ivaRealAplicado;
+    const ivaRestanteAplicado = Math.min(restante, ivaRestanteRunning);
+
+    baseRunning        = Math.max(0, baseRunning        - baseAplicada);
+    ivaRealRunning     = Math.max(0, ivaRealRunning     - ivaRealAplicado);
+    ivaRestanteRunning = Math.max(0, ivaRestanteRunning - ivaRestanteAplicado);
+
+    const entroFacturaCompleta = ivaRestanteAplicado > 0;
+    const remanente = baseRunning + ivaRealRunning + ivaRestanteRunning;
 
     if (y > 210) { doc.addPage(); y = 20; }
 
@@ -1768,15 +1776,20 @@ function _generarEstadoDeCuentaImpl(proyectoId) {
     doc.setTextColor(0, 0, 0);
     y += 4;
 
-    // Tabla del pago
+    // Tabla del pago (filas dinámicas según fases cubiertas)
+    const pagoBody = [
+      ['Subtotal (base gravable aplicada)', _fmtMXN(baseAplicada)],
+    ];
+    if (ivaRealAplicado > 0)
+      pagoBody.push(['IVA real aplicado (gastos c/factura)', _fmtMXN(ivaRealAplicado)]);
+    if (ivaRestanteAplicado > 0)
+      pagoBody.push(['IVA restante aplicado (factura completa)', _fmtMXN(ivaRestanteAplicado)]);
+    pagoBody.push(['NETO RECIBIDO', _fmtMXN(monto)]);
+
     doc.autoTable({
       startY: y,
       margin: { left: marginL, right: marginR },
-      body: [
-        ['Subtotal (base gravable aplicada)', _fmtMXN(baseAplicada)],
-        ['IVA aplicado',                      _fmtMXN(ivaAplicado)],
-        ['NETO RECIBIDO',                     _fmtMXN(monto)],
-      ],
+      body: pagoBody,
       styles:     { fontSize: 9, cellPadding: 2.5 },
       bodyStyles: { lineColor: [0,0,0], lineWidth: 0.2 },
       columnStyles: {
@@ -1787,17 +1800,32 @@ function _generarEstadoDeCuentaImpl(proyectoId) {
     });
     y = doc.lastAutoTable.finalY + 3;
 
+    // Nota si el cliente entró a factura completa
+    if (entroFacturaCompleta) {
+      doc.setFont('helvetica', 'italic');
+      doc.setFontSize(8);
+      doc.setTextColor(30, 100, 160);
+      doc.text('★ El cliente optó por factura completa — se aplica IVA sobre gastos sin comprobante', marginL, y);
+      doc.setTextColor(0, 0, 0);
+      y += 5;
+    }
+
     // Balance después del pago
-    const remColor = remanente > 0 ? [180, 30, 30] : [30, 130, 60];
+    const remColor = remanente > 0.01 ? [180, 30, 30] : [30, 130, 60];
+    const balanceBody = [
+      ['Base gravable pendiente', _fmtMXN(baseRunning)],
+      ['IVA real pendiente',      _fmtMXN(ivaRealRunning)],
+    ];
+    // Solo mostrar IVA restante si el cliente ya entró a esa fase o queda pendiente
+    if (ivaRestanteRunning < ivaRestante || entroFacturaCompleta)
+      balanceBody.push(['IVA restante pendiente', _fmtMXN(ivaRestanteRunning)]);
+    balanceBody.push(['TOTAL FACTURA REMANENTE', _fmtMXN(remanente)]);
+
     doc.autoTable({
       startY: y,
       margin: { left: marginL, right: marginR },
       head: [['BALANCE POR CUBRIR', '']],
-      body: [
-        ['Base gravable pendiente', _fmtMXN(baseRunning)],
-        ['IVA pendiente',           _fmtMXN(ivaRunning)],
-        ['TOTAL FACTURA REMANENTE', _fmtMXN(remanente)],
-      ],
+      body: balanceBody,
       styles:     { fontSize: 9, cellPadding: 2.5 },
       headStyles: { fillColor: [245,245,245], textColor: [80,80,80], fontStyle: 'bold', lineColor: [0,0,0], lineWidth: 0.3 },
       bodyStyles: { lineColor: [0,0,0], lineWidth: 0.2 },
@@ -1806,12 +1834,9 @@ function _generarEstadoDeCuentaImpl(proyectoId) {
         1: { halign: 'right', cellWidth: 38 },
       },
       didDrawCell: (data) => {
-        if (data.row.index === 2 && data.column.index === 1) {
-          data.cell.styles.textColor = remColor;
+        if (data.row.index === balanceBody.length - 1) {
           data.cell.styles.fontStyle = 'bold';
-        }
-        if (data.row.index === 2 && data.column.index === 0) {
-          data.cell.styles.fontStyle = 'bold';
+          if (data.column.index === 1) data.cell.styles.textColor = remColor;
         }
       },
       theme: 'grid',
@@ -1822,32 +1847,42 @@ function _generarEstadoDeCuentaImpl(proyectoId) {
   // Resumen final (si hay más de un pago)
   if (abonos.length > 1) {
     if (y > 220) { doc.addPage(); y = 20; }
-    const finalRemanente = ivaRunning + baseRunning;
-    const finalColor = finalRemanente <= 0 ? [30, 130, 60] : [180, 30, 30];
+    const finalRemanente   = baseRunning + ivaRealRunning + ivaRestanteRunning;
+    const ivaRealCubierto  = ivaReal     - ivaRealRunning;
+    const ivaRestCubierto  = ivaRestante - ivaRestanteRunning;
+    const finalColor = finalRemanente <= 0.01 ? [30, 130, 60] : [180, 30, 30];
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(12);
     doc.setTextColor(...finalColor);
     doc.text('RESUMEN FINAL', marginL, y);
     doc.setTextColor(0, 0, 0);
     y += 5;
+    const resumenBody = [
+      ['Total cobrado al cliente',      _fmtMXN(totalCobrado)],
+      ['Base gravable cubierta',        _fmtMXN(baseGravable  - baseRunning)],
+      ['IVA real cubierto',             _fmtMXN(ivaRealCubierto)],
+    ];
+    if (ivaRestCubierto > 0)
+      resumenBody.push(['IVA restante cubierto (factura completa)', _fmtMXN(ivaRestCubierto)]);
+    resumenBody.push(
+      ['Base gravable pendiente',       _fmtMXN(baseRunning)],
+      ['IVA real pendiente',            _fmtMXN(ivaRealRunning)],
+    );
+    if (ivaRestanteRunning < ivaRestante)
+      resumenBody.push(['IVA restante pendiente', _fmtMXN(ivaRestanteRunning)]);
+    resumenBody.push(['FACTURA REMANENTE', _fmtMXN(finalRemanente)]);
+
     doc.autoTable({
       startY: y,
       margin: { left: marginL, right: marginR },
-      body: [
-        ['Total cobrado al cliente',  _fmtMXN(totalCobrado)],
-        ['Base gravable cubierta',    _fmtMXN(baseGravable - baseRunning)],
-        ['IVA cubierto',              _fmtMXN(ivaReal - ivaRunning)],
-        ['Base gravable pendiente',   _fmtMXN(baseRunning)],
-        ['IVA pendiente',             _fmtMXN(ivaRunning)],
-        ['FACTURA REMANENTE',         _fmtMXN(finalRemanente)],
-      ],
+      body: resumenBody,
       styles:     { fontSize: 9, cellPadding: 2.5 },
       bodyStyles: { lineColor: [0,0,0], lineWidth: 0.2 },
       columnStyles: { 1: { halign: 'right', cellWidth: 38, fontStyle: 'bold' } },
       didDrawCell: (data) => {
-        if (data.row.index === 5) {
-          data.cell.styles.fontStyle  = 'bold';
-          data.cell.styles.textColor  = finalColor;
+        if (data.row.index === resumenBody.length - 1) {
+          data.cell.styles.fontStyle = 'bold';
+          data.cell.styles.textColor = finalColor;
         }
       },
       theme: 'grid',
