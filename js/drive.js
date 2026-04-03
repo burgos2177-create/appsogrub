@@ -227,12 +227,24 @@ async function _resetDriveFolders(proyectoId) {
  *
  * Retorna { folderId, folderUrl, pdf?: {id,webViewLink}, xml?: {id,webViewLink} }
  */
-async function driveUploadFactura(files, proyectoId, { concepto = '', fecha = '', existing = {} } = {}) {
+async function driveUploadFactura(files, proyectoId, opts = {}) {
+  try {
+    return await _doUpload(files, proyectoId, opts);
+  } catch (firstErr) {
+    // Cualquier fallo (carpeta en papelera, eliminada, IDs obsoletos…):
+    // limpiar TODO y reintentar desde cero
+    console.warn('[Drive] Primer intento fallido, reconstruyendo todo:', firstErr.message);
+    await _resetDriveFolders(proyectoId);
+    return await _doUpload(files, proyectoId, { ...opts, existing: {} });
+  }
+}
+
+async function _doUpload(files, proyectoId, { concepto = '', fecha = '', existing = {} } = {}) {
   const safeName    = _sanitizeName(concepto);
   const folderLabel = fecha ? `${fecha} - ${safeName}` : safeName;
 
-  let proyFolderId = await _getProjectFolderId(proyectoId);
-  let subfolderId  = existing.folderId
+  const proyFolderId = await _getProjectFolderId(proyectoId);
+  const subfolderId  = existing.folderId
     ?? (await _createFolder(folderLabel, proyFolderId)).id;
 
   const result = {
@@ -240,32 +252,11 @@ async function driveUploadFactura(files, proyectoId, { concepto = '', fecha = ''
     folderUrl: `https://drive.google.com/drive/folders/${subfolderId}`,
   };
 
-  // Sube un archivo con doble intento:
-  // 1º: usa carpeta/archivo existentes (PATCH o POST)
-  // 2º: si falla (carpeta en papelera o eliminada), reconstruye toda la jerarquía y reintenta
-  const _safeUpload = async (file, fileName, existingFileId) => {
-    try {
-      return await _overwriteOrUpload(file, fileName, subfolderId, existingFileId);
-    } catch (firstErr) {
-      console.warn('[Drive] Primer intento fallido, reconstruyendo jerarquía:', firstErr.message);
-    }
-
-    // Limpiar todos los IDs obsoletos y reconstruir desde cero
-    await _resetDriveFolders(proyectoId);
-    proyFolderId     = await _getProjectFolderId(proyectoId);
-    subfolderId      = (await _createFolder(folderLabel, proyFolderId)).id;
-    result.folderId  = subfolderId;
-    result.folderUrl = `https://drive.google.com/drive/folders/${subfolderId}`;
-
-    // Segundo intento siempre crea archivo nuevo (los IDs anteriores son inválidos)
-    return await _uploadFile(file, fileName, subfolderId);
-  };
-
   if (files.pdf) {
-    result.pdf = await _safeUpload(files.pdf, `${safeName}.pdf`, existing.pdfId ?? null);
+    result.pdf = await _overwriteOrUpload(files.pdf, `${safeName}.pdf`, subfolderId, existing.pdfId ?? null);
   }
   if (files.xml) {
-    result.xml = await _safeUpload(files.xml, files.xml.name, existing.xmlId ?? null);
+    result.xml = await _overwriteOrUpload(files.xml, files.xml.name, subfolderId, existing.xmlId ?? null);
   }
 
   return result;
