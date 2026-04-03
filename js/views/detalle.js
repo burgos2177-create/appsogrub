@@ -1712,15 +1712,21 @@ function _generarEstadoDeCuentaImpl(proyectoId) {
   y += 10;
 
   // Resumen factura de referencia
+  const refBody = [
+    ['Base gravable (costo + sobrecostos sin IVA)',  _fmtMXN(baseGravable)],
+  ];
+  if (ivaReal > 0.005)
+    refBody.push(['IVA real (gastos con factura)',   _fmtMXN(ivaReal)]);
+  refBody.push(['Total Costo + IVA Real',            _fmtMXN(totalConIvaReal)]);
+  if (ivaRestante > 0.005) {
+    refBody.push(['+ IVA restante (gastos sin comprobante)', _fmtMXN(ivaRestante)]);
+    refBody.push(['TOTAL FACTURA COMPLETA',          _fmtMXN(totalFactura)]);
+  }
   doc.autoTable({
     startY: y,
     margin: { left: marginL, right: marginR },
     head: [['FACTURA DE REFERENCIA', '']],
-    body: [
-      ['Base gravable (costo + sobrecostos sin IVA)',  _fmtMXN(baseGravable)],
-      ['IVA real (gastos con factura)',                _fmtMXN(ivaReal)],
-      ['Total Costo + IVA Real',                      _fmtMXN(totalConIvaReal)],
-    ],
+    body: refBody,
     styles:     { fontSize: 9, cellPadding: 2.5 },
     headStyles: { fillColor: [220,220,220], textColor: [0,0,0], fontStyle: 'bold', lineColor: [0,0,0], lineWidth: 0.3 },
     bodyStyles: { lineColor: [0,0,0], lineWidth: 0.2 },
@@ -1814,10 +1820,10 @@ function _generarEstadoDeCuentaImpl(proyectoId) {
     const remColor = remanente > 0.01 ? [180, 30, 30] : [30, 130, 60];
     const balanceBody = [
       ['Base gravable pendiente', _fmtMXN(baseRunning)],
-      ['IVA real pendiente',      _fmtMXN(ivaRealRunning)],
     ];
-    // Solo mostrar IVA restante si el cliente ya entró a esa fase o queda pendiente
-    if (ivaRestanteRunning < ivaRestante || entroFacturaCompleta)
+    if (ivaReal > 0.005)
+      balanceBody.push(['IVA real pendiente', _fmtMXN(ivaRealRunning)]);
+    if (ivaRestante > 0.005)
       balanceBody.push(['IVA restante pendiente', _fmtMXN(ivaRestanteRunning)]);
     balanceBody.push(['TOTAL FACTURA REMANENTE', _fmtMXN(remanente)]);
 
@@ -1864,11 +1870,10 @@ function _generarEstadoDeCuentaImpl(proyectoId) {
     ];
     if (ivaRestCubierto > 0)
       resumenBody.push(['IVA restante cubierto (factura completa)', _fmtMXN(ivaRestCubierto)]);
-    resumenBody.push(
-      ['Base gravable pendiente',       _fmtMXN(baseRunning)],
-      ['IVA real pendiente',            _fmtMXN(ivaRealRunning)],
-    );
-    if (ivaRestanteRunning < ivaRestante)
+    resumenBody.push(['Base gravable pendiente', _fmtMXN(baseRunning)]);
+    if (ivaReal > 0.005)
+      resumenBody.push(['IVA real pendiente', _fmtMXN(ivaRealRunning)]);
+    if (ivaRestante > 0.005)
       resumenBody.push(['IVA restante pendiente', _fmtMXN(ivaRestanteRunning)]);
     resumenBody.push(['FACTURA REMANENTE', _fmtMXN(finalRemanente)]);
 
