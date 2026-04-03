@@ -144,36 +144,39 @@ const _COLECCIONES = [
 let _loadedCount = 0;
 
 function _suscribirColecciones() {
+  // Timeout de seguridad: si en 6s no responden todos, arrancar con lo que haya
+  const fallback = setTimeout(() => {
+    if (!_fbReady) {
+      console.warn('[Firebase] Timeout de sincronización — arrancando con datos parciales');
+      _fbReady = true;
+      _onFirebaseReady();
+    }
+  }, 6000);
+
+  function _contarCarga() {
+    if (_fbReady) return;
+    _loadedCount++;
+    if (_loadedCount >= _COLECCIONES.length) {
+      clearTimeout(fallback);
+      _fbReady = true;
+      _onFirebaseReady();
+    }
+  }
+
   _COLECCIONES.forEach(key => {
     _db.ref(key).on('value', snapshot => {
       const data = snapshot.val();
-
-      // Si no existe aún en Firebase, no pisar el cache
       if (data !== null) {
         _cache[key] = data;
       }
-
-      // Contar cargas iniciales
       if (!_fbReady) {
-        _loadedCount++;
-        if (_loadedCount >= _COLECCIONES.length) {
-          _fbReady = true;
-          _onFirebaseReady();
-        }
+        _contarCarga();
       } else {
-        // Cambio en tiempo real → re-renderizar vista activa
         _onRemoteChange(key);
       }
     }, err => {
       console.error(`[Firebase] Error listener "${key}":`, err);
-      // Contar igual para no colgar la app si un listener falla
-      if (!_fbReady) {
-        _loadedCount++;
-        if (_loadedCount >= _COLECCIONES.length) {
-          _fbReady = true;
-          _onFirebaseReady();
-        }
-      }
+      _contarCarga(); // contar igual para no colgar
     });
   });
 }
@@ -201,19 +204,21 @@ function _updateStatusUI(state) {
 // ARRANQUE — cuando Firebase tiene los datos listos
 // =====================================================
 function _onFirebaseReady() {
-  // Actualizar pantalla de carga
   const msgEl = document.getElementById('loading-msg');
   if (msgEl) msgEl.textContent = 'Datos cargados ✓';
 
   setTimeout(() => {
-    // Ocultar loading, mostrar app
     const loading = document.getElementById('app-loading');
     const main    = document.getElementById('app-main');
     if (loading) loading.classList.add('app-loading--hidden');
     if (main)    main.style.display = '';
 
-    // Inicializar app normalmente
     _initApp();
+
+    // Migración en segundo plano — no bloquea el arranque
+    _migrarLocalStorageSiEsNecesario().catch(e =>
+      console.warn('[Firebase] Migración bg:', e.message)
+    );
   }, 400);
 }
 
@@ -307,25 +312,14 @@ async function _migrarLocalStorageSiEsNecesario() {
 // =====================================================
 // INICIALIZACIÓN — reemplaza initializeData()
 // =====================================================
-async function initializeData() {
-  const msgEl = document.getElementById('loading-msg');
-
+function initializeData() {
   try {
-    // 1. Monitor de conexión
     _initConnectionStatus();
-
-    // 2. Migrar localStorage → Firebase si Firebase está vacío
-    if (msgEl) msgEl.textContent = 'Verificando datos existentes…';
-    await _migrarLocalStorageSiEsNecesario();
-
-    // 3. Suscribir listeners en tiempo real (dispara _onFirebaseReady cuando terminan)
-    if (msgEl) msgEl.textContent = 'Sincronizando con Firebase…';
-    _suscribirColecciones();
-
+    _suscribirColecciones(); // arranca inmediatamente, sin esperar migración
   } catch (err) {
     console.error('[Firebase] Error de inicialización:', err);
-    if (msgEl) msgEl.textContent = 'Error de conexión — reintentando…';
-    // Reintentar en 3s
+    const msgEl = document.getElementById('loading-msg');
+    if (msgEl) msgEl.textContent = 'Error — reintentando…';
     setTimeout(initializeData, 3000);
   }
 }
