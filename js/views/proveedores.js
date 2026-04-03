@@ -178,19 +178,56 @@ function abrirModalProveedorGlobal(id = null) {
 // MODAL: DETALLE PROVEEDOR — gasto por proyecto
 // =====================================================
 function abrirModalDetalleProveedor(nombre) {
-  const porProyecto = calcGastoProveedorPorProyecto(nombre);
-  const total       = calcGastoGlobalProveedor(nombre);
+  const resumen          = calcResumenProveedorPorProyecto(nombre);
+  const total            = resumen.reduce((a, r) => a + r.total, 0);
+  const totalFacturado   = resumen.reduce((a, r) => a + r.totalFacturado, 0);
+  const maxVal           = resumen.length > 0 ? Math.max(...resumen.map(r => r.total)) : 1;
+  const colors           = ['#1a9fd4', '#4caf82', '#e0a752', '#e05252', '#9b59b6', '#3498db', '#e67e22', '#1abc9c'];
 
   const body = document.createElement('div');
   body.style.cssText = 'display:flex;flex-direction:column;gap:14px';
   body.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:var(--surface2);border-radius:var(--radius-md);border:1px solid var(--border)">
-      <span class="text-muted">Total gastado</span>
-      <strong class="amount-negative" style="font-size:18px">${formatMXN(total)}</strong>
+    <div style="display:flex;gap:12px">
+      <div style="flex:1;padding:12px 16px;background:var(--surface2);border-radius:var(--radius-md);border:1px solid var(--border)">
+        <div class="text-muted" style="font-size:11px;margin-bottom:4px">Total gastado</div>
+        <strong class="amount-negative" style="font-size:18px">${formatMXN(total)}</strong>
+      </div>
+      <div style="flex:1;padding:12px 16px;background:var(--surface2);border-radius:var(--radius-md);border:1px solid var(--border)">
+        <div class="text-muted" style="font-size:11px;margin-bottom:4px">Verificado con facturas</div>
+        <strong style="font-size:18px;color:var(--success)">${formatMXN(totalFacturado)}</strong>
+      </div>
     </div>
-    <h4 style="font-size:13px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-top:8px">Desglose por proyecto</h4>
-    ${renderBarChart(porProyecto)}
+    <h4 style="font-size:13px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-top:4px">Desglose por proyecto</h4>
+    <div class="bar-chart">
+      ${resumen.map((r, i) => {
+        const pct      = maxVal > 0 ? (r.total / maxVal) * 100 : 0;
+        const pctTotal = total > 0 ? ((r.total / total) * 100).toFixed(1) : '0';
+        const color    = colors[i % colors.length];
+        const tieneFacturas = !!(r.totalFacturado > 0);
+        return `
+          <div class="bar-chart-row" style="flex-wrap:nowrap;gap:6px;align-items:center">
+            <span class="bar-chart-label" style="min-width:0;flex:0 0 auto;max-width:140px;overflow:hidden;text-overflow:ellipsis">${r.nombre}</span>
+            <div class="bar-chart-track" style="flex:1">
+              <div class="bar-chart-fill" style="width:${pct}%;background:${color}"></div>
+            </div>
+            <span class="bar-chart-value" style="flex:0 0 auto;white-space:nowrap">${formatMXN(r.total)} <span class="text-dim">(${pctTotal}%)</span></span>
+            <button class="btn btn-secondary btn-sm" data-idx="${i}"
+              style="flex:0 0 auto;white-space:nowrap;font-size:10px;padding:3px 8px"
+              title="Descargar facturas de ${r.nombre}"
+              ${!tieneFacturas ? 'disabled title="Sin facturas en Drive"' : ''}>
+              ⬇ ZIP
+            </button>
+          </div>
+        `;
+      }).join('')}
+    </div>
   `;
+
+  // Cablear botones de descarga
+  body.querySelectorAll('[data-idx]').forEach(btn => {
+    const r = resumen[parseInt(btn.dataset.idx)];
+    if (r) btn.addEventListener('click', () => descargarFacturasProyecto(nombre, r.proyectoId, r.nombre, btn));
+  });
 
   openModal({
     title: nombre,
@@ -199,6 +236,87 @@ function abrirModalDetalleProveedor(nombre) {
     onConfirm: () => closeModal(),
     large: true,
   });
+}
+
+// =====================================================
+// DESCARGA ZIP: facturas de un proveedor en un proyecto
+// =====================================================
+async function descargarFacturasProyecto(proveedorNombre, proyectoId, proyectoNombre, btnEl) {
+  if (!window.JSZip) return showToast('JSZip no disponible, recarga la página', 'error');
+
+  const gastos = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
+    .filter(m => m.tipo === 'gasto' && m.subcontratista === proveedorNombre && m.proyecto_id === proyectoId)
+    .filter(m => m.factura_drive_id || m.factura_xml_id);
+
+  if (gastos.length === 0) return showToast('Sin facturas en Drive para este proyecto', 'warning');
+
+  if (btnEl) { btnEl.disabled = true; btnEl.textContent = '…'; }
+
+  try {
+    const token = await driveGetToken();
+    const zip   = new window.JSZip();
+    const carpeta = zip.folder(_zipSafeName(proyectoNombre));
+    let ok = 0, errors = 0;
+
+    for (const g of gastos) {
+      const base = (g.concepto ?? 'factura').replace(/[<>:"/\\|?*\x00-\x1f]/g, '').trim() || 'factura';
+
+      if (g.factura_drive_id) {
+        try {
+          const blob = await _driveDownloadBlob(g.factura_drive_id, token);
+          const ext  = (g.factura_nombre ?? 'pdf').split('.').pop().toLowerCase();
+          carpeta.file(`${base}.${ext}`, blob);
+          ok++;
+        } catch (e) { console.warn('[ZIP PDF]', e.message); errors++; }
+      }
+
+      if (g.factura_xml_id) {
+        try {
+          const blob    = await _driveDownloadBlob(g.factura_xml_id, token);
+          const xmlName = g.factura_xml_nombre ?? `${base}.xml`;
+          carpeta.file(xmlName, blob);
+          ok++;
+        } catch (e) { console.warn('[ZIP XML]', e.message); errors++; }
+      }
+    }
+
+    if (ok === 0) throw new Error('No se pudo descargar ningún archivo');
+
+    const zipBlob = await zip.generateAsync({ type: 'blob' });
+    const url = URL.createObjectURL(zipBlob);
+    const a   = document.createElement('a');
+    a.href    = url;
+    a.download = `Facturas-${_zipSafeName(proyectoNombre)}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    showToast(errors > 0
+      ? `ZIP descargado — ${ok} archivos (${errors} errores)`
+      : `ZIP descargado con ${ok} archivos`, 'success');
+  } catch (err) {
+    console.error('[ZIP]', err);
+    showToast('Error al generar ZIP: ' + err.message, 'error');
+  } finally {
+    if (btnEl) { btnEl.disabled = false; btnEl.textContent = '⬇ ZIP'; }
+  }
+}
+
+async function _driveDownloadBlob(fileId, token) {
+  const resp = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '');
+    throw new Error(`Drive ${resp.status}: ${text.substring(0, 120)}`);
+  }
+  return resp.blob();
+}
+
+function _zipSafeName(str) {
+  return (str ?? 'proyecto').replace(/[<>:"/\\|?*\x00-\x1f]/g, '').replace(/\s+/g, '_').trim() || 'proyecto';
 }
 
 // =====================================================
