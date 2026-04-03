@@ -228,7 +228,7 @@ async function driveUploadFactura(files, proyectoId, { concepto = '', fecha = ''
   const folderLabel = fecha ? `${fecha} - ${safeName}` : safeName;
 
   // Reusar carpeta existente o crear nueva
-  const subfolderId = existing.folderId
+  let subfolderId = existing.folderId
     ?? (await _createFolder(folderLabel, proyFolderId)).id;
 
   const result = {
@@ -236,11 +236,25 @@ async function driveUploadFactura(files, proyectoId, { concepto = '', fecha = ''
     folderUrl: `https://drive.google.com/drive/folders/${subfolderId}`,
   };
 
+  // Sube un archivo; si la carpeta fue eliminada, la recrea y reintenta
+  const _safeUpload = async (file, fileName, existingFileId) => {
+    try {
+      return await _overwriteOrUpload(file, fileName, subfolderId, existingFileId);
+    } catch (err) {
+      // La carpeta ya no existe en Drive — crear una nueva y reintentar
+      console.warn('[Drive] Carpeta eliminada, recreando:', err.message);
+      subfolderId      = (await _createFolder(folderLabel, proyFolderId)).id;
+      result.folderId  = subfolderId;
+      result.folderUrl = `https://drive.google.com/drive/folders/${subfolderId}`;
+      return await _uploadFile(file, fileName, subfolderId);
+    }
+  };
+
   if (files.pdf) {
-    result.pdf = await _overwriteOrUpload(files.pdf, `${safeName}.pdf`, subfolderId, existing.pdfId ?? null);
+    result.pdf = await _safeUpload(files.pdf, `${safeName}.pdf`, existing.pdfId ?? null);
   }
   if (files.xml) {
-    result.xml = await _overwriteOrUpload(files.xml, files.xml.name, subfolderId, existing.xmlId ?? null);
+    result.xml = await _safeUpload(files.xml, files.xml.name, existing.xmlId ?? null);
   }
 
   return result;
