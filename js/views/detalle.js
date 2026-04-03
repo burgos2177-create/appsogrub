@@ -1755,15 +1755,22 @@ function _generarEstadoDeCuentaImpl(proyectoId) {
   }
 
   abonos.forEach((abono, i) => {
-    const monto    = Math.abs(abono.monto ?? 0);
+    const montoTotal = Math.abs(abono.monto ?? 0);
+    const conIva     = !!abono.incluye_iva;
+    // Si el abono incluye IVA, separar neto e IVA cobrado al cliente
+    const montoNeto        = conIva ? montoTotal / 1.16 : montoTotal;
+    const ivaCobradoAbono  = conIva ? montoTotal - montoNeto : 0;
     const fechaStr = (abono.fecha ?? '').replace(/^(\d{4})-(\d{2})-(\d{2})$/, '$3/$2/$1');
     const concepto = abono.concepto ?? 'Abono';
 
-    // Aplicar en orden: base → IVA real → IVA restante
-    let restante = monto;
-    const baseAplicada        = Math.min(restante, baseRunning);       restante -= baseAplicada;
-    const ivaRealAplicado     = Math.min(restante, ivaRealRunning);    restante -= ivaRealAplicado;
-    const ivaRestanteAplicado = Math.min(restante, ivaRestanteRunning);
+    // Fase 1: neto del abono cubre base gravable
+    let netoRestante = montoNeto;
+    const baseAplicada    = Math.min(netoRestante, baseRunning); netoRestante -= baseAplicada;
+
+    // Fase 2-3: IVA cobrado al cliente + excedente del neto cubren IVA real → IVA restante
+    let ivaPool           = ivaCobradoAbono + netoRestante;
+    const ivaRealAplicado = Math.min(ivaPool, ivaRealRunning); ivaPool -= ivaRealAplicado;
+    const ivaRestanteAplicado = Math.min(ivaPool, ivaRestanteRunning);
 
     baseRunning        = Math.max(0, baseRunning        - baseAplicada);
     ivaRealRunning     = Math.max(0, ivaRealRunning     - ivaRealAplicado);
@@ -1786,11 +1793,13 @@ function _generarEstadoDeCuentaImpl(proyectoId) {
     const pagoBody = [
       ['Subtotal (base gravable aplicada)', _fmtMXN(baseAplicada)],
     ];
+    if (conIva)
+      pagoBody.push(['IVA cobrado al cliente (16%)', _fmtMXN(ivaCobradoAbono)]);
     if (ivaRealAplicado > 0)
       pagoBody.push(['IVA real aplicado (gastos c/factura)', _fmtMXN(ivaRealAplicado)]);
     if (ivaRestanteAplicado > 0)
       pagoBody.push(['IVA restante aplicado (factura completa)', _fmtMXN(ivaRestanteAplicado)]);
-    pagoBody.push(['NETO RECIBIDO', _fmtMXN(monto)]);
+    pagoBody.push(['TOTAL RECIBIDO', _fmtMXN(montoTotal)]);
 
     doc.autoTable({
       startY: y,
