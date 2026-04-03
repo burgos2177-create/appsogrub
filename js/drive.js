@@ -33,6 +33,14 @@ function _saveToken(token, expiresIn) {
   localStorage.setItem(_LS_EXPIRY, String(_tokenExpiry));
 }
 
+// ---- Limpiar token (forzar re-autenticación) ----
+function _clearToken() {
+  _accessToken = null;
+  _tokenExpiry = 0;
+  localStorage.removeItem(_LS_TOKEN);
+  localStorage.removeItem(_LS_EXPIRY);
+}
+
 // ---- Inicialización lazy ----
 function _initTokenClient() {
   if (_tokenClient) return;
@@ -59,25 +67,43 @@ function driveGetToken() {
       return;
     }
 
-    _tokenClient.callback = (resp) => {
-      if (resp.error) { reject(new Error(resp.error_description ?? resp.error)); return; }
+    let silentAttempted = false;
+
+    const _onToken = (resp) => {
+      if (resp.error) {
+        // Si el intento silencioso falla, pedir autenticación explícita
+        if (!silentAttempted && (resp.error === 'user_logged_out' || resp.error === 'interaction_required' || resp.error === 'access_denied')) {
+          silentAttempted = true;
+          _tokenClient.requestAccessToken({ prompt: 'select_account' });
+          return;
+        }
+        reject(new Error(resp.error_description ?? resp.error));
+        return;
+      }
       _saveToken(resp.access_token, resp.expires_in);
       resolve(_accessToken);
     };
 
-    // prompt:'' intenta renovar silenciosamente si la sesión Google sigue activa
+    _tokenClient.callback = _onToken;
+
+    // Intentar silenciosamente primero; si falla, el callback pedirá login explícito
     _tokenClient.requestAccessToken({ prompt: '' });
   });
 }
 
 // ---- Helpers internos ----
-async function _apiFetch(url, options = {}) {
+async function _apiFetch(url, options = {}, _retried = false) {
   const token = await driveGetToken();
   const resp  = await fetch(url, {
     ...options,
     headers: { Authorization: `Bearer ${token}`, ...(options.headers ?? {}) },
   });
   if (!resp.ok) {
+    // Token expirado o revocado → limpiar y reintentar una vez con autenticación nueva
+    if (resp.status === 401 && !_retried) {
+      _clearToken();
+      return _apiFetch(url, options, true);
+    }
     const text = await resp.text().catch(() => '');
     throw new Error(`Drive API ${resp.status}: ${text}`);
   }
@@ -172,7 +198,7 @@ function _sanitizeName(str) {
 }
 
 // ---- Subir un archivo a una carpeta de Drive ----
-async function _uploadFile(file, fileName, folderId) {
+async function _uploadFile(file, fileName, folderId, _retried = false) {
   const token = await driveGetToken();
   const meta  = JSON.stringify({ name: fileName, parents: [folderId] });
   const form  = new FormData();
@@ -188,6 +214,10 @@ async function _uploadFile(file, fileName, folderId) {
     }
   );
   if (!resp.ok) {
+    if (resp.status === 401 && !_retried) {
+      _clearToken();
+      return _uploadFile(file, fileName, folderId, true);
+    }
     const text = await resp.text().catch(() => '');
     throw new Error(`Drive upload ${resp.status}: ${text}`);
   }
@@ -195,7 +225,7 @@ async function _uploadFile(file, fileName, folderId) {
 }
 
 // ---- Sobreescribir un archivo en Drive (PATCH) — también lo saca de papelera ----
-async function _patchFile(file, fileId) {
+async function _patchFile(file, fileId, _retried = false) {
   const token = await driveGetToken();
   const form  = new FormData();
   form.append('metadata', new Blob(['{}'], { type: 'application/json' }));
@@ -210,6 +240,10 @@ async function _patchFile(file, fileId) {
     }
   );
   if (!resp.ok) {
+    if (resp.status === 401 && !_retried) {
+      _clearToken();
+      return _patchFile(file, fileId, true);
+    }
     const text = await resp.text().catch(() => '');
     throw new Error(`Drive patch ${resp.status}: ${text}`);
   }
@@ -263,16 +297,25 @@ async function _doUpload(files, proyectoId, { concepto = '', fecha = '', existin
   const safeName    = _sanitizeName(concepto);
   const folderLabel = fecha ? `${fecha} - ${safeName}` : safeName;
 
-  const proyFolderId = await _getProjectFolderId(proyectoId);
+  let proyFolderId;
+  try {
+    proyFolderId = await _getProjectFolderId(proyectoId);
+  } catch (e) {
+    throw new Error(`[carpeta proyecto] ${e.message}`);
+  }
 
   // Verificar que la subcarpeta existe y no está en papelera
   let subfolderId;
   let folderReused = false;
-  if (existing.folderId && await _folderAlive(existing.folderId)) {
-    subfolderId  = existing.folderId;
-    folderReused = true;
-  } else {
-    subfolderId = (await _createFolder(folderLabel, proyFolderId)).id;
+  try {
+    if (existing.folderId && await _folderAlive(existing.folderId)) {
+      subfolderId  = existing.folderId;
+      folderReused = true;
+    } else {
+      subfolderId = (await _createFolder(folderLabel, proyFolderId)).id;
+    }
+  } catch (e) {
+    throw new Error(`[subcarpeta] ${e.message}`);
   }
 
   // Si la carpeta fue recreada, los IDs de archivos viejos apuntan a archivos
@@ -286,10 +329,18 @@ async function _doUpload(files, proyectoId, { concepto = '', fecha = '', existin
   };
 
   if (files.pdf) {
-    result.pdf = await _overwriteOrUpload(files.pdf, `${safeName}.pdf`, subfolderId, safePdfId);
+    try {
+      result.pdf = await _overwriteOrUpload(files.pdf, `${safeName}.pdf`, subfolderId, safePdfId);
+    } catch (e) {
+      throw new Error(`[subida PDF] ${e.message}`);
+    }
   }
   if (files.xml) {
-    result.xml = await _overwriteOrUpload(files.xml, files.xml.name, subfolderId, safeXmlId);
+    try {
+      result.xml = await _overwriteOrUpload(files.xml, files.xml.name, subfolderId, safeXmlId);
+    } catch (e) {
+      throw new Error(`[subida XML] ${e.message}`);
+    }
   }
 
   return result;

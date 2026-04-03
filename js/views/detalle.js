@@ -1217,10 +1217,27 @@ async function _procesarLoteFacturas(proyectoId, files, body) {
 
   const _ejecutarSubida = async (btn) => {
     btn.disabled    = true;
+    btn.textContent = 'Autenticando…';
+
+    // Obtener/renovar token PRIMERO (dentro del contexto de gesto del usuario)
+    try {
+      await driveGetToken();
+    } catch (authErr) {
+      btn.disabled = false;
+      btn.textContent = 'Reintentar';
+      const errDiv = document.getElementById('lote-results');
+      errDiv.classList.remove('hidden');
+      errDiv.innerHTML = `<div style="padding:8px 12px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.25);border-radius:var(--radius-sm);font-size:12px;color:var(--danger)">
+        <strong>Error de autenticación con Google Drive:</strong><br>
+        <span style="font-family:monospace">${authErr.message}</span>
+      </div>`;
+      return;
+    }
+
     btn.textContent = 'Subiendo…';
 
     let ok = 0;
-    let fail = 0;
+    const errores = [];
 
     for (const { grupo, gasto, sobreescribe } of matched) {
       try {
@@ -1247,17 +1264,37 @@ async function _procesarLoteFacturas(proyectoId, files, body) {
         btn.textContent = `Subiendo… (${ok}/${matched.length})`;
       } catch (err) {
         console.error(`[Lote Drive] ${grupo.baseName}:`, err);
-        fail++;
+        errores.push({ nombre: grupo.baseName, msg: err.message ?? String(err) });
       }
     }
 
-    closeModal();
-    if (fail === 0) {
+    // Mostrar resultado con errores detallados
+    const footerEl2 = document.getElementById('modal-footer');
+    footerEl2.innerHTML = '';
+    const cerrarBtn = document.createElement('button');
+    cerrarBtn.className = 'btn btn-secondary';
+    cerrarBtn.textContent = 'Cerrar';
+    cerrarBtn.addEventListener('click', () => { closeModal(); refreshDetalleTable(proyectoId); });
+    footerEl2.appendChild(cerrarBtn);
+
+    if (errores.length === 0) {
       showToast(`🎉 ¡Enhorabuena! ${ok} factura${ok > 1 ? 's' : ''} vinculada${ok > 1 ? 's' : ''} exitosamente`, 'success');
+      closeModal();
+      refreshDetalleTable(proyectoId);
     } else {
-      showToast(`${ok} subida${ok > 1 ? 's' : ''}, ${fail} fallida${fail > 1 ? 's' : ''}`, 'warning');
+      // Mostrar errores en el modal para diagnóstico
+      const errDiv = document.getElementById('lote-results');
+      let html = '';
+      if (ok > 0) html += `<div style="color:var(--success);font-weight:600;font-size:13px;margin-bottom:8px">✓ ${ok} subida${ok>1?'s':''} correctamente</div>`;
+      html += `<div style="color:var(--danger);font-weight:600;font-size:13px;margin-bottom:6px">✗ ${errores.length} error${errores.length>1?'es':''}</div>`;
+      html += errores.map(e => `
+        <div style="padding:8px 12px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.25);border-radius:var(--radius-sm);margin-bottom:4px;font-size:11px">
+          <div style="font-weight:600;margin-bottom:2px">${e.nombre}</div>
+          <div style="color:var(--danger);font-family:monospace;word-break:break-all">${e.msg}</div>
+        </div>`).join('');
+      errDiv.innerHTML = html;
+      if (ok > 0) refreshDetalleTable(proyectoId);
     }
-    refreshDetalleTable(proyectoId);
   };
 
   if (matched.length > 0 && driveAvailable()) {
