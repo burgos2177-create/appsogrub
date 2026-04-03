@@ -102,11 +102,29 @@ async function _createFolder(name, parentId) {
   });
 }
 
+// ---- Verifica que un folder existe y NO está en papelera ----
+async function _folderAlive(folderId) {
+  if (!folderId) return false;
+  try {
+    const data = await _apiFetch(
+      `https://www.googleapis.com/drive/v3/files/${folderId}?fields=id,trashed`
+    );
+    return data && !data.trashed;
+  } catch {
+    return false;
+  }
+}
+
 // ---- Carpeta raíz "SOGRUB Facturas" ----
 async function _getRootFolderId() {
   const cfg = getConfig();
-  if (cfg.drive_root_folder_id) return cfg.drive_root_folder_id;
 
+  // Verificar que la carpeta almacenada realmente existe y no está en papelera
+  if (cfg.drive_root_folder_id && await _folderAlive(cfg.drive_root_folder_id)) {
+    return cfg.drive_root_folder_id;
+  }
+
+  // Buscar por nombre (trashed=false) o crear nueva
   let id = await _findFolder(DRIVE_ROOT_FOLDER_NAME, null);
   if (!id) {
     const folder = await _createFolder(DRIVE_ROOT_FOLDER_NAME, null);
@@ -124,7 +142,10 @@ async function _getProjectFolderId(proyectoId) {
   const proyecto = getItem(KEYS.PROYECTOS, proyectoId);
   if (!proyecto) throw new Error('Proyecto no encontrado');
 
-  if (proyecto.drive_folder_id) return proyecto.drive_folder_id;
+  // Verificar que la carpeta almacenada realmente existe y no está en papelera
+  if (proyecto.drive_folder_id && await _folderAlive(proyecto.drive_folder_id)) {
+    return proyecto.drive_folder_id;
+  }
 
   const rootId = await _getRootFolderId();
   let folderId = await _findFolder(proyecto.nombre, rootId);
@@ -244,8 +265,14 @@ async function _doUpload(files, proyectoId, { concepto = '', fecha = '', existin
   const folderLabel = fecha ? `${fecha} - ${safeName}` : safeName;
 
   const proyFolderId = await _getProjectFolderId(proyectoId);
-  const subfolderId  = existing.folderId
-    ?? (await _createFolder(folderLabel, proyFolderId)).id;
+
+  // Verificar que la subcarpeta existe y no está en papelera
+  let subfolderId;
+  if (existing.folderId && await _folderAlive(existing.folderId)) {
+    subfolderId = existing.folderId;
+  } else {
+    subfolderId = (await _createFolder(folderLabel, proyFolderId)).id;
+  }
 
   const result = {
     folderId:  subfolderId,
