@@ -210,6 +210,36 @@ async function leerMontoXML(file) {
   return (!isNaN(total) && total > 0) ? total : null;
 }
 
+// =====================================================
+// RFC del emisor desde XML CFDI (3.3 y 4.0)
+// Retorna { rfc, nombre } o null si no encuentra
+// =====================================================
+async function leerEmisorDesdeXML(file) {
+  try {
+    const text = await file.text();
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(text, 'application/xml');
+
+    const comprobante =
+      doc.querySelector('Comprobante') ??
+      doc.getElementsByTagNameNS('http://www.sat.gob.mx/cfd/4', 'Comprobante')[0] ??
+      doc.getElementsByTagNameNS('http://www.sat.gob.mx/cfd/3', 'Comprobante')[0];
+    if (!comprobante) return null;
+
+    const emisor =
+      comprobante.querySelector('Emisor') ??
+      doc.getElementsByTagNameNS('http://www.sat.gob.mx/cfd/4', 'Emisor')[0] ??
+      doc.getElementsByTagNameNS('http://www.sat.gob.mx/cfd/3', 'Emisor')[0];
+    if (!emisor) return null;
+
+    const rfc    = emisor.getAttribute('Rfc')    ?? null;
+    const nombre = emisor.getAttribute('Nombre') ?? null;
+    return (rfc || nombre) ? { rfc, nombre } : null;
+  } catch {
+    return null;
+  }
+}
+
 // Detecta si un archivo es XML por su extensión o tipo MIME
 function esArchivoXML(file) {
   return file.type === 'text/xml' ||

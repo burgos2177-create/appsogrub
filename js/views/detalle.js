@@ -694,6 +694,18 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
       refreshDetalleTable(proyectoId);
       refreshDetalleCharts(proyectoId);
 
+      // Sugerir agregar proveedor si es nuevo
+      if (subcon) {
+        const provsProy = (getCollection(KEYS.PROY_PROVEEDORES) ?? [])
+          .filter(p => p.proyecto_id === proyectoId);
+        const yaExiste = provsProy.some(p => p.nombre.trim().toLowerCase() === subcon.toLowerCase());
+        if (!yaExiste) {
+          // Intentar extraer RFC del XML si hay uno
+          const emisorXML = uploadXML ? await leerEmisorDesdeXML(uploadXML).catch(() => null) : null;
+          _sugerirAgregarProveedor(proyectoId, subcon, emisorXML);
+        }
+      }
+
       // Subir PDF y/o XML a Drive en segundo plano
       if ((uploadPDF || uploadXML) && driveAvailable()) {
         const label = [uploadPDF && 'PDF', uploadXML && 'XML'].filter(Boolean).join(' + ');
@@ -948,6 +960,70 @@ function abrirModalExportarProveedores(proyectoId) {
 }
 
 // ---- Nuevo proveedor directo en proyecto ----
+// Sugiere agregar proveedor cuando no existe en el proyecto
+function _sugerirAgregarProveedor(proyectoId, nombre, emisor) {
+  const rfcInfo = emisor?.rfc ? ` — RFC: ${emisor.rfc}` : '';
+  const nombreSAT = emisor?.nombre && emisor.nombre.trim() !== nombre.trim()
+    ? ` (SAT: "${emisor.nombre}")` : '';
+
+  const body = document.createElement('div');
+  body.style.cssText = 'display:flex;flex-direction:column;gap:12px';
+  body.innerHTML = `
+    <p style="font-size:13px">El proveedor <strong>"${nombre}"</strong>${rfcInfo}${nombreSAT} no está en la lista de proveedores del proyecto.</p>
+    <div class="form-group">
+      <label class="form-label" for="sp-nombre">Nombre</label>
+      <input type="text" id="sp-nombre" class="form-input" value="${nombre}">
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="sp-rfc">RFC ${emisor?.rfc ? '(del XML)' : '(opcional)'}</label>
+      <input type="text" id="sp-rfc" class="form-input" placeholder="Ej: XAXX010101000"
+        value="${emisor?.rfc ?? ''}">
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+      <input type="checkbox" id="sp-global" ${(getCollection(KEYS.PROVEEDORES) ?? []).some(p => p.nombre.trim().toLowerCase() === nombre.toLowerCase()) ? '' : 'checked'}>
+      Agregar también a la lista global de proveedores
+    </label>
+  `;
+
+  openModal({
+    title: '¿Agregar proveedor?',
+    body,
+    confirmText: 'Agregar',
+    cancelText: 'No, gracias',
+    onConfirm: () => {
+      const nombreFinal = body.querySelector('#sp-nombre').value.trim() || nombre;
+      const rfcFinal    = body.querySelector('#sp-rfc').value.trim();
+      const addGlobal   = body.querySelector('#sp-global').checked;
+
+      let globalId = null;
+
+      if (addGlobal) {
+        // Verificar si ya existe en global
+        const existeGlobal = (getCollection(KEYS.PROVEEDORES) ?? [])
+          .find(p => p.nombre.trim().toLowerCase() === nombreFinal.toLowerCase());
+        if (existeGlobal) {
+          globalId = existeGlobal.id;
+          if (rfcFinal && !existeGlobal.rfc) {
+            updateItem(KEYS.PROVEEDORES, existeGlobal.id, { rfc: rfcFinal });
+          }
+        } else {
+          const nuevo = addItem(KEYS.PROVEEDORES, { nombre: nombreFinal, rfc: rfcFinal, telefono: '', email: '', notas: '' });
+          globalId = nuevo.id;
+        }
+      }
+
+      addItem(KEYS.PROY_PROVEEDORES, {
+        proyecto_id: proyectoId,
+        nombre: nombreFinal,
+        proveedor_global_id: globalId,
+      });
+
+      closeModal();
+      showToast(`Proveedor "${nombreFinal}" agregado`, 'success');
+    },
+  });
+}
+
 function abrirModalNuevoProveedorProyecto(proyectoId, onDone) {
   const body = document.createElement('div');
   body.style.cssText = 'display:flex;flex-direction:column;gap:14px';

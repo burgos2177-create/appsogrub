@@ -223,7 +223,18 @@ function abrirModalDetalleProveedor(nombre) {
     </div>
   `;
 
-  // Cablear botones de descarga
+  // Botón descargar todo
+  const hayFacturas = resumen.some(r => r.totalFacturado > 0);
+  if (hayFacturas) {
+    const dlAllBtn = document.createElement('button');
+    dlAllBtn.className = 'btn btn-primary btn-sm';
+    dlAllBtn.style.cssText = 'margin-top:4px;font-size:12px;align-self:flex-start';
+    dlAllBtn.textContent = '⬇ Descargar todas las facturas (ZIP)';
+    body.appendChild(dlAllBtn);
+    dlAllBtn.addEventListener('click', () => descargarTodasFacturasProveedor(nombre, resumen, dlAllBtn));
+  }
+
+  // Cablear botones de descarga por proyecto
   body.querySelectorAll('[data-idx]').forEach(btn => {
     const r = resumen[parseInt(btn.dataset.idx)];
     if (r) btn.addEventListener('click', () => descargarFacturasProyecto(nombre, r.proyectoId, r.nombre, btn));
@@ -317,6 +328,75 @@ async function _driveDownloadBlob(fileId, token) {
 
 function _zipSafeName(str) {
   return (str ?? 'proyecto').replace(/[<>:"/\\|?*\x00-\x1f]/g, '').replace(/\s+/g, '_').trim() || 'proyecto';
+}
+
+// =====================================================
+// DESCARGA ZIP GLOBAL: todas las facturas del proveedor
+// =====================================================
+async function descargarTodasFacturasProveedor(proveedorNombre, resumen, btnEl) {
+  if (!window.JSZip) return showToast('JSZip no disponible, recarga la página', 'error');
+
+  const proyectosConFacturas = resumen.filter(r => r.totalFacturado > 0);
+  if (proyectosConFacturas.length === 0) return showToast('Sin facturas en Drive', 'warning');
+
+  if (btnEl) { btnEl.disabled = true; btnEl.textContent = '…'; }
+
+  try {
+    const token = await driveGetToken();
+    const zip   = new window.JSZip();
+    let totalOk = 0, totalErr = 0;
+
+    for (const r of proyectosConFacturas) {
+      const gastos = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
+        .filter(m => m.tipo === 'gasto' && m.subcontratista === proveedorNombre && m.proyecto_id === r.proyectoId)
+        .filter(m => m.factura_drive_id || m.factura_xml_id);
+
+      if (gastos.length === 0) continue;
+      const carpeta = zip.folder(_zipSafeName(r.nombre));
+
+      for (const g of gastos) {
+        const base = (g.concepto ?? 'factura').replace(/[<>:"/\\|?*\x00-\x1f]/g, '').trim() || 'factura';
+
+        if (g.factura_drive_id) {
+          try {
+            const blob = await _driveDownloadBlob(g.factura_drive_id, token);
+            const ext  = (g.factura_nombre ?? 'pdf').split('.').pop().toLowerCase();
+            carpeta.file(`${base}.${ext}`, blob);
+            totalOk++;
+          } catch (e) { console.warn('[ZIP-all PDF]', e.message); totalErr++; }
+        }
+        if (g.factura_xml_id) {
+          try {
+            const blob    = await _driveDownloadBlob(g.factura_xml_id, token);
+            const xmlName = g.factura_xml_nombre ?? `${base}.xml`;
+            carpeta.file(xmlName, blob);
+            totalOk++;
+          } catch (e) { console.warn('[ZIP-all XML]', e.message); totalErr++; }
+        }
+      }
+    }
+
+    if (totalOk === 0) throw new Error('No se pudo descargar ningún archivo');
+
+    const zipBlob = await zip.generateAsync({ type: 'blob' });
+    const url = URL.createObjectURL(zipBlob);
+    const a   = document.createElement('a');
+    a.href    = url;
+    a.download = `Facturas-${_zipSafeName(proveedorNombre)}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    showToast(totalErr > 0
+      ? `ZIP descargado — ${totalOk} archivos (${totalErr} errores)`
+      : `ZIP descargado con ${totalOk} archivos de ${proyectosConFacturas.length} proyecto(s)`, 'success');
+  } catch (err) {
+    console.error('[ZIP-all]', err);
+    showToast('Error al generar ZIP: ' + err.message, 'error');
+  } finally {
+    if (btnEl) { btnEl.disabled = false; btnEl.textContent = '⬇ Descargar todas las facturas (ZIP)'; }
+  }
 }
 
 // =====================================================
