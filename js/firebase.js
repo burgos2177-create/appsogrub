@@ -224,6 +224,7 @@ function _onRemoteChange(changedKey) {
     detalle:     () => renderDetalle(_activeProyecto),
     proveedores: () => renderProveedores(),
     importar:    () => {},   // importar no necesita re-render reactivo
+    analisis:    () => renderAnalisis(),
   };
 
   rerender[_activeView]?.();

@@ -1461,3 +1461,64 @@ img, svg { display: block; }
   color: var(--accent);
   border-color: rgba(26,159,212,0.3);
 }
+
+/* =====================================================
+   MÓDULO ANÁLISIS FINANCIERO
+   ===================================================== */
+
+/* KPI grid de 3 columnas (6 cards = 2 filas × 3) */
+.anal-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  margin-bottom: 24px;
+}
+@media (max-width: 900px) {
+  .anal-kpi-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 520px) {
+  .anal-kpi-grid { grid-template-columns: 1fr; }
+}
+
+/* Period pills */
+.period-pill {
+  padding: 5px 14px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--surface2);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition);
+  white-space: nowrap;
+}
+.period-pill:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.period-pill.active {
+  background: var(--accent-glow);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Form input small modifier */
+.form-input--sm {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+/* Dimmed row (internal transfers) */
+.row-dim td { opacity: 0.4; }
+
+/* Anal period bar rows */
+.anal-period-bar {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 16px;
+  transition: border-color var(--transition);
+}
+.anal-period-bar:hover { border-color: var(--border-light); }
