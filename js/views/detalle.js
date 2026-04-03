@@ -1695,6 +1695,165 @@ function _generarEstadoDeCuentaImpl(proyectoId) {
   doc.text(_fmtMXN(Math.abs(balance)), marginL + usable, y, { align: 'right' });
   doc.setTextColor(0, 0, 0);
 
+  // ---------- PÁGINA 2: ESTADO DE PAGOS ----------
+  doc.addPage();
+  y = 20;
+
+  // Título
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(14);
+  doc.setTextColor(180, 30, 30);
+  doc.text('ESTADO DE PAGOS', marginL, y);
+  doc.setTextColor(0, 0, 0);
+  y += 7;
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`${proyecto.cliente ?? '—'}  ·  ${proyecto.nombre ?? '—'}`, marginL, y);
+  y += 10;
+
+  // Resumen factura de referencia
+  doc.autoTable({
+    startY: y,
+    margin: { left: marginL, right: marginR },
+    head: [['FACTURA DE REFERENCIA', '']],
+    body: [
+      ['Base gravable (costo + sobrecostos sin IVA)',  _fmtMXN(baseGravable)],
+      ['IVA real (gastos con factura)',                _fmtMXN(ivaReal)],
+      ['Total Costo + IVA Real',                      _fmtMXN(totalConIvaReal)],
+    ],
+    styles:     { fontSize: 9, cellPadding: 2.5 },
+    headStyles: { fillColor: [220,220,220], textColor: [0,0,0], fontStyle: 'bold', lineColor: [0,0,0], lineWidth: 0.3 },
+    bodyStyles: { lineColor: [0,0,0], lineWidth: 0.2 },
+    columnStyles: { 1: { halign: 'right', cellWidth: 38, fontStyle: 'bold' } },
+    theme: 'grid',
+  });
+  y = doc.lastAutoTable.finalY + 10;
+
+  // Obtener abonos ordenados por fecha
+  const abonos = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
+    .filter(m => m.proyecto_id === proyectoId && m.tipo === 'abono_cliente')
+    .sort((a, b) => (a.fecha ?? '').localeCompare(b.fecha ?? ''));
+
+  let ivaRunning  = ivaReal;
+  let baseRunning = baseGravable;
+
+  if (abonos.length === 0) {
+    doc.setFont('helvetica', 'italic');
+    doc.setFontSize(10);
+    doc.setTextColor(120, 120, 120);
+    doc.text('Sin pagos registrados.', marginL, y);
+    doc.setTextColor(0, 0, 0);
+    y += 10;
+  }
+
+  abonos.forEach((abono, i) => {
+    const monto    = Math.abs(abono.monto ?? 0);
+    const fechaStr = (abono.fecha ?? '').replace(/^(\d{4})-(\d{2})-(\d{2})$/, '$3/$2/$1');
+    const concepto = abono.concepto ?? 'Abono';
+
+    // IVA se cubre primero, el resto va a base gravable
+    const ivaAplicado  = Math.min(monto, ivaRunning);
+    const baseAplicada = monto - ivaAplicado;
+    ivaRunning  = Math.max(0, ivaRunning  - ivaAplicado);
+    baseRunning = Math.max(0, baseRunning - baseAplicada);
+    const remanente = ivaRunning + baseRunning;
+
+    if (y > 210) { doc.addPage(); y = 20; }
+
+    // Encabezado del pago
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
+    doc.setTextColor(30, 100, 160);
+    doc.text(`FACTURA ${i + 1}  ·  ${fechaStr}  ·  ${concepto}`, marginL, y);
+    doc.setTextColor(0, 0, 0);
+    y += 4;
+
+    // Tabla del pago
+    doc.autoTable({
+      startY: y,
+      margin: { left: marginL, right: marginR },
+      body: [
+        ['Subtotal (base gravable aplicada)', _fmtMXN(baseAplicada)],
+        ['IVA aplicado',                      _fmtMXN(ivaAplicado)],
+        ['NETO RECIBIDO',                     _fmtMXN(monto)],
+      ],
+      styles:     { fontSize: 9, cellPadding: 2.5 },
+      bodyStyles: { lineColor: [0,0,0], lineWidth: 0.2 },
+      columnStyles: {
+        0: { fontStyle: 'normal' },
+        1: { halign: 'right', cellWidth: 38, fontStyle: 'bold' },
+      },
+      theme: 'grid',
+    });
+    y = doc.lastAutoTable.finalY + 3;
+
+    // Balance después del pago
+    const remColor = remanente > 0 ? [180, 30, 30] : [30, 130, 60];
+    doc.autoTable({
+      startY: y,
+      margin: { left: marginL, right: marginR },
+      head: [['BALANCE POR CUBRIR', '']],
+      body: [
+        ['Base gravable pendiente', _fmtMXN(baseRunning)],
+        ['IVA pendiente',           _fmtMXN(ivaRunning)],
+        ['TOTAL FACTURA REMANENTE', _fmtMXN(remanente)],
+      ],
+      styles:     { fontSize: 9, cellPadding: 2.5 },
+      headStyles: { fillColor: [245,245,245], textColor: [80,80,80], fontStyle: 'bold', lineColor: [0,0,0], lineWidth: 0.3 },
+      bodyStyles: { lineColor: [0,0,0], lineWidth: 0.2 },
+      columnStyles: {
+        0: { fontStyle: 'normal' },
+        1: { halign: 'right', cellWidth: 38 },
+      },
+      didDrawCell: (data) => {
+        if (data.row.index === 2 && data.column.index === 1) {
+          data.cell.styles.textColor = remColor;
+          data.cell.styles.fontStyle = 'bold';
+        }
+        if (data.row.index === 2 && data.column.index === 0) {
+          data.cell.styles.fontStyle = 'bold';
+        }
+      },
+      theme: 'grid',
+    });
+    y = doc.lastAutoTable.finalY + 12;
+  });
+
+  // Resumen final (si hay más de un pago)
+  if (abonos.length > 1) {
+    if (y > 220) { doc.addPage(); y = 20; }
+    const finalRemanente = ivaRunning + baseRunning;
+    const finalColor = finalRemanente <= 0 ? [30, 130, 60] : [180, 30, 30];
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(12);
+    doc.setTextColor(...finalColor);
+    doc.text('RESUMEN FINAL', marginL, y);
+    doc.setTextColor(0, 0, 0);
+    y += 5;
+    doc.autoTable({
+      startY: y,
+      margin: { left: marginL, right: marginR },
+      body: [
+        ['Total cobrado al cliente',  _fmtMXN(totalCobrado)],
+        ['Base gravable cubierta',    _fmtMXN(baseGravable - baseRunning)],
+        ['IVA cubierto',              _fmtMXN(ivaReal - ivaRunning)],
+        ['Base gravable pendiente',   _fmtMXN(baseRunning)],
+        ['IVA pendiente',             _fmtMXN(ivaRunning)],
+        ['FACTURA REMANENTE',         _fmtMXN(finalRemanente)],
+      ],
+      styles:     { fontSize: 9, cellPadding: 2.5 },
+      bodyStyles: { lineColor: [0,0,0], lineWidth: 0.2 },
+      columnStyles: { 1: { halign: 'right', cellWidth: 38, fontStyle: 'bold' } },
+      didDrawCell: (data) => {
+        if (data.row.index === 5) {
+          data.cell.styles.fontStyle  = 'bold';
+          data.cell.styles.textColor  = finalColor;
+        }
+      },
+      theme: 'grid',
+    });
+  }
+
   // Guardar
   const safeName = (proyecto.nombre ?? 'proyecto').replace(/[^a-zA-Z0-9áéíóúñÁÉÍÓÚÑ ]/g, '').trim().replace(/\s+/g, '_');
   doc.save(`Estado_de_Cuenta_${safeName}.pdf`);
