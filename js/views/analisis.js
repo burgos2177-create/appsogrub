@@ -17,29 +17,39 @@ const _ANAL_PG   = 50;
 // =====================================================
 function renderAnalisis() {
   const root = document.getElementById('analisis-root');
+  if (!root) return;
   root.innerHTML = '';
+  try {
+    const hdr = document.createElement('div');
+    hdr.className = 'mb-24';
+    hdr.innerHTML = `
+      <h2 style="font-size:18px;font-weight:600;color:var(--text);margin:0 0 4px">&#x1F4CA; An&aacute;lisis Financiero</h2>
+      <p style="font-size:12px;color:var(--text-muted);margin:0">Consolidado de todos los movimientos &middot; Caja SOGRUB + Proyectos</p>
+    `;
+    root.appendChild(hdr);
+    root.appendChild(_aControls());
 
-  const hdr = document.createElement('div');
-  hdr.className = 'mb-24';
-  hdr.innerHTML = `
-    <h2 style="font-size:18px;font-weight:600;color:var(--text);margin:0 0 4px">\u{1F4CA} An\u00e1lisis Financiero</h2>
-    <p style="font-size:12px;color:var(--text-muted);margin:0">Consolidado de todos los movimientos \u00b7 Caja SOGRUB + Proyectos</p>
-  `;
-  root.appendChild(hdr);
-  root.appendChild(_aControls());
+    const { desde, hasta } = _aRange();
+    const todos   = _aAllMovs();
+    const periodo = _aFiltrar(todos, desde, hasta);
+    const kpis    = _aCalcKPIs(periodo);
 
-  const { desde, hasta } = _aRange();
-  const todos   = _aAllMovs();
-  const periodo = _aFiltrar(todos, desde, hasta);
-  const kpis    = _aCalcKPIs(periodo);
+    root.appendChild(_aKPIGrid(kpis));
+    root.appendChild(_aSubTabs());
 
-  root.appendChild(_aKPIGrid(kpis));
-  root.appendChild(_aSubTabs());
-
-  const content = document.createElement('div');
-  content.id = 'anal-content';
-  _aFillContent(content, todos, periodo, kpis, desde, hasta);
-  root.appendChild(content);
+    const content = document.createElement('div');
+    content.id = 'anal-content';
+    _aFillContent(content, todos, periodo, kpis, desde, hasta);
+    root.appendChild(content);
+  } catch (err) {
+    console.error('[Analisis] Error al renderizar:', err);
+    root.innerHTML = `
+      <div style="margin:40px auto;max-width:600px;background:var(--surface);border:1px solid var(--danger);border-radius:var(--radius-lg);padding:24px">
+        <div style="color:var(--danger);font-weight:700;font-size:15px;margin-bottom:8px">&#9888; Error al cargar An&aacute;lisis</div>
+        <pre style="font-size:12px;color:var(--text-muted);white-space:pre-wrap;word-break:break-word">${err.message}\n\n${err.stack || ''}</pre>
+      </div>
+    `;
+  }
 }
 
 // =====================================================
@@ -138,12 +148,19 @@ function _aRange() {
 // =====================================================
 // TODOS LOS MOVIMIENTOS (SOGRUB + proyectos)
 // =====================================================
-function _aAllMovs() {
-  const proyectos = getCollection(KEYS.PROYECTOS) ?? [];
-  const proyMap = {};
-  proyectos.forEach(p => { proyMap[p.id] = p; });
+// Convierte valor de Firebase (array o objeto indexado) a array limpio
+function _fbArr(val) {
+  if (!val) return [];
+  if (Array.isArray(val)) return val.filter(Boolean);
+  return Object.values(val).filter(Boolean);
+}
 
-  const movSOGRUB = (getCollection(KEYS.MOVIMIENTOS) ?? []).map(m => ({
+function _aAllMovs() {
+  const proyectos = _fbArr(getCollection(KEYS.PROYECTOS));
+  const proyMap = {};
+  proyectos.forEach(p => { if (p && p.id) proyMap[p.id] = p; });
+
+  const movSOGRUB = _fbArr(getCollection(KEYS.MOVIMIENTOS)).map(m => ({
     ...m,
     _src:          'sogrub',
     _srcLabel:     'Caja SOGRUB',
@@ -153,7 +170,7 @@ function _aAllMovs() {
     _abs:          Math.abs(m.monto ?? 0),
   }));
 
-  const movProy = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? []).map(m => ({
+  const movProy = _fbArr(getCollection(KEYS.PROY_MOVIMIENTOS)).map(m => ({
     ...m,
     _src:          'proyecto',
     _srcLabel:     proyMap[m.proyecto_id]?.nombre ?? 'Proyecto',
