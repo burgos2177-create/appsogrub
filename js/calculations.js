@@ -281,3 +281,23 @@ function calcGastoProveedorPorProyecto(proveedorNombre) {
   });
   return result;
 }
+
+// Resumen por proyecto con total, totalFacturado y proyectoId
+function calcResumenProveedorPorProyecto(proveedorNombre) {
+  const movs = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
+    .filter(m => m.tipo === 'gasto' && m.status === 'Pagado' && m.subcontratista === proveedorNombre);
+
+  const byProject = {};
+  movs.forEach(m => {
+    const proy = getItem(KEYS.PROYECTOS, m.proyecto_id);
+    const nombre = proy?.nombre || 'Desconocido';
+    const id = m.proyecto_id;
+    if (!byProject[id]) byProject[id] = { proyectoId: id, nombre, total: 0, totalFacturado: 0 };
+    const abs = Math.abs(m.monto);
+    byProject[id].total += abs;
+    if (m.factura_drive_url || m.factura_xml_url || m.factura_nombre || m.factura_xml_nombre) {
+      byProject[id].totalFacturado += abs;
+    }
+  });
+  return Object.values(byProject).sort((a, b) => b.total - a.total);
+}
