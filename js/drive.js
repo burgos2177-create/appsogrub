@@ -173,10 +173,46 @@ async function _uploadFile(file, fileName, folderId) {
   return resp.json();  // { id, webViewLink }
 }
 
+// ---- Sobreescribir un archivo existente en Drive (PATCH) ----
+async function _patchFile(file, fileId) {
+  const token = await driveGetToken();
+  const form  = new FormData();
+  form.append('metadata', new Blob(['{}'], { type: 'application/json' }));
+  form.append('file', file);
+
+  const resp = await fetch(
+    `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart&fields=id,webViewLink`,
+    {
+      method:  'PATCH',
+      headers: { Authorization: `Bearer ${token}` },
+      body:    form,
+    }
+  );
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '');
+    throw new Error(`Drive patch ${resp.status}: ${text}`);
+  }
+  return resp.json();
+}
+
+// ---- Sobreescribe si hay ID previo, si no sube nuevo ----
+async function _overwriteOrUpload(file, fileName, folderId, existingId) {
+  if (existingId) {
+    try {
+      return await _patchFile(file, existingId);
+    } catch (err) {
+      // El archivo fue borrado de Drive — crear uno nuevo
+      console.warn('[Drive] Archivo previo no encontrado, creando nuevo:', err.message);
+    }
+  }
+  return await _uploadFile(file, fileName, folderId);
+}
+
 /**
  * Sube PDF y/o XML a la subcarpeta del gasto en Drive.
  *
  * files = { pdf: File|null, xml: File|null }
+ * existing = { pdfId, xmlId, folderId } — IDs previos para sobreescribir
  *
  * Estructura:
  *   SOGRUB Facturas/{proyecto}/{fecha} - {concepto}/
@@ -185,13 +221,15 @@ async function _uploadFile(file, fileName, folderId) {
  *
  * Retorna { folderId, folderUrl, pdf?: {id,webViewLink}, xml?: {id,webViewLink} }
  */
-async function driveUploadFactura(files, proyectoId, { concepto = '', fecha = '' } = {}) {
+async function driveUploadFactura(files, proyectoId, { concepto = '', fecha = '', existing = {} } = {}) {
   const proyFolderId = await _getProjectFolderId(proyectoId);
 
   const safeName    = _sanitizeName(concepto);
   const folderLabel = fecha ? `${fecha} - ${safeName}` : safeName;
-  const subfolder   = await _createFolder(folderLabel, proyFolderId);
-  const subfolderId = subfolder.id;
+
+  // Reusar carpeta existente o crear nueva
+  const subfolderId = existing.folderId
+    ?? (await _createFolder(folderLabel, proyFolderId)).id;
 
   const result = {
     folderId:  subfolderId,
@@ -199,10 +237,10 @@ async function driveUploadFactura(files, proyectoId, { concepto = '', fecha = ''
   };
 
   if (files.pdf) {
-    result.pdf = await _uploadFile(files.pdf, `${safeName}.pdf`, subfolderId);
+    result.pdf = await _overwriteOrUpload(files.pdf, `${safeName}.pdf`, subfolderId, existing.pdfId ?? null);
   }
   if (files.xml) {
-    result.xml = await _uploadFile(files.xml, files.xml.name, subfolderId);
+    result.xml = await _overwriteOrUpload(files.xml, files.xml.name, subfolderId, existing.xmlId ?? null);
   }
 
   return result;

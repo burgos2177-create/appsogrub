@@ -691,7 +691,14 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
       if ((uploadPDF || uploadXML) && driveAvailable()) {
         const label = [uploadPDF && 'PDF', uploadXML && 'XML'].filter(Boolean).join(' + ');
         showToast(`📤 Subiendo ${label} a Drive…`, 'info');
-        driveUploadFactura({ pdf: uploadPDF, xml: uploadXML }, proyectoId, { concepto, fecha })
+        driveUploadFactura({ pdf: uploadPDF, xml: uploadXML }, proyectoId, {
+          concepto, fecha,
+          existing: {
+            folderId: mov?.factura_drive_folder_id ?? null,
+            pdfId:    uploadPDF ? (mov?.factura_drive_id  ?? null) : null,
+            xmlId:    uploadXML ? (mov?.factura_xml_id    ?? null) : null,
+          },
+        })
           .then(result => {
             const updates = { factura_drive_folder_id: result.folderId };
             if (result.pdf) {
@@ -1088,20 +1095,18 @@ async function _procesarLoteFacturas(proyectoId, files, body) {
     parsed.push({ ...g, monto, source });
   }
 
-  // 3. Obtener gastos con IVA sin factura vinculada
+  // 3. Obtener TODOS los gastos con IVA del proyecto (incluir ya facturados)
   const gastos = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
-    .filter(m =>
-      m.proyecto_id === proyectoId &&
-      m.tipo === 'gasto' &&
-      m.incluye_iva &&
-      !m.factura_drive_url &&
-      !m.factura_xml_url
-    );
+    .filter(m => m.proyecto_id === proyectoId && m.tipo === 'gasto' && m.incluye_iva);
 
-  // 4. Emparejar: para cada grupo con monto, buscar gasto que coincida (margen 1%)
-  const matched   = [];
+  // 4. Emparejar por monto (±1%) — preferir los sin factura previa
+  const matched   = [];   // { grupo, gasto, sobreescribe }
   const unmatched = [];
   const usedGastoIds = new Set();
+
+  // Primero pasar por los sin factura (prioridad)
+  const sinFactura = gastos.filter(g => !g.factura_drive_url && !g.factura_xml_url);
+  const conFactura = gastos.filter(g =>  g.factura_drive_url ||  g.factura_xml_url);
 
   for (const p of parsed) {
     if (p.monto === null) {
@@ -1109,75 +1114,92 @@ async function _procesarLoteFacturas(proyectoId, files, body) {
       continue;
     }
 
-    // Buscar gasto cuyo monto absoluto coincida (dentro de 1%)
-    let bestMatch = null;
-    for (const g of gastos) {
-      if (usedGastoIds.has(g.id)) continue;
-      const gastoMonto = Math.abs(g.monto);
-      const diff = Math.abs(p.monto - gastoMonto);
-      const pct  = gastoMonto > 0 ? diff / gastoMonto : 1;
-      if (pct < 0.01) {
-        bestMatch = g;
-        break;
+    const _findByMonto = (lista) => {
+      for (const g of lista) {
+        if (usedGastoIds.has(g.id)) continue;
+        const diff = Math.abs(p.monto - Math.abs(g.monto));
+        const pct  = Math.abs(g.monto) > 0 ? diff / Math.abs(g.monto) : 1;
+        if (pct < 0.01) return g;
       }
-    }
+      return null;
+    };
+
+    const bestMatch = _findByMonto(sinFactura) ?? _findByMonto(conFactura);
 
     if (bestMatch) {
       usedGastoIds.add(bestMatch.id);
-      matched.push({ grupo: p, gasto: bestMatch });
+      const sobreescribe = !!(bestMatch.factura_drive_url || bestMatch.factura_xml_url);
+      matched.push({ grupo: p, gasto: bestMatch, sobreescribe });
     } else {
       unmatched.push({ ...p, reason: `Sin gasto para ${formatMXN(p.monto)}` });
     }
   }
 
+  const nuevas      = matched.filter(m => !m.sobreescribe);
+  const reemplazar  = matched.filter(m =>  m.sobreescribe);
+
   // 5. Mostrar resultado para confirmar
+  const _matchRow = (grupo, gasto, sobreescribe) => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;
+      background:${sobreescribe ? 'rgba(251,146,60,0.07)' : 'var(--surface2)'};
+      border:1px solid ${sobreescribe ? 'rgba(251,146,60,0.3)' : 'var(--border)'};
+      border-radius:var(--radius-sm);font-size:12px">
+      <div>
+        <span style="font-weight:500">${grupo.baseName}</span>
+        <span class="text-muted" style="margin-left:6px">[${[grupo.pdf && 'PDF', grupo.xml && 'XML'].filter(Boolean).join(' + ')}]</span>
+        ${sobreescribe ? '<span style="font-size:10px;color:var(--warning);margin-left:6px;font-weight:600">sobreescribirá</span>' : ''}
+      </div>
+      <div style="text-align:right">
+        <span style="color:var(--accent);font-weight:600;font-variant-numeric:tabular-nums">${formatMXN(grupo.monto)}</span>
+        <span class="text-muted" style="margin-left:8px">→ ${gasto.concepto}</span>
+      </div>
+    </div>`;
+
   let html = '';
 
-  if (matched.length > 0) {
+  if (nuevas.length > 0) {
     html += `<div style="margin-bottom:12px">
       <div style="font-weight:600;font-size:13px;margin-bottom:6px;color:var(--success)">
-        ✓ ${matched.length} factura${matched.length > 1 ? 's' : ''} emparejada${matched.length > 1 ? 's' : ''}
+        ✓ ${nuevas.length} factura${nuevas.length > 1 ? 's' : ''} nueva${nuevas.length > 1 ? 's' : ''}
       </div>
       <div style="display:flex;flex-direction:column;gap:4px">
-        ${matched.map(({ grupo, gasto }) => `
-          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px">
-            <div>
-              <span style="font-weight:500">${grupo.baseName}</span>
-              <span class="text-muted" style="margin-left:6px">[${[grupo.pdf && 'PDF', grupo.xml && 'XML'].filter(Boolean).join(' + ')}]</span>
-            </div>
-            <div style="text-align:right">
-              <span style="color:var(--accent);font-weight:600;font-variant-numeric:tabular-nums">${formatMXN(grupo.monto)}</span>
-              <span class="text-muted" style="margin-left:8px">→ ${gasto.concepto}</span>
-            </div>
-          </div>
-        `).join('')}
+        ${nuevas.map(({ grupo, gasto }) => _matchRow(grupo, gasto, false)).join('')}
+      </div>
+    </div>`;
+  }
+
+  if (reemplazar.length > 0) {
+    html += `<div style="margin-bottom:12px">
+      <div style="font-weight:600;font-size:13px;margin-bottom:6px;color:var(--warning)">
+        ↩ ${reemplazar.length} factura${reemplazar.length > 1 ? 's' : ''} que sobreescribirá${reemplazar.length > 1 ? 'n' : ''} la existente
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        ${reemplazar.map(({ grupo, gasto }) => _matchRow(grupo, gasto, true)).join('')}
       </div>
     </div>`;
   }
 
   if (unmatched.length > 0) {
     html += `<div style="margin-bottom:12px">
-      <div style="font-weight:600;font-size:13px;margin-bottom:6px;color:var(--warning)">
-        ⚠ ${unmatched.length} archivo${unmatched.length > 1 ? 's' : ''} sin emparejar
+      <div style="font-weight:600;font-size:13px;margin-bottom:6px;color:var(--text-muted)">
+        — ${unmatched.length} archivo${unmatched.length > 1 ? 's' : ''} sin emparejar (se descartan)
       </div>
       <div style="display:flex;flex-direction:column;gap:4px">
         ${unmatched.map(u => `
-          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:rgba(138,138,138,0.06);border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px;color:var(--text-muted)">
-            <span>${u.baseName}</span>
-            <span>${u.reason}</span>
-          </div>
-        `).join('')}
+          <div style="display:flex;justify-content:space-between;padding:8px 12px;background:rgba(138,138,138,0.06);border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px;color:var(--text-muted)">
+            <span>${u.baseName}</span><span>${u.reason}</span>
+          </div>`).join('')}
       </div>
     </div>`;
   }
 
   if (matched.length === 0) {
-    html += `<p class="text-muted text-sm">Ninguna factura coincidió con gastos pendientes de factura.</p>`;
+    html += `<p class="text-muted text-sm">Ninguna factura coincidió con gastos registrados.</p>`;
   }
 
   resultsDiv.innerHTML = html;
 
-  // 6. Cambiar botón a "Subir a Drive" o "Cerrar"
+  // 6. Footer: botón subir a Drive
   const footerEl = document.getElementById('modal-footer');
   footerEl.innerHTML = '';
 
@@ -1187,63 +1209,61 @@ async function _procesarLoteFacturas(proyectoId, files, body) {
   cancelBtn.addEventListener('click', closeModal);
   footerEl.appendChild(cancelBtn);
 
+  const _ejecutarSubida = async (btn) => {
+    btn.disabled    = true;
+    btn.textContent = 'Subiendo…';
+
+    let ok = 0;
+    let fail = 0;
+
+    for (const { grupo, gasto, sobreescribe } of matched) {
+      try {
+        const result = await driveUploadFactura(
+          { pdf: grupo.pdf, xml: grupo.xml },
+          proyectoId,
+          {
+            concepto: gasto.concepto,
+            fecha:    gasto.fecha,
+            existing: sobreescribe ? {
+              folderId: gasto.factura_drive_folder_id ?? null,
+              pdfId:    grupo.pdf ? (gasto.factura_drive_id ?? null) : null,
+              xmlId:    grupo.xml ? (gasto.factura_xml_id   ?? null) : null,
+            } : {},
+          }
+        );
+
+        const updates = { factura_drive_folder_id: result.folderId, factura_monto_ocr: grupo.monto };
+        if (result.pdf) { updates.factura_nombre    = grupo.pdf.name; updates.factura_drive_url = result.pdf.webViewLink; updates.factura_drive_id = result.pdf.id; }
+        if (result.xml) { updates.factura_xml_nombre = grupo.xml.name; updates.factura_xml_url   = result.xml.webViewLink; updates.factura_xml_id  = result.xml.id; }
+
+        updateItem(KEYS.PROY_MOVIMIENTOS, gasto.id, updates);
+        ok++;
+        btn.textContent = `Subiendo… (${ok}/${matched.length})`;
+      } catch (err) {
+        console.error(`[Lote Drive] ${grupo.baseName}:`, err);
+        fail++;
+      }
+    }
+
+    closeModal();
+    if (fail === 0) {
+      showToast(`🎉 ¡Enhorabuena! ${ok} factura${ok > 1 ? 's' : ''} vinculada${ok > 1 ? 's' : ''} exitosamente`, 'success');
+    } else {
+      showToast(`${ok} subida${ok > 1 ? 's' : ''}, ${fail} fallida${fail > 1 ? 's' : ''}`, 'warning');
+    }
+    refreshDetalleTable(proyectoId);
+  };
+
   if (matched.length > 0 && driveAvailable()) {
     const uploadBtn = document.createElement('button');
     uploadBtn.className = 'btn btn-primary';
-    uploadBtn.textContent = `Subir ${matched.length} factura${matched.length > 1 ? 's' : ''} a Drive`;
-    uploadBtn.addEventListener('click', async () => {
-      uploadBtn.disabled    = true;
-      uploadBtn.textContent = 'Subiendo…';
-
-      let ok = 0;
-      let fail = 0;
-
-      for (const { grupo, gasto } of matched) {
-        try {
-          const result = await driveUploadFactura(
-            { pdf: grupo.pdf, xml: grupo.xml },
-            proyectoId,
-            { concepto: gasto.concepto, fecha: gasto.fecha }
-          );
-
-          const updates = {
-            factura_drive_folder_id: result.folderId,
-            factura_monto_ocr:       grupo.monto,
-          };
-          if (result.pdf) {
-            updates.factura_nombre    = grupo.pdf.name;
-            updates.factura_drive_url = result.pdf.webViewLink;
-            updates.factura_drive_id  = result.pdf.id;
-          }
-          if (result.xml) {
-            updates.factura_xml_nombre = grupo.xml.name;
-            updates.factura_xml_url    = result.xml.webViewLink;
-            updates.factura_xml_id     = result.xml.id;
-          }
-
-          updateItem(KEYS.PROY_MOVIMIENTOS, gasto.id, updates);
-          ok++;
-          uploadBtn.textContent = `Subiendo… (${ok}/${matched.length})`;
-        } catch (err) {
-          console.error(`[Lote Drive] Error subiendo ${grupo.baseName}:`, err);
-          fail++;
-        }
-      }
-
-      closeModal();
-
-      if (fail === 0) {
-        showToast(`🎉 ¡Enhorabuena! ${ok} factura${ok > 1 ? 's' : ''} vinculada${ok > 1 ? 's' : ''} exitosamente`, 'success');
-      } else {
-        showToast(`${ok} subida${ok > 1 ? 's' : ''}, ${fail} fallida${fail > 1 ? 's' : ''}`, 'warning');
-      }
-
-      refreshDetalleTable(proyectoId);
-    });
-
+    const label = reemplazar.length > 0
+      ? `Subir a Drive (${nuevas.length} nueva${nuevas.length !== 1 ? 's' : ''}, ${reemplazar.length} reemplazar)`
+      : `Subir ${matched.length} factura${matched.length > 1 ? 's' : ''} a Drive`;
+    uploadBtn.textContent = label;
+    uploadBtn.addEventListener('click', () => _ejecutarSubida(uploadBtn));
     footerEl.appendChild(uploadBtn);
   } else if (matched.length > 0 && !driveAvailable()) {
-    // Guardar solo metadata sin Drive
     const saveBtn = document.createElement('button');
     saveBtn.className = 'btn btn-primary';
     saveBtn.textContent = `Vincular ${matched.length} factura${matched.length > 1 ? 's' : ''}`;
