@@ -88,7 +88,8 @@ function renderDetalleKPIs(proyectoId, proyecto) {
       <div class="kpi-value text-danger" style="font-size:20px">${formatMXN(totalGastado)}</div>
       <div class="kpi-sub iva-desglose hidden" id="iva-desglose-${proyectoId}">
         <div>Neto: <strong>${formatMXN(iva.gastoNeto)}</strong></div>
-        <div>IVA pagado: <strong>${formatMXN(iva.ivaPagado)}</strong></div>
+        <div>IVA real: <strong>${formatMXN(iva.ivaPagado)}</strong></div>
+        <div style="color:var(--success)">IVA verificado c/facturas: <strong>${formatMXN(iva.ivaVerificado)}</strong></div>
         <div style="color:var(--warning)">IVA por cobrar: <strong>${formatMXN(iva.ivaPorCobrar)}</strong></div>
       </div>
     </div>

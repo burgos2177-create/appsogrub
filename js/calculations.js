@@ -204,20 +204,23 @@ function calcIVADesglose(proyectoId) {
   let gastoNeto = 0;
   let ivaPagado = 0;
   let ivaPorCobrar = 0;
+  let ivaVerificado = 0;  // IVA de gastos que tienen factura adjunta (PDF o XML)
 
   movs.forEach(m => {
     const abs = Math.abs(m.monto);
+    const tieneFactura = !!(m.factura_drive_url || m.factura_xml_url || m.factura_nombre || m.factura_xml_nombre);
     if (m.incluye_iva) {
       const neto = abs / 1.16;
       gastoNeto += neto;
       ivaPagado += abs - neto;
+      if (tieneFactura) ivaVerificado += abs - neto;
     } else {
       gastoNeto += abs;
       ivaPorCobrar += abs * 0.16;
     }
   });
 
-  return { gastoNeto, ivaPagado, ivaPorCobrar, totalBruto: gastoNeto + ivaPagado };
+  return { gastoNeto, ivaPagado, ivaPorCobrar, ivaVerificado, totalBruto: gastoNeto + ivaPagado };
 }
 
 // =====================================================
