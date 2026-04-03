@@ -368,10 +368,85 @@ function _aTipoLabel(m) {
 // TAB: BITACORA GLOBAL (paginada)
 // =====================================================
 function _aBitacora(movs) {
-  const wrap  = document.createElement('div');
-  const total = movs.length;
+  const wrap = document.createElement('div');
+
+  // --- Filter bar ---
+  // Compute unique tipos and categorias from movs
+  const tiposSet = new Set(), catsSet = new Set();
+  movs.forEach(m => {
+    if (m.tipo)      tiposSet.add(m.tipo);
+    if (m.categoria) catsSet.add(m.categoria);
+  });
+  const tiposArr = Array.from(tiposSet).sort();
+  const catsArr  = Array.from(catsSet).sort();
+
+  const anyFilter = _bitFiltOrig || _bitFiltTipo || _bitFiltCat || _bitFiltProv;
+
+  const filterBar = document.createElement('div');
+  filterBar.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;align-items:flex-end';
+  filterBar.innerHTML = `
+    <div style="font-size:11px">
+      <div style="color:var(--text-muted);margin-bottom:4px;font-weight:600;text-transform:uppercase;letter-spacing:.04em">Origen</div>
+      <select class="form-input form-input--sm" id="bit-filt-orig">
+        <option value="">Todos</option>
+        <option value="sogrub"${_bitFiltOrig === 'sogrub' ? ' selected' : ''}>Caja SOGRUB</option>
+        <option value="proyecto"${_bitFiltOrig === 'proyecto' ? ' selected' : ''}>Solo proyectos</option>
+      </select>
+    </div>
+    <div style="font-size:11px">
+      <div style="color:var(--text-muted);margin-bottom:4px;font-weight:600;text-transform:uppercase;letter-spacing:.04em">Tipo</div>
+      <select class="form-input form-input--sm" id="bit-filt-tipo">
+        <option value="">Todos</option>
+        ${tiposArr.map(t => `<option value="${t}"${_bitFiltTipo === t ? ' selected' : ''}>${t}</option>`).join('')}
+      </select>
+    </div>
+    <div style="font-size:11px">
+      <div style="color:var(--text-muted);margin-bottom:4px;font-weight:600;text-transform:uppercase;letter-spacing:.04em">Categor\u00eda</div>
+      <select class="form-input form-input--sm" id="bit-filt-cat">
+        <option value="">Todas</option>
+        ${catsArr.map(c => `<option value="${c}"${_bitFiltCat === c ? ' selected' : ''}>${c}</option>`).join('')}
+      </select>
+    </div>
+    <div style="font-size:11px">
+      <div style="color:var(--text-muted);margin-bottom:4px;font-weight:600;text-transform:uppercase;letter-spacing:.04em">Proveedor</div>
+      <input type="text" class="form-input form-input--sm" id="bit-filt-prov" placeholder="Buscar..." value="${_bitFiltProv}" style="width:140px">
+    </div>
+    ${anyFilter ? `<div style="align-self:flex-end"><button class="btn btn-secondary btn-sm" id="bit-filt-clear">\u2715 Limpiar</button></div>` : ''}
+  `;
+
+  function reRender() {
+    const c = document.getElementById('anal-content');
+    if (c) {
+      const {desde, hasta} = _aRange();
+      const t = _aAllMovs(), p = _aFiltrar(t, desde, hasta), k = _aCalcKPIs(p);
+      c.innerHTML = '';
+      _analBitPage = 0;
+      _aFillContent(c, t, p, k, desde, hasta);
+    }
+  }
+
+  filterBar.querySelector('#bit-filt-orig').addEventListener('change', e => { _bitFiltOrig = e.target.value; reRender(); });
+  filterBar.querySelector('#bit-filt-tipo').addEventListener('change', e => { _bitFiltTipo = e.target.value; reRender(); });
+  filterBar.querySelector('#bit-filt-cat').addEventListener('change',  e => { _bitFiltCat  = e.target.value; reRender(); });
+  filterBar.querySelector('#bit-filt-prov').addEventListener('input',  e => { _bitFiltProv = e.target.value; reRender(); });
+  if (anyFilter) {
+    filterBar.querySelector('#bit-filt-clear').addEventListener('click', () => {
+      _bitFiltOrig = ''; _bitFiltTipo = ''; _bitFiltCat = ''; _bitFiltProv = '';
+      reRender();
+    });
+  }
+  wrap.appendChild(filterBar);
+
+  // Apply filters
+  let filtrados = movs;
+  if (_bitFiltOrig) filtrados = filtrados.filter(m => m._src === _bitFiltOrig);
+  if (_bitFiltTipo) filtrados = filtrados.filter(m => m.tipo === _bitFiltTipo);
+  if (_bitFiltCat)  filtrados = filtrados.filter(m => m.categoria === _bitFiltCat);
+  if (_bitFiltProv) filtrados = filtrados.filter(m => (m.subcontratista || '').toLowerCase().includes(_bitFiltProv.toLowerCase()));
+
+  const total = filtrados.length;
   const start = _analBitPage * _ANAL_PG;
-  const page  = movs.slice(start, start + _ANAL_PG);
+  const page  = filtrados.slice(start, start + _ANAL_PG);
 
   if (total === 0) {
     wrap.appendChild(emptyState({ title: 'Sin movimientos en este per\u00edodo', desc: 'Ajusta el filtro de per\u00edodo u origen.' }));
