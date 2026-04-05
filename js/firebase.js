@@ -35,6 +35,7 @@ const _cache = {
   sogrub_proy_movimientos: null,
   sogrub_proveedores:      null,
   sogrub_proy_proveedores: null,
+  sogrub_fiscal_config:    null,
 };
 
 // Callbacks suscritos a cambios (vista actual los registra)
@@ -125,6 +126,7 @@ const KEYS = Object.freeze({
   PROY_MOVIMIENTOS: 'sogrub_proy_movimientos',
   PROVEEDORES:      'sogrub_proveedores',
   PROY_PROVEEDORES: 'sogrub_proy_proveedores',
+  FISCAL_CONFIG:    'sogrub_fiscal_config',
 });
 
 // =====================================================
@@ -139,6 +141,7 @@ const _COLECCIONES = [
   'sogrub_proy_movimientos',
   'sogrub_proveedores',
   'sogrub_proy_proveedores',
+  'sogrub_fiscal_config',
 ];
 
 let _loadedCount = 0;
@@ -242,6 +245,7 @@ function _onRemoteChange(changedKey) {
     proveedores: () => renderProveedores(),
     importar:    () => {},   // importar no necesita re-render reactivo
     analisis:    () => renderAnalisis(),
+    fiscal:      () => renderFiscal(),
   };
 
   rerender[_activeView]?.();
