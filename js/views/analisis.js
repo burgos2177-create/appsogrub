@@ -378,10 +378,13 @@ function _aCalcRunning(allMovs) {
     (_fbArr(proyectos)).filter(p => p.estado === 'activo').map(p => p.id)
   );
 
-  // Orden cronológico (más antiguo primero)
-  const chrono = [...allMovs].sort((a, b) =>
-    (a.fecha ?? '').localeCompare(b.fecha ?? '')
-  );
+  // Orden cronológico (más antiguo primero) — usar < / > para evitar
+  // comportamientos inesperados de localeCompare según la configuración regional.
+  const chrono = [...allMovs].sort((a, b) => {
+    const fa = a.fecha ?? '';
+    const fb = b.fecha ?? '';
+    return fa < fb ? -1 : fa > fb ? 1 : 0;
+  });
 
   let saldoMifel = saldoInicial;
   const projCash = {}; // project_id → saldo de caja
