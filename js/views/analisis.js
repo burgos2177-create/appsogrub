@@ -378,13 +378,23 @@ function _aCalcRunning(allMovs) {
     (_fbArr(proyectos)).filter(p => p.estado === 'activo').map(p => p.id)
   );
 
-  // Orden cronológico (más antiguo primero) — usar < / > para evitar
-  // comportamientos inesperados de localeCompare según la configuración regional.
-  const chrono = [...allMovs].sort((a, b) => {
-    const fa = a.fecha ?? '';
-    const fb = b.fecha ?? '';
-    return fa < fb ? -1 : fa > fb ? 1 : 0;
-  });
+  // Orden cronológico: fecha ascendente (más antiguo primero).
+  // Para movimientos del mismo día, invertimos el orden relativo de allMovs:
+  // allMovs está ordenado más-reciente-primero (SOGRUB antes que proyecto en
+  // el mismo día), y la tabla los muestra en ese mismo orden (SOGRUB arriba =
+  // "más nuevo" visualmente). Para que el saldo acumulado coincida con lo que
+  // el usuario ve —cada fila muestra el saldo DESPUÉS de ese movimiento y la
+  // diferencia con la fila de abajo es el monto de la fila de arriba—
+  // debemos procesar primero lo que se muestra abajo (más antiguo en pantalla).
+  const chrono = allMovs
+    .map((m, i) => ({ m, i }))
+    .sort((a, b) => {
+      const fa = a.m.fecha ?? '';
+      const fb = b.m.fecha ?? '';
+      if (fa !== fb) return fa < fb ? -1 : 1;
+      return b.i - a.i; // mismo día: índice descendente = invertir orden allMovs
+    })
+    .map(x => x.m);
 
   let saldoMifel = saldoInicial;
   const projCash = {}; // project_id → saldo de caja
