@@ -1461,3 +1461,337 @@ img, svg { display: block; }
   color: var(--accent);
   border-color: rgba(26,159,212,0.3);
 }
+
+/* =====================================================
+   MÓDULO ANÁLISIS FINANCIERO
+   ===================================================== */
+
+/* KPI grid de 3 columnas (6 cards = 2 filas × 3) */
+.anal-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  margin-bottom: 24px;
+}
+@media (max-width: 900px) {
+  .anal-kpi-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 520px) {
+  .anal-kpi-grid { grid-template-columns: 1fr; }
+}
+
+/* Period pills */
+.period-pill {
+  padding: 5px 14px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--surface2);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition);
+  white-space: nowrap;
+}
+.period-pill:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.period-pill.active {
+  background: var(--accent-glow);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Form input small modifier */
+.form-input--sm {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+/* Dimmed row (internal transfers) */
+.row-dim td { opacity: 0.4; }
+
+/* Anal period bar rows */
+.anal-period-bar {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 16px;
+  transition: border-color var(--transition);
+}
+.anal-period-bar:hover { border-color: var(--border-light); }
+
+/* =====================================================
+   MÓDULO FISCAL — Estilos
+   ===================================================== */
+
+.fiscal-container { max-width: 1400px; margin: 0 auto; }
+
+/* Header */
+.fiscal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.fiscal-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin: 0 0 2px 0;
+}
+
+/* Period bar */
+.fiscal-period-bar {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px 16px;
+  margin-bottom: 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.fiscal-period-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.fiscal-period-controls .form-select-sm,
+.fiscal-period-controls .form-input-sm {
+  width: auto;
+  min-width: 100px;
+}
+.fiscal-period-label {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* Small form variants */
+.form-select-sm, .form-input-sm {
+  padding: 6px 10px;
+  font-size: 13px;
+  height: auto;
+}
+
+/* Tabs */
+.fiscal-tabs {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 20px;
+  background: var(--surface);
+  border-radius: var(--radius-md);
+  padding: 3px;
+  border: 1px solid var(--border);
+  overflow-x: auto;
+}
+.fiscal-tab {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition);
+  white-space: nowrap;
+}
+.fiscal-tab:hover {
+  color: var(--text);
+  background: var(--surface2);
+}
+.fiscal-tab.active {
+  color: var(--text);
+  background: var(--surface2);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
+.fiscal-alert-count {
+  background: var(--danger);
+  color: #fff;
+  border-radius: 10px;
+  padding: 1px 6px;
+  font-size: 10px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+/* KPI Grid */
+.fiscal-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+  margin-bottom: 20px;
+}
+.fiscal-kpi {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 16px 18px;
+  transition: border-color var(--transition);
+}
+.fiscal-kpi:hover { border-color: var(--border-light); }
+.fiscal-kpi--success { border-left: 3px solid var(--success); }
+.fiscal-kpi--danger  { border-left: 3px solid var(--danger); }
+.fiscal-kpi__label {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+.fiscal-kpi__value {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.fiscal-kpi__value--lg {
+  font-size: 1.8rem;
+}
+.fiscal-kpi__detail {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.fiscal-kpi__sub {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 4px;
+}
+
+/* Formulas (transparent calculations) */
+.fiscal-formulas { display: flex; flex-direction: column; gap: 8px; }
+.fiscal-formula {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.fiscal-formula:last-child { border-bottom: none; }
+.fiscal-formula__label {
+  color: var(--text-muted);
+  min-width: 140px;
+  font-weight: 500;
+}
+.fiscal-formula__calc { color: var(--text); }
+
+/* Charts grid */
+.fiscal-charts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+  gap: 16px;
+  margin-top: 20px;
+}
+.fiscal-charts-grid .card {
+  padding: 16px;
+}
+.fiscal-charts-grid canvas {
+  max-height: 250px;
+}
+.card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+/* Project cards */
+.fiscal-project-card { margin-bottom: 14px; }
+.fiscal-project-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.fiscal-project-kpis {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.fiscal-mini-kpi {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+/* Details (expandable) */
+.fiscal-details { margin-top: 12px; }
+.fiscal-details-summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 13px;
+  padding: 4px 0;
+}
+.fiscal-details-summary:hover { text-decoration: underline; }
+
+/* Trazabilidad table */
+.fiscal-row-alert { background: rgba(224, 167, 82, 0.05) !important; }
+.fiscal-alert-inline { cursor: help; font-size: 14px; }
+
+/* Alerts panel */
+.fiscal-alert-card { margin-bottom: 12px; }
+.fiscal-alert-list {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0 0;
+}
+.fiscal-alert-list li {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  color: var(--text);
+}
+.fiscal-alert-list li:last-child { border-bottom: none; }
+
+.fiscal-empty-alerts {
+  text-align: center;
+  padding: 32px;
+  color: var(--success);
+}
+.fiscal-empty-alerts p {
+  color: var(--text-muted);
+  margin-top: 8px;
+}
+
+/* Config form */
+.fiscal-config-form .form-label {
+  margin-bottom: 4px;
+  font-weight: 500;
+}
+
+/* Small table variant */
+.data-table--sm th,
+.data-table--sm td {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+/* Btn sm */
+.btn-sm {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+/* Utility text helpers */
+.text-nowrap { white-space: nowrap; }
+.text-center { text-align: center; }
+
+/* Responsive fiscal */
+@media (max-width: 768px) {
+  .fiscal-kpi-grid { grid-template-columns: 1fr; }
+  .fiscal-charts-grid { grid-template-columns: 1fr; }
+  .fiscal-period-bar { flex-direction: column; }
+  .fiscal-project-kpis { justify-content: flex-start; }
+  .fiscal-header { flex-direction: column; }
+}

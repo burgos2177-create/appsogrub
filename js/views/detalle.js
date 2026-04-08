@@ -55,6 +55,7 @@ function renderDetalle(proyectoId) {
 function renderDetalleKPIs(proyectoId, proyecto) {
   const saldoCaja        = calcSaldoCajaProyecto(proyectoId);
   const totalCobrado     = calcTotalCobradoCliente(proyectoId);
+  const ivaCobrado       = calcIVACobradoCliente(proyectoId);
   const totalGastado     = calcTotalGastadoPagado(proyectoId);
   const utilidadReal     = calcUtilidadReal(proyectoId);
   const utilidadEst      = calcUtilidadEstimada(proyectoId);
@@ -63,6 +64,7 @@ function renderDetalleKPIs(proyectoId, proyecto) {
   const iva              = calcIVADesglose(proyectoId);
   const presupuesto      = proyecto?.presupuesto_contrato ?? 0;
   const restantePorCobrar = Math.max(0, presupuesto - totalCobrado);
+  const ivaBalance       = ivaCobrado.ivaTotal - iva.ivaPagado;
 
   const cls = avance < 60 ? 'low' : avance < 85 ? 'medium' : 'high';
 
@@ -74,8 +76,23 @@ function renderDetalleKPIs(proyectoId, proyecto) {
     <div class="kpi-card">
       <div class="kpi-label">📥 Total cobrado</div>
       <div class="kpi-value text-success" style="font-size:20px">${formatMXN(totalCobrado)}</div>
-      <div class="kpi-sub" style="display:flex;flex-direction:column;gap:2px;margin-top:4px">
+      <div class="kpi-sub" style="display:flex;flex-direction:column;gap:3px;margin-top:4px">
+        ${ivaCobrado.ivaTotal > 0 ? `
         <div style="display:flex;justify-content:space-between">
+          <span>Neto cobrado</span>
+          <strong style="font-variant-numeric:tabular-nums">${formatMXN(ivaCobrado.netoTotal)}</strong>
+        </div>
+        <div style="display:flex;justify-content:space-between">
+          <span>IVA cobrado al cliente</span>
+          <strong style="color:var(--accent);font-variant-numeric:tabular-nums">${formatMXN(ivaCobrado.ivaTotal)}</strong>
+        </div>
+        <div style="border-top:1px solid var(--border);margin-top:2px;padding-top:3px;display:flex;justify-content:space-between">
+          <span style="color:${ivaBalance >= 0 ? 'var(--success)' : 'var(--warning)'}">Balance IVA</span>
+          <strong style="color:${ivaBalance >= 0 ? 'var(--success)' : 'var(--warning)'};font-variant-numeric:tabular-nums"
+            title="IVA cobrado al cliente minus IVA pagado en gastos">${ivaBalance >= 0 ? '+' : ''}${formatMXN(ivaBalance)}</strong>
+        </div>
+        ` : ''}
+        <div style="display:flex;justify-content:space-between;${ivaCobrado.ivaTotal > 0 ? '' : ''}">
           <span>Restante por cobrar</span>
           <strong style="color:${restantePorCobrar > 0 ? 'var(--warning)' : 'var(--text-muted)'};font-variant-numeric:tabular-nums">${formatMXN(restantePorCobrar)}</strong>
         </div>
@@ -87,10 +104,17 @@ function renderDetalleKPIs(proyectoId, proyecto) {
       </div>
       <div class="kpi-value text-danger" style="font-size:20px">${formatMXN(totalGastado)}</div>
       <div class="kpi-sub iva-desglose hidden" id="iva-desglose-${proyectoId}">
-        <div>Neto: <strong>${formatMXN(iva.gastoNeto)}</strong></div>
-        <div>IVA real: <strong>${formatMXN(iva.ivaPagado)}</strong></div>
+        <div style="font-weight:600;color:var(--text-muted);margin-bottom:3px;font-size:10px;text-transform:uppercase;letter-spacing:.05em">Gastos</div>
+        <div>Neto gastado: <strong>${formatMXN(iva.gastoNeto)}</strong></div>
+        <div>IVA pagado (gastos): <strong style="color:var(--danger)">${formatMXN(iva.ivaPagado)}</strong></div>
         <div style="color:var(--success)">IVA verificado c/facturas: <strong>${formatMXN(iva.ivaVerificado)}</strong></div>
-        <div style="color:var(--warning)">IVA por cobrar: <strong>${formatMXN(iva.ivaPorCobrar)}</strong></div>
+        <div style="color:var(--warning)">IVA por acreditar: <strong>${formatMXN(iva.ivaPorCobrar)}</strong></div>
+        <div style="border-top:1px solid var(--border);margin-top:4px;padding-top:4px;font-weight:600;color:var(--text-muted);font-size:10px;text-transform:uppercase;letter-spacing:.05em">Cobrado al cliente</div>
+        <div>IVA cobrado: <strong style="color:var(--accent)">${formatMXN(ivaCobrado.ivaTotal)}</strong></div>
+        <div style="margin-top:3px">Balance IVA:
+          <strong style="color:${ivaBalance >= 0 ? 'var(--success)' : 'var(--warning)'}">${ivaBalance >= 0 ? '+' : ''}${formatMXN(ivaBalance)}</strong>
+          <span style="font-size:10px;color:var(--text-dim)">(cobrado &minus; pagado)</span>
+        </div>
       </div>
       <button class="btn btn-secondary btn-sm" id="btn-estado-cuenta-${proyectoId}"
         style="margin-top:8px;font-size:11px;padding:4px 10px">
@@ -495,12 +519,51 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
     </div>
     ` : `
     <div class="form-group">
+      <label class="form-label">IVA</label>
+      <div class="toggle-group" style="max-width:280px">
+        <input type="radio" name="pm-iva-abono" id="pm-siniva-abono" value="false" class="toggle-option"
+          ${!mov?.incluye_iva ? 'checked' : ''}>
+        <label for="pm-siniva-abono" class="toggle-label">Sin IVA</label>
+        <input type="radio" name="pm-iva-abono" id="pm-coniva-abono" value="true" class="toggle-option"
+          ${mov?.incluye_iva ? 'checked' : ''}>
+        <label for="pm-coniva-abono" class="toggle-label">Con IVA (16%)</label>
+      </div>
+      <div id="pm-abono-iva-desglose" style="display:none;margin-top:8px;padding:8px 12px;background:var(--surface2);border-radius:var(--radius);font-size:12px;color:var(--text-muted)">
+        Neto: <strong id="pm-abono-neto">—</strong> &nbsp;+&nbsp; IVA 16%: <strong id="pm-abono-iva">—</strong>
+      </div>
+    </div>
+    <div class="form-group">
       <label class="form-label" for="pm-nota">Nota <span class="text-dim">(opcional)</span></label>
       <input type="text" id="pm-nota" class="form-input" placeholder="Nota adicional"
         value="${mov?.subcontratista ?? ''}">
     </div>
     `}
   `;
+
+  // Abono: toggle IVA desglose en tiempo real
+  if (!esGasto) {
+    setTimeout(() => {
+      const montoEl   = body.querySelector('#pm-monto');
+      const desglose  = body.querySelector('#pm-abono-iva-desglose');
+      const netoEl    = body.querySelector('#pm-abono-neto');
+      const ivaEl     = body.querySelector('#pm-abono-iva');
+      const updateAbono = () => {
+        const conIva = body.querySelector('#pm-coniva-abono')?.checked;
+        const monto  = parseFloat(montoEl?.value) || 0;
+        if (desglose) desglose.style.display = conIva ? 'block' : 'none';
+        if (conIva && netoEl && ivaEl) {
+          const neto = monto / 1.16;
+          const iva  = monto - neto;
+          netoEl.textContent = formatMXN(neto);
+          ivaEl.textContent  = formatMXN(iva);
+        }
+      };
+      body.querySelectorAll('input[name="pm-iva-abono"]').forEach(r =>
+        r.addEventListener('change', updateAbono));
+      montoEl?.addEventListener('input', updateAbono);
+      updateAbono();
+    }, 0);
+  }
 
   // Show/hide factura field + wire OCR on file selection
   if (esGasto) {
@@ -607,7 +670,7 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
         : '';
       const incluye_iva = esGasto
         ? body.querySelector('#pm-coniva')?.checked ?? false
-        : false;
+        : body.querySelector('#pm-coniva-abono')?.checked ?? false;
 
       const valid = validateFields([
         { el: body.querySelector('#pm-fecha'),   msg: 'Selecciona una fecha' },
@@ -1466,14 +1529,10 @@ function _generarEstadoDeCuentaImpl(proyectoId) {
   const montoUti = acum * (pctUti / 100); acum += montoUti;
   const subtotal = acum;
 
-  // IVA restante = IVA por cobrar de gastos S/IVA
   const iva = calcIVADesglose(proyectoId);
-  const ivaRestante = iva.ivaPorCobrar;
 
-  const totalFactura = subtotal + ivaRestante;
-
-  // Balance
-  const balance = totalCobrado - totalFactura;
+  // Balance se calcula con total factura completa (subtotal + IVA restante)
+  const balance = totalCobrado - (subtotal + iva.ivaPorCobrar);
 
   // ---------- PDF ----------
   const doc = new jsPDF({ unit: 'mm', format: 'letter' });
@@ -1562,17 +1621,51 @@ function _generarEstadoDeCuentaImpl(proyectoId) {
     y += 2;
   }
 
-  // ---------- TOTALES ----------
+  // ---------- DESGLOSE FISCAL ----------
+  const baseGravable = subtotal - iva.ivaPagado;
+  const ivaReal      = iva.ivaPagado;
+  const ivaRestante  = iva.ivaPorCobrar;
+  const totalConIvaReal = subtotal;             // base gravable + IVA ya pagado
+  const totalFactura    = subtotal + ivaRestante; // factura completa
+
   doc.setFontSize(11);
   doc.setFont('helvetica', 'bold');
-  doc.text(`SUBTOTAL: ${_fmtMXN(subtotal)}`, marginL, y);
-  y += 7;
-  doc.text(`IVA RESTANTE: ${_fmtMXN(ivaRestante)}`, marginL, y);
-  y += 7;
+
+  doc.text('SUBTOTAL (Base gravable):', marginL, y);
+  doc.text(_fmtMXN(baseGravable), marginL + usable, y, { align: 'right' });
+  y += 6;
+  doc.text('+ IVA PAGADO (IVA real c/factura):', marginL, y);
+  doc.text(_fmtMXN(ivaReal), marginL + usable, y, { align: 'right' });
+  y += 2;
+  doc.setLineWidth(0.3);
+  doc.line(marginL, y, marginL + usable, y);
+  y += 6;
+  doc.setFontSize(12);
+  doc.text('COSTO + IVA REAL:', marginL, y);
+  doc.text(_fmtMXN(totalConIvaReal), marginL + usable, y, { align: 'right' });
+  y += 8;
+
+  doc.setFontSize(11);
+  doc.text('+ IVA RESTANTE*:', marginL, y);
+  doc.text(_fmtMXN(ivaRestante), marginL + usable, y, { align: 'right' });
+  y += 2;
+  doc.setLineWidth(0.3);
+  doc.line(marginL, y, marginL + usable, y);
+  y += 6;
+
   doc.setFontSize(13);
   doc.setTextColor(180, 30, 30);
-  doc.text(`TOTAL FACTURA: ${_fmtMXN(totalFactura)}`, marginL, y);
+  doc.text('TOTAL FACTURA COMPLETA:', marginL, y);
+  doc.text(_fmtMXN(totalFactura), marginL + usable, y, { align: 'right' });
   doc.setTextColor(0, 0, 0);
+  y += 5;
+
+  doc.setFontSize(7.5);
+  doc.setFont('helvetica', 'italic');
+  doc.setTextColor(100, 100, 100);
+  doc.text('*IVA que aplica si el cliente requiere factura sobre gastos registrados sin comprobante fiscal (16% sobre gastos S/IVA)', marginL, y);
+  doc.setTextColor(0, 0, 0);
+  doc.setFont('helvetica', 'bold');
   y += 14;
 
   // ---------- BALANCE ----------
@@ -1601,6 +1694,214 @@ function _generarEstadoDeCuentaImpl(proyectoId) {
   doc.text(balanceLabel, marginL, y);
   doc.text(_fmtMXN(Math.abs(balance)), marginL + usable, y, { align: 'right' });
   doc.setTextColor(0, 0, 0);
+
+  // ---------- PÁGINA 2: ESTADO DE PAGOS ----------
+  doc.addPage();
+  y = 20;
+
+  // Título
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(14);
+  doc.setTextColor(180, 30, 30);
+  doc.text('ESTADO DE PAGOS', marginL, y);
+  doc.setTextColor(0, 0, 0);
+  y += 7;
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`${proyecto.cliente ?? '—'}  ·  ${proyecto.nombre ?? '—'}`, marginL, y);
+  y += 10;
+
+  // Resumen factura de referencia
+  const refBody = [
+    ['Base gravable (costo + sobrecostos sin IVA)',  _fmtMXN(baseGravable)],
+  ];
+  if (ivaReal > 0.005)
+    refBody.push(['IVA real (gastos con factura)',   _fmtMXN(ivaReal)]);
+  refBody.push(['Total Costo + IVA Real',            _fmtMXN(totalConIvaReal)]);
+  if (ivaRestante > 0.005) {
+    refBody.push(['+ IVA restante (gastos sin comprobante)', _fmtMXN(ivaRestante)]);
+    refBody.push(['TOTAL FACTURA COMPLETA',          _fmtMXN(totalFactura)]);
+  }
+  doc.autoTable({
+    startY: y,
+    margin: { left: marginL, right: marginR },
+    head: [['FACTURA DE REFERENCIA', '']],
+    body: refBody,
+    styles:     { fontSize: 9, cellPadding: 2.5 },
+    headStyles: { fillColor: [220,220,220], textColor: [0,0,0], fontStyle: 'bold', lineColor: [0,0,0], lineWidth: 0.3 },
+    bodyStyles: { lineColor: [0,0,0], lineWidth: 0.2 },
+    columnStyles: { 1: { halign: 'right', cellWidth: 38, fontStyle: 'bold' } },
+    theme: 'grid',
+  });
+  y = doc.lastAutoTable.finalY + 10;
+
+  // Obtener abonos ordenados por fecha
+  const abonos = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
+    .filter(m => m.proyecto_id === proyectoId && m.tipo === 'abono_cliente')
+    .sort((a, b) => (a.fecha ?? '').localeCompare(b.fecha ?? ''));
+
+  // Orden de cobertura: 1º base gravable → 2º IVA real → 3º IVA restante (factura completa)
+  let baseRunning        = baseGravable;
+  let ivaRealRunning     = ivaReal;
+  let ivaRestanteRunning = ivaRestante;
+
+  if (abonos.length === 0) {
+    doc.setFont('helvetica', 'italic');
+    doc.setFontSize(10);
+    doc.setTextColor(120, 120, 120);
+    doc.text('Sin pagos registrados.', marginL, y);
+    doc.setTextColor(0, 0, 0);
+    y += 10;
+  }
+
+  abonos.forEach((abono, i) => {
+    const montoTotal = Math.abs(abono.monto ?? 0);
+    const conIva     = !!abono.incluye_iva;
+    // Si el abono incluye IVA, separar neto e IVA cobrado al cliente
+    const montoNeto        = conIva ? montoTotal / 1.16 : montoTotal;
+    const ivaCobradoAbono  = conIva ? montoTotal - montoNeto : 0;
+    const fechaStr = (abono.fecha ?? '').replace(/^(\d{4})-(\d{2})-(\d{2})$/, '$3/$2/$1');
+    const concepto = abono.concepto ?? 'Abono';
+
+    // Fase 1: neto del abono cubre base gravable
+    let netoRestante = montoNeto;
+    const baseAplicada    = Math.min(netoRestante, baseRunning); netoRestante -= baseAplicada;
+
+    // Fase 2-3: IVA cobrado al cliente + excedente del neto cubren IVA real → IVA restante
+    let ivaPool           = ivaCobradoAbono + netoRestante;
+    const ivaRealAplicado = Math.min(ivaPool, ivaRealRunning); ivaPool -= ivaRealAplicado;
+    const ivaRestanteAplicado = Math.min(ivaPool, ivaRestanteRunning);
+
+    baseRunning        = Math.max(0, baseRunning        - baseAplicada);
+    ivaRealRunning     = Math.max(0, ivaRealRunning     - ivaRealAplicado);
+    ivaRestanteRunning = Math.max(0, ivaRestanteRunning - ivaRestanteAplicado);
+
+    const entroFacturaCompleta = ivaRestanteAplicado > 0;
+    const remanente = baseRunning + ivaRealRunning + ivaRestanteRunning;
+
+    if (y > 210) { doc.addPage(); y = 20; }
+
+    // Encabezado del pago
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
+    doc.setTextColor(30, 100, 160);
+    doc.text(`FACTURA ${i + 1}  ·  ${fechaStr}  ·  ${concepto}`, marginL, y);
+    doc.setTextColor(0, 0, 0);
+    y += 4;
+
+    // Tabla del pago (filas dinámicas según fases cubiertas)
+    const pagoBody = [
+      ['Subtotal (base gravable aplicada)', _fmtMXN(baseAplicada)],
+    ];
+    if (conIva)
+      pagoBody.push(['IVA cobrado al cliente (16%)', _fmtMXN(ivaCobradoAbono)]);
+    if (ivaRealAplicado > 0)
+      pagoBody.push(['IVA real aplicado (gastos c/factura)', _fmtMXN(ivaRealAplicado)]);
+    if (ivaRestanteAplicado > 0)
+      pagoBody.push(['IVA restante aplicado (factura completa)', _fmtMXN(ivaRestanteAplicado)]);
+    pagoBody.push(['TOTAL RECIBIDO', _fmtMXN(montoTotal)]);
+
+    doc.autoTable({
+      startY: y,
+      margin: { left: marginL, right: marginR },
+      body: pagoBody,
+      styles:     { fontSize: 9, cellPadding: 2.5 },
+      bodyStyles: { lineColor: [0,0,0], lineWidth: 0.2 },
+      columnStyles: {
+        0: { fontStyle: 'normal' },
+        1: { halign: 'right', cellWidth: 38, fontStyle: 'bold' },
+      },
+      theme: 'grid',
+    });
+    y = doc.lastAutoTable.finalY + 3;
+
+    // Nota si el cliente entró a factura completa
+    if (entroFacturaCompleta) {
+      doc.setFont('helvetica', 'italic');
+      doc.setFontSize(8);
+      doc.setTextColor(30, 100, 160);
+      doc.text('★ El cliente optó por factura completa — se aplica IVA sobre gastos sin comprobante', marginL, y);
+      doc.setTextColor(0, 0, 0);
+      y += 5;
+    }
+
+    // Balance después del pago
+    const remColor = remanente > 0.01 ? [180, 30, 30] : [30, 130, 60];
+    const balanceBody = [
+      ['Base gravable pendiente', _fmtMXN(baseRunning)],
+    ];
+    if (ivaReal > 0.005)
+      balanceBody.push(['IVA real pendiente', _fmtMXN(ivaRealRunning)]);
+    if (ivaRestante > 0.005)
+      balanceBody.push(['IVA restante pendiente', _fmtMXN(ivaRestanteRunning)]);
+    balanceBody.push(['TOTAL FACTURA REMANENTE', _fmtMXN(remanente)]);
+
+    doc.autoTable({
+      startY: y,
+      margin: { left: marginL, right: marginR },
+      head: [['BALANCE POR CUBRIR', '']],
+      body: balanceBody,
+      styles:     { fontSize: 9, cellPadding: 2.5 },
+      headStyles: { fillColor: [245,245,245], textColor: [80,80,80], fontStyle: 'bold', lineColor: [0,0,0], lineWidth: 0.3 },
+      bodyStyles: { lineColor: [0,0,0], lineWidth: 0.2 },
+      columnStyles: {
+        0: { fontStyle: 'normal' },
+        1: { halign: 'right', cellWidth: 38 },
+      },
+      didDrawCell: (data) => {
+        if (data.row.index === balanceBody.length - 1) {
+          data.cell.styles.fontStyle = 'bold';
+          if (data.column.index === 1) data.cell.styles.textColor = remColor;
+        }
+      },
+      theme: 'grid',
+    });
+    y = doc.lastAutoTable.finalY + 12;
+  });
+
+  // Resumen final (si hay más de un pago)
+  if (abonos.length > 1) {
+    if (y > 220) { doc.addPage(); y = 20; }
+    const finalRemanente   = baseRunning + ivaRealRunning + ivaRestanteRunning;
+    const ivaRealCubierto  = ivaReal     - ivaRealRunning;
+    const ivaRestCubierto  = ivaRestante - ivaRestanteRunning;
+    const finalColor = finalRemanente <= 0.01 ? [30, 130, 60] : [180, 30, 30];
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(12);
+    doc.setTextColor(...finalColor);
+    doc.text('RESUMEN FINAL', marginL, y);
+    doc.setTextColor(0, 0, 0);
+    y += 5;
+    const resumenBody = [
+      ['Total cobrado al cliente',      _fmtMXN(totalCobrado)],
+      ['Base gravable cubierta',        _fmtMXN(baseGravable  - baseRunning)],
+      ['IVA real cubierto',             _fmtMXN(ivaRealCubierto)],
+    ];
+    if (ivaRestCubierto > 0)
+      resumenBody.push(['IVA restante cubierto (factura completa)', _fmtMXN(ivaRestCubierto)]);
+    resumenBody.push(['Base gravable pendiente', _fmtMXN(baseRunning)]);
+    if (ivaReal > 0.005)
+      resumenBody.push(['IVA real pendiente', _fmtMXN(ivaRealRunning)]);
+    if (ivaRestante > 0.005)
+      resumenBody.push(['IVA restante pendiente', _fmtMXN(ivaRestanteRunning)]);
+    resumenBody.push(['FACTURA REMANENTE', _fmtMXN(finalRemanente)]);
+
+    doc.autoTable({
+      startY: y,
+      margin: { left: marginL, right: marginR },
+      body: resumenBody,
+      styles:     { fontSize: 9, cellPadding: 2.5 },
+      bodyStyles: { lineColor: [0,0,0], lineWidth: 0.2 },
+      columnStyles: { 1: { halign: 'right', cellWidth: 38, fontStyle: 'bold' } },
+      didDrawCell: (data) => {
+        if (data.row.index === resumenBody.length - 1) {
+          data.cell.styles.fontStyle = 'bold';
+          data.cell.styles.textColor = finalColor;
+        }
+      },
+      theme: 'grid',
+    });
+  }
 
   // Guardar
   const safeName = (proyecto.nombre ?? 'proyecto').replace(/[^a-zA-Z0-9áéíóúñÁÉÍÓÚÑ ]/g, '').trim().replace(/\s+/g, '_');

@@ -35,6 +35,7 @@ const _cache = {
   sogrub_proy_movimientos: null,
   sogrub_proveedores:      null,
   sogrub_proy_proveedores: null,
+  sogrub_fiscal_config:    null,
 };
 
 // Callbacks suscritos a cambios (vista actual los registra)
@@ -125,6 +126,7 @@ const KEYS = Object.freeze({
   PROY_MOVIMIENTOS: 'sogrub_proy_movimientos',
   PROVEEDORES:      'sogrub_proveedores',
   PROY_PROVEEDORES: 'sogrub_proy_proveedores',
+  FISCAL_CONFIG:    'sogrub_fiscal_config',
 });
 
 // =====================================================
@@ -139,33 +141,49 @@ const _COLECCIONES = [
   'sogrub_proy_movimientos',
   'sogrub_proveedores',
   'sogrub_proy_proveedores',
+  'sogrub_fiscal_config',
 ];
 
 let _loadedCount = 0;
 
 function _suscribirColecciones() {
+  // Si Firebase tarda más de 20s, arrancar con datos vacíos.
+  // Cuando conecte después, los listeners dispararán _onRemoteChange
+  // y la vista activa se re-renderizará con los datos reales.
+  const _fallbackTimer = setTimeout(() => {
+    if (!_fbReady) {
+      console.warn('[Firebase] Sin respuesta en 20s — arrancando sin datos');
+      const msgEl = document.getElementById('loading-msg');
+      if (msgEl) msgEl.textContent = 'Sin conexión — intenta recargar';
+      _fbReady = true;
+      _onFirebaseReady();
+    }
+  }, 20000);
+
+  function _contarCarga() {
+    if (_fbReady) return;
+    _loadedCount++;
+    if (_loadedCount >= _COLECCIONES.length) {
+      clearTimeout(_fallbackTimer);
+      _fbReady = true;
+      _onFirebaseReady();
+    }
+  }
+
   _COLECCIONES.forEach(key => {
     _db.ref(key).on('value', snapshot => {
       const data = snapshot.val();
-
-      // Si no existe aún en Firebase, no pisar el cache
       if (data !== null) {
         _cache[key] = data;
       }
-
-      // Contar cargas iniciales
       if (!_fbReady) {
-        _loadedCount++;
-        if (_loadedCount >= _COLECCIONES.length) {
-          _fbReady = true;
-          _onFirebaseReady();
-        }
+        _contarCarga();
       } else {
-        // Cambio en tiempo real → re-renderizar vista activa
         _onRemoteChange(key);
       }
     }, err => {
       console.error(`[Firebase] Error listener "${key}":`, err);
+      _contarCarga(); // contar igual para no colgar
     });
   });
 }
@@ -193,19 +211,21 @@ function _updateStatusUI(state) {
 // ARRANQUE — cuando Firebase tiene los datos listos
 // =====================================================
 function _onFirebaseReady() {
-  // Actualizar pantalla de carga
   const msgEl = document.getElementById('loading-msg');
   if (msgEl) msgEl.textContent = 'Datos cargados ✓';
 
   setTimeout(() => {
-    // Ocultar loading, mostrar app
     const loading = document.getElementById('app-loading');
     const main    = document.getElementById('app-main');
     if (loading) loading.classList.add('app-loading--hidden');
     if (main)    main.style.display = '';
 
-    // Inicializar app normalmente
     _initApp();
+
+    // Migración en segundo plano — no bloquea el arranque
+    _migrarLocalStorageSiEsNecesario().catch(e =>
+      console.warn('[Firebase] Migración bg:', e.message)
+    );
   }, 400);
 }
 
@@ -224,6 +244,8 @@ function _onRemoteChange(changedKey) {
     detalle:     () => renderDetalle(_activeProyecto),
     proveedores: () => renderProveedores(),
     importar:    () => {},   // importar no necesita re-render reactivo
+    analisis:    () => renderAnalisis(),
+    fiscal:      () => renderFiscal(),
   };
 
   rerender[_activeView]?.();
@@ -239,10 +261,25 @@ async function _migrarLocalStorageSiEsNecesario() {
   if (_migracionRealizada) return;
   _migracionRealizada = true;
 
-  const snap = await _db.ref('sogrub_movimientos').get();
+  let snap;
+  try {
+    // Timeout de 8s para no colgar la app si Firebase tarda
+    snap = await Promise.race([
+      _db.ref('sogrub_movimientos').get(),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('migration-timeout')), 8000)
+      ),
+    ]);
+  } catch (e) {
+    console.warn('[Firebase] Omitiendo migración (timeout/error):', e.message);
+    return; // Continuar sin migrar — los listeners traerán los datos
+  }
 
   // Si ya hay datos en Firebase, no migrar
-  if (snap.exists() && Array.isArray(snap.val()) && snap.val().length > 0) {
+  const val = snap.val();
+  const yaExiste = snap.exists() && val !== null &&
+    (Array.isArray(val) ? val.length > 0 : Object.keys(val).length > 0);
+  if (yaExiste) {
     console.log('[Firebase] Datos ya existen en Firebase, sin migración.');
     return;
   }
@@ -283,25 +320,14 @@ async function _migrarLocalStorageSiEsNecesario() {
 // =====================================================
 // INICIALIZACIÓN — reemplaza initializeData()
 // =====================================================
-async function initializeData() {
-  const msgEl = document.getElementById('loading-msg');
-
+function initializeData() {
   try {
-    // 1. Monitor de conexión
     _initConnectionStatus();
-
-    // 2. Migrar localStorage → Firebase si Firebase está vacío
-    if (msgEl) msgEl.textContent = 'Verificando datos existentes…';
-    await _migrarLocalStorageSiEsNecesario();
-
-    // 3. Suscribir listeners en tiempo real (dispara _onFirebaseReady cuando terminan)
-    if (msgEl) msgEl.textContent = 'Sincronizando con Firebase…';
-    _suscribirColecciones();
-
+    _suscribirColecciones(); // arranca inmediatamente, sin esperar migración
   } catch (err) {
     console.error('[Firebase] Error de inicialización:', err);
-    if (msgEl) msgEl.textContent = 'Error de conexión — reintentando…';
-    // Reintentar en 3s
+    const msgEl = document.getElementById('loading-msg');
+    if (msgEl) msgEl.textContent = 'Error — reintentando…';
     setTimeout(initializeData, 3000);
   }
 }

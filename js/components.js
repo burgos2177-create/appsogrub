@@ -288,6 +288,38 @@ function renderBarChart(data, { colorVar = '--accent', title = '' } = {}) {
 // =====================================================
 // EMPTY STATE HELPER
 // =====================================================
+// =====================================================
+// FISCAL BADGE HELPERS
+// =====================================================
+function fiscalStatusBadge(estatus) {
+  const map = {
+    'deducible_con_iva':  { cls: 'badge-success', label: 'Deducible + IVA' },
+    'deducible_sin_iva':  { cls: 'badge-info',    label: 'Deducible' },
+    'no_deducible':       { cls: 'badge-muted',   label: 'No deducible' },
+    'pendiente_revision': { cls: 'badge-warning', label: 'Pendiente' },
+  };
+  const def = map[estatus] ?? { cls: 'badge-muted', label: estatus || '—' };
+  return `<span class="badge ${def.cls}">${def.label}</span>`;
+}
+
+function ivaIndicator(incluye_iva) {
+  return incluye_iva
+    ? '<span class="badge badge-info" style="font-size:10px">IVA</span>'
+    : '';
+}
+
+function cfdiIcon(tiene) {
+  return tiene
+    ? '<span style="color:var(--success)" title="Presente">&#10003;</span>'
+    : '<span style="color:var(--text-dim)" title="Sin archivo">&#10007;</span>';
+}
+
+function alertaSeveridadIcon(tipo) {
+  const map = { error: '&#9888;', warning: '&#9888;', info: '&#9432;' };
+  const colors = { error: 'var(--danger)', warning: 'var(--warning)', info: 'var(--accent)' };
+  return `<span style="color:${colors[tipo] ?? 'var(--text-muted)'}">${map[tipo] ?? ''}</span>`;
+}
+
 function emptyState({ icon = '', title = 'Sin datos', desc = '', actionLabel = '', onAction = null }) {
   const el = document.createElement('div');
   el.className = 'empty-state';
