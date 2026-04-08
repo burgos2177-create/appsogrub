@@ -335,7 +335,7 @@ function _aSubTabs() {
 // ROUTER de contenido
 // =====================================================
 function _aFillContent(el, todos, periodo, kpis, desde, hasta) {
-  if (_analSubTab === 'bitacora')   el.appendChild(_aBitacora(periodo));
+  if (_analSubTab === 'bitacora')   el.appendChild(_aBitacora(periodo, todos));
   if (_analSubTab === 'mensual')    el.appendChild(_aMensual(todos, desde, hasta));
   if (_analSubTab === 'iva')        el.appendChild(_aIVA(periodo));
   if (_analSubTab === 'proyectos')  el.appendChild(_aPorProyecto(periodo));
@@ -365,9 +365,67 @@ function _aTipoLabel(m) {
 }
 
 // =====================================================
+// RUNNING BALANCE — Saldo Mifel · Comprometido · Disponible
+// Anota cada movimiento (in-place) con los saldos acumulados
+// después de procesarlo, en orden cronológico.
+// =====================================================
+function _aCalcRunning(allMovs) {
+  const cfg = getConfig() ?? {};
+  const saldoInicial = cfg.saldo_inicial_mifel ?? 0;
+
+  const proyectos  = getCollection(KEYS.PROYECTOS) ?? [];
+  const activeSet  = new Set(
+    (_fbArr(proyectos)).filter(p => p.estado === 'activo').map(p => p.id)
+  );
+
+  // Orden cronológico (más antiguo primero)
+  const chrono = [...allMovs].sort((a, b) =>
+    (a.fecha ?? '').localeCompare(b.fecha ?? '')
+  );
+
+  let saldoMifel = saldoInicial;
+  const projCash = {}; // project_id → saldo de caja
+
+  chrono.forEach(m => {
+    // ── Saldo Mifel ──
+    if (m._src === 'sogrub' && m.status === 'Pagado') {
+      saldoMifel += (m.monto ?? 0);
+    } else if (m.tipo === 'abono_cliente') {
+      saldoMifel += (m.monto ?? 0);          // entra al banco
+    } else if (m.tipo === 'gasto' && m.status === 'Pagado') {
+      saldoMifel += (m.monto ?? 0);          // sale del banco (monto negativo)
+    }
+
+    // ── Caja de proyecto ──
+    const pid = m.proyecto_id;
+    if (pid) {
+      if (!projCash[pid]) projCash[pid] = 0;
+      if (m.tipo === 'abono_cliente') {
+        projCash[pid] += (m.monto ?? 0);
+      } else if (m.tipo === 'transferencia_sogrub') {
+        projCash[pid] += (m.monto ?? 0);
+      } else if (m.tipo === 'gasto' && m.status === 'Pagado') {
+        projCash[pid] += (m.monto ?? 0);     // negativo
+      }
+    }
+
+    // ── Comprometido (saldos positivos de proyectos activos) ──
+    let comprometido = 0;
+    for (const [id, bal] of Object.entries(projCash)) {
+      if (activeSet.has(id) && bal > 0) comprometido += bal;
+    }
+
+    m._runSaldoMifel   = saldoMifel;
+    m._runComprometido = comprometido;
+    m._runDisponible   = saldoMifel - comprometido;
+  });
+}
+
+// =====================================================
 // TAB: BITACORA GLOBAL (paginada)
 // =====================================================
-function _aBitacora(movs) {
+function _aBitacora(movs, todos) {
+  _aCalcRunning(todos ?? movs);
   const wrap = document.createElement('div');
 
   // --- Filter bar ---
@@ -481,6 +539,18 @@ function _aBitacora(movs) {
     const prov  = m.subcontratista || '\u2014';
     const est   = m.status ? statusBadge(m.status) : '<span class="text-dim">\u2014</span>';
     const conc  = m.concepto ?? '\u2014';
+
+    // Running balance columns
+    const _fmtRun = n => n == null ? '\u2014' : formatMXN(n);
+    const _clsRun = n => n == null ? 'text-muted' : n < 0 ? 'amount-negative' : '';
+    const runMifel  = _fmtRun(m._runSaldoMifel);
+    const runComp   = _fmtRun(m._runComprometido);
+    const runDisp   = _fmtRun(m._runDisponible);
+    const runMifelCls = _clsRun(m._runSaldoMifel);
+    const runDispCls  = _clsRun(m._runDisponible);
+    const _runStyle = 'text-align:right;font-variant-numeric:tabular-nums;font-size:11px;white-space:nowrap';
+    const _runStyleFirst = _runStyle + ';border-left:1px solid var(--border)';
+
     return `<tr class="${m._interno ? 'row-dim' : ''}">
       <td style="white-space:nowrap">${formatDate(m.fecha)}</td>
       <td>${origen}</td>
@@ -491,6 +561,9 @@ function _aBitacora(movs) {
       <td class="${mCls}" style="text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;font-weight:600">${mStr}</td>
       <td style="text-align:center">${factIco}</td>
       <td>${est}</td>
+      <td class="${runMifelCls}" style="${_runStyleFirst}">${runMifel}</td>
+      <td style="${_runStyle};color:var(--text-muted)">${runComp}</td>
+      <td class="${runDispCls}" style="${_runStyle}">${runDisp}</td>
     </tr>`;
   }).join('');
 
@@ -501,6 +574,9 @@ function _aBitacora(movs) {
         <th>Categor&iacute;a</th><th>Proveedor</th>
         <th style="text-align:right">Monto</th>
         <th style="text-align:center">Factura</th><th>Estado</th>
+        <th style="text-align:right;white-space:nowrap;border-left:1px solid var(--border)">Saldo Mifel</th>
+        <th style="text-align:right;white-space:nowrap">Comprometido</th>
+        <th style="text-align:right;white-space:nowrap">Libre</th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>
