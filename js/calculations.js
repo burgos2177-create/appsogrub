@@ -5,16 +5,37 @@
 
 // =====================================================
 // REGLA 1 — Saldo Mifel
-// saldo_inicial_mifel − suma de movimientos donde status === "Pagado"
-// (los montos ya son negativos para egresos, positivos para ingresos)
+// saldo_inicial_mifel
+//   + movimientos generales SOGRUB (ya firmados: − egresos, + ingresos)
+//   + cobros de clientes en proyectos (entran físicamente al banco)
+//   + gastos de proyectos pagados (salen físicamente del banco; monto ya es negativo)
+//
+// Las transferencias internas SOGRUB↔proyecto (transferencia_proyecto /
+// transferencia_sogrub) son asientos contables que ya están contemplados en
+// KEYS.MOVIMIENTOS y en el saldo del proyecto respectivamente — no se
+// duplican aquí.
 // =====================================================
 function calcSaldoMifel() {
   const { saldo_inicial_mifel } = getConfig();
-  const movs = getCollection(KEYS.MOVIMIENTOS) ?? [];
-  const sumaPagados = movs
+
+  // Movimientos generales de SOGRUB (incluye transferencias internas a proyectos)
+  const movSOGRUB = (getCollection(KEYS.MOVIMIENTOS) ?? [])
     .filter(m => m.status === 'Pagado')
     .reduce((acc, m) => acc + m.monto, 0);
-  return saldo_inicial_mifel + sumaPagados;
+
+  const proyMov = getCollection(KEYS.PROY_MOVIMIENTOS) ?? [];
+
+  // Cobros del cliente → entran al banco de SOGRUB (monto positivo)
+  const abonosCliente = proyMov
+    .filter(m => m.tipo === 'abono_cliente')
+    .reduce((acc, m) => acc + m.monto, 0);
+
+  // Gastos pagados → salen del banco de SOGRUB (monto ya es negativo en BD)
+  const gastosPagados = proyMov
+    .filter(m => m.tipo === 'gasto' && m.status === 'Pagado')
+    .reduce((acc, m) => acc + m.monto, 0);
+
+  return saldo_inicial_mifel + movSOGRUB + abonosCliente + gastosPagados;
 }
 
 // =====================================================
@@ -66,7 +87,11 @@ function calcDineroComprometido() {
 
 // =====================================================
 // REGLA 5 — Disponible real SOGRUB
-// Saldo Mifel − Dinero comprometido
+// Saldo Mifel (incluye cobros de clientes y gastos de proyectos)
+// − Dinero comprometido (saldos positivos en proyectos activos)
+// → El "libre de compromisos" no cambia cuando un cliente paga o se paga
+//   un gasto de proyecto: el banco sube/baja y el comprometido sube/baja
+//   en igual medida, manteniéndose estable el disponible real.
 // =====================================================
 function calcDisponibleReal() {
   return calcSaldoMifel() - calcDineroComprometido();
