@@ -1795,3 +1795,29 @@ img, svg { display: block; }
   .fiscal-project-kpis { justify-content: flex-start; }
   .fiscal-header { flex-direction: column; }
 }
+
+/* =====================================================
+   SUB-TABS — Detalle de Proyecto (Movimientos / Presupuesto)
+   ===================================================== */
+.detalle-sub-nav {
+  display: flex;
+  gap: 2px;
+  border-bottom: 2px solid var(--border);
+  margin-bottom: 20px;
+}
+
+.detalle-sub-tab {
+  background: none;
+  border: none;
+  padding: 10px 20px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: color .15s, border-color .15s;
+}
+
+.detalle-sub-tab:hover  { color: var(--text); }
+.detalle-sub-tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }

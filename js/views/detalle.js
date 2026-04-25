@@ -3,7 +3,7 @@
    ===================================================== */
 'use strict';
 
-const _detalleState = { filtroTipo: 'todos', filtroStatus: 'Todos', filtroCategoria: 'Todas', filtroProveedor: 'Todos' };
+const _detalleState = { filtroTipo: 'todos', filtroStatus: 'Todos', filtroCategoria: 'Todas', filtroProveedor: 'Todos', activeTab: 'movimientos' };
 
 const _driveIcon = (size = 12) =>
   `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="currentColor"><path d="M4.433 22l-2.775-4.8 5.775-10h5.55L4.433 22zm9.042-10H22l-4.8 8.35-2.725-4.675L19.567 12h-6.092zm-1.15-2L9.55 5.65l2.725-4.65L19.567 12h-7.242zM7.258 5.65L4.433 10.8l2.825-5.15 2.725 4.675L7.258 5.65z"/></svg>`;
@@ -17,6 +17,13 @@ function renderDetalle(proyectoId) {
     root.innerHTML = '<p class="text-muted" style="padding:40px">Proyecto no encontrado.</p>';
     return;
   }
+
+  // ---- Suscribir presupuesto OPUS en cuanto se abre el proyecto ----
+  // (necesario para que buildGastoDesgloseSection tenga datos aunque el tab no se haya visitado)
+  subscribePresupuesto(proyectoId, () => {
+    // Si el tab presupuesto está activo, re-renderizarlo
+    if (_detalleState.activeTab === 'presupuesto') _renderPresContenido(proyectoId);
+  });
 
   // ---- Breadcrumb ----
   const bc = document.createElement('div');
@@ -35,18 +42,50 @@ function renderDetalle(proyectoId) {
   // ---- Toolbar acciones ----
   root.appendChild(renderDetalleToolbar(proyectoId, proyecto));
 
-  // ---- Gráficas ----
-  const chartsWrap = document.createElement('div');
-  chartsWrap.id = 'detalle-charts-wrap';
-  root.appendChild(chartsWrap);
-  refreshDetalleCharts(proyectoId);
+  // ---- Sub-tabs: Movimientos | Presupuesto ----
+  const subNav = document.createElement('div');
+  subNav.className = 'detalle-sub-nav';
+  subNav.innerHTML = `
+    <button class="detalle-sub-tab${_detalleState.activeTab === 'movimientos' ? ' active' : ''}" data-tab="movimientos">Movimientos</button>
+    <button class="detalle-sub-tab${_detalleState.activeTab === 'presupuesto' ? ' active' : ''}" data-tab="presupuesto">Presupuesto OPUS</button>
+  `;
+  root.appendChild(subNav);
 
-  // ---- Tabla movimientos ----
-  const tableWrap = document.createElement('div');
-  tableWrap.id = 'detalle-table-wrap';
-  root.appendChild(tableWrap);
+  // ---- Área de contenido de tabs ----
+  const contentArea = document.createElement('div');
+  contentArea.id = 'detalle-tab-content';
+  root.appendChild(contentArea);
 
-  refreshDetalleTable(proyectoId);
+  function _showDetalleTab(tab) {
+    _detalleState.activeTab = tab;
+    subNav.querySelectorAll('.detalle-sub-tab').forEach(b =>
+      b.classList.toggle('active', b.dataset.tab === tab)
+    );
+    contentArea.innerHTML = '';
+
+    if (tab === 'movimientos') {
+      const chartsWrap = document.createElement('div');
+      chartsWrap.id = 'detalle-charts-wrap';
+      contentArea.appendChild(chartsWrap);
+      refreshDetalleCharts(proyectoId);
+
+      const tableWrap = document.createElement('div');
+      tableWrap.id = 'detalle-table-wrap';
+      contentArea.appendChild(tableWrap);
+      refreshDetalleTable(proyectoId);
+    } else {
+      const presWrap = document.createElement('div');
+      presWrap.id = 'presupuesto-tab-wrap';
+      contentArea.appendChild(presWrap);
+      renderPresupuestoTab(proyectoId);
+    }
+  }
+
+  subNav.querySelectorAll('.detalle-sub-tab').forEach(btn =>
+    btn.addEventListener('click', () => _showDetalleTab(btn.dataset.tab))
+  );
+
+  _showDetalleTab(_detalleState.activeTab);
 }
 
 // =====================================================
@@ -634,6 +673,10 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
       pdfInput?.addEventListener('change', _runOCR);
       xmlInput?.addEventListener('change',  _runOCR);
 
+      // ---- Sección de desglose a presupuesto OPUS ----
+      const desgloseEl = buildGastoDesgloseSection(proyectoId, mov?.desglose_presupuesto ?? []);
+      if (desgloseEl) body.appendChild(desgloseEl);
+
       // Re-evaluar al cambiar monto manualmente
       montoInput?.addEventListener('input', () => {
         const montoOCR = parseFloat(ocrResult?.dataset.ocrMonto);
@@ -725,6 +768,11 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
         if (!isNaN(ocrVal)) factura_monto_ocr = ocrVal;
       }
 
+      // Desglose a conceptos de presupuesto OPUS (opcional)
+      const desgloseSection = body.querySelector('#pm-desglose-pres');
+      const desglose_presupuesto = desgloseSection?._getDesglose?.()
+        ?? (mov?.desglose_presupuesto ?? []);
+
       const data = {
         fecha, monto, concepto,
         subcontratista: subcon,
@@ -739,6 +787,7 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
         factura_xml_url,
         factura_xml_id,
         factura_drive_folder_id,
+        desglose_presupuesto,
       };
 
       let savedId;
