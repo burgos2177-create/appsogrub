@@ -129,24 +129,25 @@ function deleteItem(key, id) {
 // origen (estimaciones) vea el estado actualizado.
 
 async function _syncBuzonOnMovimientoUpdate(previo, nuevo) {
-  // Solo sincronizar campos relevantes para abono_cliente
-  // (en el futuro: agregar más tipos como gasto_subcontratista, etc.)
-  if (nuevo.tipo !== 'abono_cliente') return;
+  // Sincroniza para tipos que pueden venir del buzón: abono_cliente y gasto.
+  if (nuevo.tipo !== 'abono_cliente' && nuevo.tipo !== 'gasto') return;
   const itemId = previo.origen_buzon_id;
   const cambios = {
     actualizadoPorContador: true,
     actualizadoAt: Date.now()
   };
-  // Si cambió el monto, actualizar también el desglose
+  // Si cambió el monto, actualizar también el desglose. Para gastos el monto
+  // se almacena negativo en bitácora; en el buzón siempre va positivo (el flag
+  // del tipo dice si es entrada o salida de caja).
   if (nuevo.monto !== previo.monto || nuevo.monto_subtotal !== previo.monto_subtotal || nuevo.monto_iva !== previo.monto_iva) {
+    const importeAbs = Math.abs(Number(nuevo.monto) || 0);
     cambios.monto = {
-      subtotal: Number(nuevo.monto_subtotal) || 0,
-      iva: Number(nuevo.monto_iva) || 0,
-      importe: Number(nuevo.monto) || 0
+      subtotal: Math.abs(Number(nuevo.monto_subtotal) || 0),
+      iva: Math.abs(Number(nuevo.monto_iva) || 0),
+      importe: importeAbs
     };
   }
   if (nuevo.fecha !== previo.fecha) {
-    // fecha viene como YYYY-MM-DD; convertir a timestamp
     const [yy, mm, dd] = (nuevo.fecha || '').split('-').map(Number);
     if (yy && mm && dd) cambios.fecha = new Date(yy, mm - 1, dd).getTime();
   }

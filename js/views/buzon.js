@@ -156,6 +156,15 @@ function _buzonCard(item) {
     estimacion_subcontratista: '🔧 Estimación a subcontratista'
   })[item.tipo] || item.tipo;
 
+  // Renderizar metadatos según tipo
+  const esSub = item.tipo === 'estimacion_subcontratista';
+  const linea2 = esSub
+    ? `Subcontrato: <b style="color:var(--text)">${item.subcontratoNombre || '—'}</b> · Estim. del sub: <b>#${item.subEstimacionNumero ?? '—'}</b>`
+    : `Estimación: <b>#${item.estimNumero ?? '—'}</b>`;
+  const linea2b = esSub
+    ? `Pagado a: <b style="color:var(--text)">${item.proveedorNombre || '—'}</b> · Fecha: <b>${fechaPago}</b>`
+    : `Fecha del pago: <b>${fechaPago}</b>`;
+
   card.innerHTML = `
     <div style="display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap">
       <div style="flex:1;min-width:240px">
@@ -166,7 +175,8 @@ function _buzonCard(item) {
         <div style="font-size:16px;font-weight:600;margin-bottom:4px">${item.descripcion || '—'}</div>
         <div style="font-size:12px;color:var(--text-muted);line-height:1.6">
           Obra: <b style="color:var(--text)">${item.obraNombre || item.obraId || '—'}</b><br>
-          Estimación: <b>#${item.estimNumero ?? '—'}</b> · Fecha del pago: <b>${fechaPago}</b><br>
+          ${linea2}<br>
+          ${linea2b}<br>
           ${item.proyectoId
             ? `Proyecto contable: <b style="color:#5dd39e">${_obtenerNombreProyecto(item.proyectoId)}</b>`
             : `<span style="color:#e15555">⚠ Obra sin vincular a proyecto contable</span>`}
@@ -174,9 +184,9 @@ function _buzonCard(item) {
         </div>
       </div>
       <div style="text-align:right">
-        <div style="font-size:11px;color:var(--text-muted)">Importe</div>
-        <div style="font-family:ui-monospace,monospace;font-size:22px;font-weight:700;color:var(--accent)">
-          $${monto.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+        <div style="font-size:11px;color:var(--text-muted)">${esSub ? 'Saldrá de caja' : 'Entrará a caja'}</div>
+        <div style="font-family:ui-monospace,monospace;font-size:22px;font-weight:700;color:${esSub ? '#e15555' : 'var(--accent)'}">
+          ${esSub ? '−' : ''}$${monto.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
         </div>
         <div style="font-size:10px;color:var(--text-muted)">
           Subtotal $${(item?.monto?.subtotal || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })} ·
@@ -234,48 +244,99 @@ async function _aprobarItem(item) {
     _toast('Falta vincular la obra al proyecto contable. Hazlo desde la app de estimaciones (Admin → Vincular obras) y vuelve.', 'error');
     return;
   }
-  if (item.tipo !== 'pago_cliente') {
-    _toast('Tipo de buzón no soportado todavía: ' + item.tipo, 'error');
-    return;
-  }
 
-  // Crear el abono_cliente en sogrub_proy_movimientos
   const fechaISO = item.fecha
     ? new Date(item.fecha).toISOString().slice(0, 10)
     : new Date().toISOString().slice(0, 10);
 
-  const movimiento = {
-    proyecto_id: item.proyectoId,
-    fecha: fechaISO,
-    monto: Number(item?.monto?.importe) || 0,
-    concepto: `Pago de Estimación #${item.estimNumero ?? '?'} (${item.obraNombre || item.obraId || ''}) — vía buzón`,
-    subcontratista: '',
-    status: 'Pagado',
-    tipo: 'abono_cliente',
-    origen_buzon_id: item.id,    // trazabilidad: este mov vino del item buzon X
-    monto_subtotal: Number(item?.monto?.subtotal) || 0,
-    monto_iva: Number(item?.monto?.iva) || 0
-  };
+  let movimiento;
+  let nombrePill;
+
+  if (item.tipo === 'pago_cliente') {
+    movimiento = {
+      proyecto_id: item.proyectoId,
+      fecha: fechaISO,
+      monto: Number(item?.monto?.importe) || 0,
+      concepto: `Pago de Estimación #${item.estimNumero ?? '?'} (${item.obraNombre || item.obraId || ''}) — vía buzón`,
+      subcontratista: '',
+      status: 'Pagado',
+      tipo: 'abono_cliente',
+      origen_buzon_id: item.id,
+      monto_subtotal: Number(item?.monto?.subtotal) || 0,
+      monto_iva: Number(item?.monto?.iva) || 0
+    };
+    nombrePill = `Abono de $${movimiento.monto.toLocaleString('es-MX', { minimumFractionDigits: 2 })} registrado en el proyecto.`;
+
+  } else if (item.tipo === 'estimacion_subcontratista') {
+    // Buscar o crear el proveedor por nombre (case-insensitive)
+    const proveedorNombre = (item.proveedorNombre || '').trim();
+    if (!proveedorNombre) {
+      _toast('El item no tiene nombre de subcontratista.', 'error');
+      return;
+    }
+    const provDef = _findOrCreateProveedor(proveedorNombre, {
+      email: item.proveedorEmail || '',
+      telefono: item.proveedorTelefono || ''
+    });
+    // Gastos en este modelo se guardan como monto NEGATIVO
+    const importe = Number(item?.monto?.importe) || 0;
+    movimiento = {
+      proyecto_id: item.proyectoId,
+      fecha: fechaISO,
+      monto: -Math.abs(importe),
+      concepto: `Pago a ${proveedorNombre} — Subcontrato "${item.subcontratoNombre || ''}", estimación #${item.subEstimacionNumero ?? '?'} — vía buzón`,
+      subcontratista: proveedorNombre,
+      status: 'Pagado',
+      tipo: 'gasto',
+      categoria: 'Subcontratista',
+      origen_buzon_id: item.id,
+      monto_subtotal: Number(item?.monto?.subtotal) || 0,
+      monto_iva: Number(item?.monto?.iva) || 0,
+      proveedor_id: provDef?.id || null
+    };
+    nombrePill = `Gasto de $${Math.abs(movimiento.monto).toLocaleString('es-MX', { minimumFractionDigits: 2 })} a ${proveedorNombre}${provDef?._creado ? ' (proveedor nuevo creado)' : ''} registrado.`;
+
+  } else {
+    _toast('Tipo de buzón no soportado todavía: ' + item.tipo, 'error');
+    return;
+  }
 
   try {
     const created = addItem('sogrub_proy_movimientos', movimiento);
-    // Marcar item como aprobado
     await _dbRef(`/shared/buzon/${item.id}`).update({
       estado: 'aprobado',
       aprobadoAt: Date.now(),
       aprobadoPor: _currentUser?.uid || '',
       movId: created.id,
       destinoRefPath: `sogrub_proy_movimientos[id=${created.id}]`,
-      // Limpiar campos de estado huérfano si estamos re-aprobando
       huerfanoAt: null,
       huerfanoPor: null,
       descripcionHuerfano: null
     });
-    _toast(`Aprobado. Abono de $${movimiento.monto.toLocaleString('es-MX', { minimumFractionDigits: 2 })} registrado en el proyecto.`, 'success');
+    _toast(nombrePill, 'success');
   } catch (err) {
     console.error('[Buzón aprobar]', err);
     _toast('Error al aprobar: ' + err.message, 'error');
   }
+}
+
+// Busca proveedor en sogrub_proveedores por nombre (case-insensitive). Si no
+// existe, lo crea sobre la marcha. Devuelve el proveedor con flag _creado=true
+// si se acaba de crear, para feedback al usuario.
+function _findOrCreateProveedor(nombre, extras = {}) {
+  const proveedores = getCollection('sogrub_proveedores') || [];
+  const arr = Array.isArray(proveedores) ? proveedores : Object.values(proveedores);
+  const norm = (s) => String(s || '').trim().toLowerCase();
+  const existente = arr.find(p => norm(p?.nombre) === norm(nombre));
+  if (existente) return { ...existente, _creado: false };
+  const nuevo = addItem('sogrub_proveedores', {
+    nombre: nombre.trim(),
+    rfc: '',
+    telefono: extras.telefono || '',
+    email: extras.email || '',
+    notas: 'Creado automáticamente desde el buzón al aprobar pago a subcontratista.'
+  });
+  return { ...nuevo, _creado: true };
 }
 
 async function _rechazarItem(item) {
