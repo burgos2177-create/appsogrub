@@ -359,41 +359,55 @@ async function _aprobarItem(item) {
 }
 
 // Mapea el desglose enviado por estimaciones (clave OPUS + importe) al
-// formato que espera bitácora: [{concepto_id, importe}]. La clave OPUS es la
-// fuente común porque el catálogo es el mismo del lado de estimaciones.
-// Si bitácora no tiene presupuesto OPUS importado en el proyecto pareado,
-// el desglose simplemente no se puede mapear y se devuelve [].
+// formato que espera bitácora: [{concepto_id, importe}]. El catálogo unificado
+// vive en /shared/catalogos/{obraId}; resolvemos proyectoId → obraId via
+// obraLinks. concepto_id resultante es conceptoKey (estable cross-app).
 async function _mapearDesgloseAOpusBitacora(proyectoId, desglose) {
   if (!Array.isArray(desglose) || desglose.length === 0 || !proyectoId) return [];
-  // Intentar primero el cache (suscripción activa si el contador entró al detalle)
-  let presConceptos = getPresupuesto(proyectoId)?.conceptos;
-  if (!Array.isArray(presConceptos)) {
-    // Fallback: read directo del nodo
-    try {
-      const snap = await _dbRef(`sogrub_presupuestos/${proyectoId}`).get();
-      presConceptos = snap.val()?.conceptos;
-    } catch (e) { console.warn('[Buzón] No se pudo leer presupuesto OPUS:', e); }
-  }
-  if (!Array.isArray(presConceptos)) return [];
 
-  // Index por clave (de los que son tipo='concepto', no agrupadores)
+  // Resolver proyectoId → obraId via /shared/obraLinks
+  let obraId = null;
+  try {
+    const linksSnap = await _dbRef('/shared/obraLinks').get();
+    const links = linksSnap.val() || {};
+    obraId = Object.entries(links).find(([, pid]) => pid === proyectoId)?.[0] || null;
+  } catch (e) {
+    console.warn('[Buzón] No se pudo leer obraLinks:', e);
+    return [];
+  }
+  if (!obraId) return [];
+
+  // Leer conceptos del catálogo unificado
+  let conceptos = null;
+  try {
+    const snap = await _dbRef(`/shared/catalogos/${obraId}/conceptos`).get();
+    conceptos = snap.val();
+  } catch (e) {
+    console.warn('[Buzón] No se pudo leer /shared/catalogos:', e);
+    return [];
+  }
+  if (!conceptos) return [];
+
+  // Index por clave OPUS (PUs no archivados, primera ocurrencia gana).
+  // Si una clave aparece en múltiples partidas (Torre 1/Torre 2), tomamos
+  // la primera por orden — el contador puede re-asignar manualmente si hace falta.
   const byClave = new Map();
-  for (const c of presConceptos) {
-    if (c?.tipo !== 'concepto') continue;
+  for (const [conceptoKey, c] of Object.entries(conceptos)) {
+    if (c?.tipo !== 'precio_unitario' || c?.archivado) continue;
     const k = (c.clave || '').trim();
     if (!k) continue;
-    if (!byClave.has(k)) byClave.set(k, c.id);   // primera ocurrencia gana
+    if (!byClave.has(k)) byClave.set(k, conceptoKey);
   }
 
   const out = [];
   for (const linea of desglose) {
     const k = (linea.clave || '').trim();
     if (!k) continue;
-    const conceptoId = byClave.get(k);
-    if (!conceptoId) continue;
+    const conceptoKey = byClave.get(k);
+    if (!conceptoKey) continue;
     const importe = Number(linea.importe) || 0;
     if (importe <= 0) continue;
-    out.push({ concepto_id: conceptoId, importe });
+    out.push({ concepto_id: conceptoKey, importe });
   }
   return out;
 }
