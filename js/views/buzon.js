@@ -196,6 +196,30 @@ function _buzonCard(item) {
         </div>
       </div>
     </div>
+    ${esSub && Array.isArray(item.desglose) && item.desglose.length > 0 ? `
+      <details style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-size:11px">
+        <summary style="cursor:pointer;color:var(--text-muted)">
+          📋 Desglose por concepto OPUS (${item.desglose.length} línea${item.desglose.length === 1 ? '' : 's'} · $${item.desglose.reduce((s,d)=>s+(Number(d.importe)||0),0).toLocaleString('es-MX', { minimumFractionDigits: 2 })})
+        </summary>
+        <table style="width:100%;margin-top:6px;border-collapse:collapse;font-size:11px">
+          <thead style="color:var(--text-muted)">
+            <tr><th style="text-align:left;padding:3px 6px">Clave</th><th style="text-align:left;padding:3px 6px">Descripción</th><th style="text-align:right;padding:3px 6px">Cant.</th><th style="text-align:right;padding:3px 6px">P.U.</th><th style="text-align:right;padding:3px 6px">Importe</th></tr>
+          </thead>
+          <tbody>
+            ${item.desglose.map(d => `
+              <tr>
+                <td style="padding:3px 6px;font-family:monospace">${d.clave || '—'}</td>
+                <td style="padding:3px 6px">${(d.descripcion || '').slice(0, 60)}</td>
+                <td style="padding:3px 6px;text-align:right">${(Number(d.cantidad) || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}</td>
+                <td style="padding:3px 6px;text-align:right">$${(Number(d.precioUnitario) || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}</td>
+                <td style="padding:3px 6px;text-align:right;font-weight:600">$${(Number(d.importe) || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+        <div style="margin-top:4px;color:var(--text-muted);font-size:10px">Al aprobar, este desglose se trasladará automáticamente al campo "Distribuir a concepto OPUS" del gasto si bitácora tiene el presupuesto importado en este proyecto.</div>
+      </details>
+    ` : ''}
     ${item.estado === 'pendiente' ? `
       <div style="display:flex;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
         <button class="btn-aprobar" style="background:#5dd39e;color:#0e3a25;border:none;border-radius:6px;padding:8px 14px;font-weight:600;cursor:pointer">✓ Aprobar y crear movimiento</button>
@@ -285,6 +309,10 @@ async function _aprobarItem(item) {
     // Gastos en este modelo se guardan como monto NEGATIVO
     const importe = Number(item?.monto?.importe) || 0;
     const conIvaFlag = item?.monto?.conIva !== false && (Number(item?.monto?.iva) || 0) > 0;
+
+    // Mapear el desglose por clave OPUS al concepto_id de bitácora
+    const desglose_presupuesto = await _mapearDesgloseAOpusBitacora(item.proyectoId, item.desglose);
+
     movimiento = {
       proyecto_id: item.proyectoId,
       fecha: fechaISO,
@@ -298,9 +326,13 @@ async function _aprobarItem(item) {
       monto_subtotal: Number(item?.monto?.subtotal) || 0,
       monto_iva: Number(item?.monto?.iva) || 0,
       incluye_iva: conIvaFlag,
-      proveedor_id: provDef?.id || null
+      proveedor_id: provDef?.id || null,
+      desglose_presupuesto: desglose_presupuesto.length ? desglose_presupuesto : undefined
     };
-    nombrePill = `Gasto de $${Math.abs(movimiento.monto).toLocaleString('es-MX', { minimumFractionDigits: 2 })} a ${proveedorNombre}${provDef?._creado ? ' (proveedor nuevo creado)' : ''} registrado.`;
+    const claveExtra = desglose_presupuesto.length
+      ? ` · ${desglose_presupuesto.length} concepto(s) OPUS distribuidos`
+      : (item.desglose?.length ? ' · ⚠ desglose no se pudo mapear (¿catálogo OPUS no importado en bitácora?)' : '');
+    nombrePill = `Gasto de $${Math.abs(movimiento.monto).toLocaleString('es-MX', { minimumFractionDigits: 2 })} a ${proveedorNombre}${provDef?._creado ? ' (proveedor nuevo creado)' : ''} registrado.${claveExtra}`;
 
   } else {
     _toast('Tipo de buzón no soportado todavía: ' + item.tipo, 'error');
@@ -324,6 +356,46 @@ async function _aprobarItem(item) {
     console.error('[Buzón aprobar]', err);
     _toast('Error al aprobar: ' + err.message, 'error');
   }
+}
+
+// Mapea el desglose enviado por estimaciones (clave OPUS + importe) al
+// formato que espera bitácora: [{concepto_id, importe}]. La clave OPUS es la
+// fuente común porque el catálogo es el mismo del lado de estimaciones.
+// Si bitácora no tiene presupuesto OPUS importado en el proyecto pareado,
+// el desglose simplemente no se puede mapear y se devuelve [].
+async function _mapearDesgloseAOpusBitacora(proyectoId, desglose) {
+  if (!Array.isArray(desglose) || desglose.length === 0 || !proyectoId) return [];
+  // Intentar primero el cache (suscripción activa si el contador entró al detalle)
+  let presConceptos = getPresupuesto(proyectoId)?.conceptos;
+  if (!Array.isArray(presConceptos)) {
+    // Fallback: read directo del nodo
+    try {
+      const snap = await _dbRef(`sogrub_presupuestos/${proyectoId}`).get();
+      presConceptos = snap.val()?.conceptos;
+    } catch (e) { console.warn('[Buzón] No se pudo leer presupuesto OPUS:', e); }
+  }
+  if (!Array.isArray(presConceptos)) return [];
+
+  // Index por clave (de los que son tipo='concepto', no agrupadores)
+  const byClave = new Map();
+  for (const c of presConceptos) {
+    if (c?.tipo !== 'concepto') continue;
+    const k = (c.clave || '').trim();
+    if (!k) continue;
+    if (!byClave.has(k)) byClave.set(k, c.id);   // primera ocurrencia gana
+  }
+
+  const out = [];
+  for (const linea of desglose) {
+    const k = (linea.clave || '').trim();
+    if (!k) continue;
+    const conceptoId = byClave.get(k);
+    if (!conceptoId) continue;
+    const importe = Number(linea.importe) || 0;
+    if (importe <= 0) continue;
+    out.push({ concepto_id: conceptoId, importe });
+  }
+  return out;
 }
 
 // Busca proveedor en sogrub_proveedores por nombre (case-insensitive). Si no
