@@ -33,6 +33,10 @@
       <button class="nav-tab" data-view="importar">Importar</button>
       <button class="nav-tab" data-view="analisis">Análisis</button>
       <button class="nav-tab" data-view="fiscal">Fiscal</button>
+      <button class="nav-tab" data-view="buzon" style="position:relative">
+        Buzón
+        <span id="buzon-badge" style="display:none;background:#e15555;color:white;border-radius:10px;padding:1px 6px;font-size:10px;font-weight:600;margin-left:4px;vertical-align:middle">0</span>
+      </button>
     </nav>
 
     <!-- Indicador de conexión Firebase -->
@@ -97,6 +101,7 @@
     <section id="view-importar"    class="view"><div id="importar-root"></div></section>
     <section id="view-analisis"    class="view"><div id="analisis-root"></div></section>
     <section id="view-fiscal"      class="view"><div id="fiscal-root"></div></section>
+    <section id="view-buzon"       class="view"><div id="buzon-root"></div></section>
 
   </main>
 
@@ -159,6 +164,7 @@
   <script src="js/fiscal-xml-parser.js"></script>
   <script src="js/views/fiscal.js"></script>
   <script src="js/fiscal-export.js"></script>
+  <script src="js/views/buzon.js"></script>
   <script src="js/app.js?v=2"></script>
 
 </body>

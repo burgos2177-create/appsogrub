@@ -265,6 +265,7 @@ function _onRemoteChange(changedKey) {
     importar:    () => {},   // importar no necesita re-render reactivo
     analisis:    () => renderAnalisis(),
     fiscal:      () => renderFiscal(),
+    buzon:       () => renderBuzon(),
   };
 
   rerender[_activeView]?.();
@@ -432,6 +433,10 @@ function initializeData() {
     try {
       _initConnectionStatus();
       _suscribirColecciones();
+      // Suscribir buzón inmediatamente para que el badge cuente pendientes
+      // sin tener que entrar a la vista. La vista renderBuzon también lo llama
+      // pero es idempotente.
+      if (typeof _suscribirBuzon === 'function') _suscribirBuzon();
     } catch (err) {
       console.error('[Firebase] Error de inicialización:', err);
       const msgEl = document.getElementById('loading-msg');

@@ -61,6 +61,7 @@ function navigateTo(viewName, proyectoId = null) {
     importar:    () => renderImportar(),
     analisis:    () => renderAnalisis(),
     fiscal:      () => renderFiscal(),
+    buzon:       () => renderBuzon(),
   };
   renders[viewName]?.();
 }
