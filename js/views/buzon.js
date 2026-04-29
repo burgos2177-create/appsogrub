@@ -255,17 +255,19 @@ async function _aprobarItem(item) {
   let nombrePill;
 
   if (item.tipo === 'pago_cliente') {
+    const conIvaFlag = item?.monto?.conIva !== false && (Number(item?.monto?.iva) || 0) > 0;
     movimiento = {
       proyecto_id: item.proyectoId,
       fecha: fechaISO,
       monto: Number(item?.monto?.importe) || 0,
-      concepto: `Pago de Estimación #${item.estimNumero ?? '?'} (${item.obraNombre || item.obraId || ''}) — vía buzón`,
+      concepto: `Pago de Estimación #${item.estimNumero ?? '?'} (${item.obraNombre || item.obraId || ''})${conIvaFlag ? '' : ' (sin IVA)'} — vía buzón`,
       subcontratista: '',
       status: 'Pagado',
       tipo: 'abono_cliente',
       origen_buzon_id: item.id,
       monto_subtotal: Number(item?.monto?.subtotal) || 0,
-      monto_iva: Number(item?.monto?.iva) || 0
+      monto_iva: Number(item?.monto?.iva) || 0,
+      incluye_iva: conIvaFlag
     };
     nombrePill = `Abono de $${movimiento.monto.toLocaleString('es-MX', { minimumFractionDigits: 2 })} registrado en el proyecto.`;
 
@@ -282,11 +284,12 @@ async function _aprobarItem(item) {
     });
     // Gastos en este modelo se guardan como monto NEGATIVO
     const importe = Number(item?.monto?.importe) || 0;
+    const conIvaFlag = item?.monto?.conIva !== false && (Number(item?.monto?.iva) || 0) > 0;
     movimiento = {
       proyecto_id: item.proyectoId,
       fecha: fechaISO,
       monto: -Math.abs(importe),
-      concepto: `Pago a ${proveedorNombre} — Subcontrato "${item.subcontratoNombre || ''}", estimación #${item.subEstimacionNumero ?? '?'}${item?.monto?.conIva === false ? ' (sin IVA)' : ''} — vía buzón`,
+      concepto: `Pago a ${proveedorNombre} — Subcontrato "${item.subcontratoNombre || ''}", estimación #${item.subEstimacionNumero ?? '?'}${conIvaFlag ? '' : ' (sin IVA)'} — vía buzón`,
       subcontratista: proveedorNombre,
       status: 'Pagado',
       tipo: 'gasto',
@@ -294,6 +297,7 @@ async function _aprobarItem(item) {
       origen_buzon_id: item.id,
       monto_subtotal: Number(item?.monto?.subtotal) || 0,
       monto_iva: Number(item?.monto?.iva) || 0,
+      incluye_iva: conIvaFlag,
       proveedor_id: provDef?.id || null
     };
     nombrePill = `Gasto de $${Math.abs(movimiento.monto).toLocaleString('es-MX', { minimumFractionDigits: 2 })} a ${proveedorNombre}${provDef?._creado ? ' (proveedor nuevo creado)' : ''} registrado.`;
