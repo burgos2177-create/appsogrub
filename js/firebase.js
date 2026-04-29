@@ -99,18 +99,69 @@ function updateItem(key, id, updates) {
   const col = Array.isArray(_cache[key]) ? [..._cache[key]] : [];
   const idx = col.findIndex(x => x.id === id);
   if (idx === -1) return null;
-  col[idx] = { ...col[idx], ...updates };
+  const previo = col[idx];
+  col[idx] = { ...previo, ...updates };
   saveCollection(key, col);
+  // Si este movimiento vino del buzón, sincronizar el item del buzón
+  if (key === 'sogrub_proy_movimientos' && previo.origen_buzon_id) {
+    _syncBuzonOnMovimientoUpdate(previo, col[idx]).catch(e => console.warn('[Buzón sync update]', e));
+  }
   return col[idx];
 }
 
 /** Elimina un item por id */
 function deleteItem(key, id) {
   const col      = Array.isArray(_cache[key]) ? [..._cache[key]] : [];
+  const item     = col.find(x => x.id === id);
   const filtered = col.filter(x => x.id !== id);
   if (filtered.length === col.length) return false;
   saveCollection(key, filtered);
+  // Si este movimiento vino del buzón, marcar el item del buzón como huérfano
+  if (key === 'sogrub_proy_movimientos' && item?.origen_buzon_id) {
+    _syncBuzonOnMovimientoDelete(item).catch(e => console.warn('[Buzón sync delete]', e));
+  }
   return true;
+}
+
+// === Sincronización buzón ↔ movimiento contable ===
+// Cuando el contador modifica/borra un movimiento que originalmente vino del
+// buzón, los cambios se reflejan en el item del buzón para que la app de
+// origen (estimaciones) vea el estado actualizado.
+
+async function _syncBuzonOnMovimientoUpdate(previo, nuevo) {
+  // Solo sincronizar campos relevantes para abono_cliente
+  // (en el futuro: agregar más tipos como gasto_subcontratista, etc.)
+  if (nuevo.tipo !== 'abono_cliente') return;
+  const itemId = previo.origen_buzon_id;
+  const cambios = {
+    actualizadoPorContador: true,
+    actualizadoAt: Date.now()
+  };
+  // Si cambió el monto, actualizar también el desglose
+  if (nuevo.monto !== previo.monto || nuevo.monto_subtotal !== previo.monto_subtotal || nuevo.monto_iva !== previo.monto_iva) {
+    cambios.monto = {
+      subtotal: Number(nuevo.monto_subtotal) || 0,
+      iva: Number(nuevo.monto_iva) || 0,
+      importe: Number(nuevo.monto) || 0
+    };
+  }
+  if (nuevo.fecha !== previo.fecha) {
+    // fecha viene como YYYY-MM-DD; convertir a timestamp
+    const [yy, mm, dd] = (nuevo.fecha || '').split('-').map(Number);
+    if (yy && mm && dd) cambios.fecha = new Date(yy, mm - 1, dd).getTime();
+  }
+  await _dbRef(`/shared/buzon/${itemId}`).update(cambios);
+}
+
+async function _syncBuzonOnMovimientoDelete(item) {
+  const itemId = item.origen_buzon_id;
+  await _dbRef(`/shared/buzon/${itemId}`).update({
+    estado: 'huerfano',
+    huerfanoAt: Date.now(),
+    huerfanoPor: _currentUser?.uid || '',
+    movId: null,
+    descripcionHuerfano: 'El contador eliminó el movimiento contable. La app de origen puede regenerar este pago si fue por error.'
+  });
 }
 
 /** Busca un item por id en el cache */

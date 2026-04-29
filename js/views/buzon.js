@@ -10,7 +10,7 @@
 
 const _buzon = {
   items: {},      // itemId → item
-  filtro: 'pendiente',  // 'pendiente' | 'aprobado' | 'rechazado' | 'todos'
+  filtro: 'pendiente',  // 'pendiente' | 'aprobado' | 'rechazado' | 'huerfano' | 'todos'
   subscribed: false
 };
 
@@ -29,10 +29,11 @@ function _suscribirBuzon() {
 function _actualizarBadgeBuzon() {
   const badge = document.getElementById('buzon-badge');
   if (!badge) return;
-  const pend = Object.values(_buzon.items).filter(i => i?.estado === 'pendiente').length;
-  if (pend > 0) {
+  // Cuenta items que requieren acción del contador: pendientes + huérfanos.
+  const accionables = Object.values(_buzon.items).filter(i => i?.estado === 'pendiente' || i?.estado === 'huerfano').length;
+  if (accionables > 0) {
     badge.style.display = '';
-    badge.textContent = pend;
+    badge.textContent = accionables;
   } else {
     badge.style.display = 'none';
   }
@@ -50,7 +51,8 @@ function renderBuzon() {
   const counts = {
     pendiente: all.filter(i => i.estado === 'pendiente').length,
     aprobado: all.filter(i => i.estado === 'aprobado').length,
-    rechazado: all.filter(i => i.estado === 'rechazado').length
+    rechazado: all.filter(i => i.estado === 'rechazado').length,
+    huerfano: all.filter(i => i.estado === 'huerfano').length
   };
   const filtered = _buzon.filtro === 'todos' ? all : all.filter(i => i.estado === _buzon.filtro);
 
@@ -62,7 +64,7 @@ function renderBuzon() {
   header.innerHTML = `
     <h2 style="margin:0">Buzón de aprobaciones</h2>
     <div style="display:flex;gap:6px">
-      ${['pendiente', 'aprobado', 'rechazado', 'todos'].map(f => `
+      ${['pendiente', 'aprobado', 'huerfano', 'rechazado', 'todos'].map(f => `
         <button class="filter-tab" data-filtro="${f}" style="padding:6px 12px;border:1px solid var(--border);background:${_buzon.filtro === f ? 'var(--accent)' : 'transparent'};color:${_buzon.filtro === f ? '#08121a' : 'var(--text)'};border-radius:6px;cursor:pointer;font-size:13px;${_buzon.filtro === f ? 'font-weight:600' : ''}">
           ${f.charAt(0).toUpperCase() + f.slice(1)}${f !== 'todos' ? ` <span style="opacity:0.7">(${counts[f]})</span>` : ''}
         </button>
@@ -107,7 +109,8 @@ function _buzonCard(item) {
   const colors = {
     pendiente: { border: '#e0a04c', bg: 'rgba(224,160,76,0.04)', tag: '#e0a04c' },
     aprobado:  { border: '#5dd39e', bg: 'rgba(93,211,158,0.04)', tag: '#5dd39e' },
-    rechazado: { border: '#e15555', bg: 'rgba(225,85,85,0.04)', tag: '#e15555' }
+    rechazado: { border: '#e15555', bg: 'rgba(225,85,85,0.04)', tag: '#e15555' },
+    huerfano:  { border: '#a06bd9', bg: 'rgba(160,107,217,0.05)', tag: '#a06bd9' }
   };
   const c = colors[item.estado] || colors.pendiente;
   card.style.cssText = `border:1px solid var(--border);border-left:4px solid ${c.border};background:${c.bg};border-radius:8px;padding:14px 16px`;
@@ -154,6 +157,16 @@ function _buzonCard(item) {
         <button class="btn-rechazar" style="background:transparent;color:#e15555;border:1px solid #e15555;border-radius:6px;padding:8px 14px;cursor:pointer">✕ Rechazar</button>
         ${!item.proyectoId ? '<span style="font-size:11px;color:#e15555;align-self:center">Vincula la obra primero</span>' : ''}
       </div>
+    ` : item.estado === 'huerfano' ? `
+      <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-size:12px;color:#a06bd9;line-height:1.5">
+        ⚠ El movimiento contable que se había creado fue eliminado.<br>
+        ${item.descripcionHuerfano || 'La app de origen verá este pago como pendiente de re-aprobar.'}
+        ${item.huerfanoAt ? `<br><span style="color:var(--text-muted)">Eliminado: ${new Date(item.huerfanoAt).toLocaleString('es-MX')}</span>` : ''}
+      </div>
+      <div style="display:flex;gap:8px;margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
+        <button class="btn-reaprobar" style="background:#5dd39e;color:#0e3a25;border:none;border-radius:6px;padding:8px 14px;font-weight:600;cursor:pointer">✓ Volver a crear movimiento</button>
+        <button class="btn-cerrar-huerfano" style="background:transparent;color:#e15555;border:1px solid #e15555;border-radius:6px;padding:8px 14px;cursor:pointer">✕ Cerrar como rechazado</button>
+      </div>
     ` : item.comentarioRechazo ? `
       <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-size:12px;color:var(--text-muted)">
         Motivo del rechazo: <em>${item.comentarioRechazo}</em>
@@ -161,6 +174,7 @@ function _buzonCard(item) {
     ` : item.movId ? `
       <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-size:12px;color:var(--text-muted)">
         ✓ Movimiento creado · ID interno: <code>${item.movId}</code>${item.aprobadoAt ? ' · ' + new Date(item.aprobadoAt).toLocaleString('es-MX') : ''}
+        ${item.actualizadoPorContador ? `<br>✎ Editado por el contador${item.actualizadoAt ? ' el ' + new Date(item.actualizadoAt).toLocaleString('es-MX') : ''}` : ''}
       </div>
     ` : ''}
   `;
@@ -168,6 +182,9 @@ function _buzonCard(item) {
   if (item.estado === 'pendiente') {
     card.querySelector('.btn-aprobar').addEventListener('click', () => _aprobarItem(item));
     card.querySelector('.btn-rechazar').addEventListener('click', () => _rechazarItem(item));
+  } else if (item.estado === 'huerfano') {
+    card.querySelector('.btn-reaprobar').addEventListener('click', () => _aprobarItem(item));
+    card.querySelector('.btn-cerrar-huerfano').addEventListener('click', () => _rechazarItem(item));
   }
 
   return card;
@@ -215,7 +232,11 @@ async function _aprobarItem(item) {
       aprobadoAt: Date.now(),
       aprobadoPor: _currentUser?.uid || '',
       movId: created.id,
-      destinoRefPath: `sogrub_proy_movimientos[id=${created.id}]`
+      destinoRefPath: `sogrub_proy_movimientos[id=${created.id}]`,
+      // Limpiar campos de estado huérfano si estamos re-aprobando
+      huerfanoAt: null,
+      huerfanoPor: null,
+      descripcionHuerfano: null
     });
     _toast(`Aprobado. Abono de $${movimiento.monto.toLocaleString('es-MX', { minimumFractionDigits: 2 })} registrado en el proyecto.`, 'success');
   } catch (err) {
