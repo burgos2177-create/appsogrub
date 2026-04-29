@@ -189,8 +189,10 @@ function _buzonCard(item) {
           ${esSub ? '−' : ''}$${monto.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
         </div>
         <div style="font-size:10px;color:var(--text-muted)">
-          Subtotal $${(item?.monto?.subtotal || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })} ·
-          IVA $${(item?.monto?.iva || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}
+          ${item?.monto?.conIva === false
+            ? '<b style="color:#e0a04c">Sin IVA</b> — importe = subtotal'
+            : `Subtotal $${(item?.monto?.subtotal || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })} · IVA $${(item?.monto?.iva || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}`
+          }
         </div>
       </div>
     </div>
@@ -284,7 +286,7 @@ async function _aprobarItem(item) {
       proyecto_id: item.proyectoId,
       fecha: fechaISO,
       monto: -Math.abs(importe),
-      concepto: `Pago a ${proveedorNombre} — Subcontrato "${item.subcontratoNombre || ''}", estimación #${item.subEstimacionNumero ?? '?'} — vía buzón`,
+      concepto: `Pago a ${proveedorNombre} — Subcontrato "${item.subcontratoNombre || ''}", estimación #${item.subEstimacionNumero ?? '?'}${item?.monto?.conIva === false ? ' (sin IVA)' : ''} — vía buzón`,
       subcontratista: proveedorNombre,
       status: 'Pagado',
       tipo: 'gasto',
