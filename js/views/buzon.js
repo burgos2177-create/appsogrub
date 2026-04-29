@@ -1,26 +1,64 @@
 /* =====================================================
-   Buzón cross-app — items pendientes que vienen de otras apps
-   (estimaciones, en el futuro: compras, materiales, etc.)
-   esperando aprobación del contador para afectar saldos.
+   Buzón cross-app — "aduana financiera"
 
-   Datos en /shared/buzon/{itemId}.
-   Path absoluto (con "/" inicial) para que _dbRef no le agregue prefijo.
+   Máquina de estados:
+     recibido → en_revision → aprobado → cobrado/pagado → cerrado
+                                        ↘ huerfano (movimiento borrado)
+                                        ↗ (reabrir desde cobrado/pagado)
+     cualquier estado → rechazado
+
+   Folios: CC-YYYY-NNN (cuentas por cobrar) / CP-YYYY-NNN (cuentas por pagar)
+   Datos en /shared/buzon/{itemId}  (path absoluto, sin prefijo legacy)
    ===================================================== */
 'use strict';
 
-const _buzon = {
-  items: {},      // itemId → item
-  filtro: 'pendiente',  // 'pendiente' | 'aprobado' | 'rechazado' | 'huerfano' | 'todos'
-  subscribed: false
+// ─── Configuración de estados ──────────────────────────────────────────────
+
+const _ESTADOS_CFG = {
+  recibido:    { label: 'Recibido',      color: '#e0a04c', bg: 'rgba(224,160,76,0.05)',  accionable: true  },
+  en_revision: { label: 'En revisión',   color: '#5b9ef2', bg: 'rgba(91,158,242,0.05)', accionable: true  },
+  aprobado:    { label: 'Aprobado',      color: '#5dd39e', bg: 'rgba(93,211,158,0.05)', accionable: false },
+  cobrado:     { label: 'Cobrado',       color: '#4db884', bg: 'rgba(77,184,132,0.05)', accionable: false },
+  pagado:      { label: 'Pagado',        color: '#4db884', bg: 'rgba(77,184,132,0.05)', accionable: false },
+  cerrado:     { label: 'Cerrado',       color: '#666',    bg: 'rgba(102,102,102,0.04)',accionable: false },
+  rechazado:   { label: 'Rechazado',     color: '#e15555', bg: 'rgba(225,85,85,0.04)',  accionable: false },
+  huerfano:    { label: '⚠ Huérfano',   color: '#a06bd9', bg: 'rgba(160,107,217,0.05)',accionable: true  },
+  // compat legacy
+  pendiente:   { label: 'Pendiente',     color: '#e0a04c', bg: 'rgba(224,160,76,0.05)', accionable: true  },
 };
+
+const _TABS = [
+  { key: 'recibido',       label: 'Recibidos',        estados: ['recibido', 'pendiente'], priority: true  },
+  { key: 'en_revision',    label: 'En revisión',      estados: ['en_revision'],           priority: true  },
+  { key: 'aprobado',       label: 'Aprobados',        estados: ['aprobado'],              priority: false },
+  { key: 'cobrado_pagado', label: 'Cobrado / Pagado', estados: ['cobrado', 'pagado'],     priority: false },
+  { key: 'cerrado',        label: 'Cerrados',         estados: ['cerrado'],               priority: false },
+  { key: 'rechazado',      label: 'Rechazados',       estados: ['rechazado'],             priority: false },
+  { key: 'huerfano',       label: 'Huérfanos',        estados: ['huerfano'],              priority: true  },
+  { key: 'todos',          label: 'Todos',            estados: null,                      priority: false },
+];
+
+// ─── Estado del módulo ─────────────────────────────────────────────────────
+
+const _buzon = {
+  items:      {},
+  tab:        'recibido',
+  expanded:   new Set(),
+  subscribed: false,
+  migrated:   false,
+};
+
+// ─── Suscripción ───────────────────────────────────────────────────────────
 
 function _suscribirBuzon() {
   if (_buzon.subscribed) return;
   _buzon.subscribed = true;
   _dbRef('/shared/buzon').on('value', snap => {
     _buzon.items = snap.val() || {};
-    // Reconciliar: detecta aprobados cuyo movimiento ya no existe (fueron
-    // borrados antes de que el hook automático estuviera, o desde otro lado).
+    if (!_buzon.migrated) {
+      _buzon.migrated = true;
+      _migrarEstadosLegacy().catch(e => console.warn('[Buzón migrate]', e));
+    }
     _reconciliarBuzon().catch(e => console.warn('[Buzón reconcile]', e));
     _actualizarBadgeBuzon();
     if (typeof _activeView !== 'undefined' && _activeView === 'buzon') {
@@ -29,13 +67,29 @@ function _suscribirBuzon() {
   }, err => console.error('[Buzón] listener:', err));
 }
 
-// Recorre items APROBADOS y verifica si su movimiento contable sigue vivo.
-// Si no existe, marca el item como huérfano. Se invoca:
-//   · cada vez que /shared/buzon cambia
-//   · cada vez que sogrub_proy_movimientos cambia (vía _onRemoteChange en firebase.js)
+// ─── Migración legacy ──────────────────────────────────────────────────────
+
+// Migra 'pendiente' → 'recibido' una sola vez por sesión.
+async function _migrarEstadosLegacy() {
+  const updates = {};
+  for (const [id, item] of Object.entries(_buzon.items)) {
+    if (item?.estado !== 'pendiente') continue;
+    const histKey = Date.now() + '_mig_' + id.slice(-4);
+    updates[`${id}/estado`] = 'recibido';
+    updates[`${id}/estadoHistorial/${histKey}`] = {
+      estado: 'recibido', at: Date.now(), por: 'auto-migration',
+      nota: 'Migrado de "pendiente" al nuevo esquema'
+    };
+  }
+  if (!Object.keys(updates).length) return;
+  console.log(`[Buzón] Migrando ${Object.values(_buzon.items).filter(i => i?.estado === 'pendiente').length} items pendiente→recibido`);
+  await _dbRef('/shared/buzon').update(updates);
+}
+
+// ─── Reconciliación ────────────────────────────────────────────────────────
+
+// Detecta items aprobados/cobrados/pagados cuyo movimiento fue borrado → huérfano.
 async function _reconciliarBuzon() {
-  // No corras hasta que el cache de movimientos haya terminado la carga inicial,
-  // porque si no, marcaríamos todo como huérfano por falsos negativos.
   if (!_fbReady) return;
   const movs = getCollection('sogrub_proy_movimientos');
   if (!Array.isArray(movs)) return;
@@ -43,34 +97,38 @@ async function _reconciliarBuzon() {
 
   const updates = {};
   for (const [itemId, item] of Object.entries(_buzon.items)) {
-    if (item?.estado !== 'aprobado') continue;
-    if (!item.movId) continue;
-    if (movIds.has(item.movId)) continue;
-    // Aprobado pero el movimiento ya no existe → huérfano
+    if (!['aprobado', 'cobrado', 'pagado'].includes(item?.estado)) continue;
+    if (!item.movId || movIds.has(item.movId)) continue;
+    const histKey = Date.now() + '_rec_' + itemId.slice(-4);
     updates[`${itemId}/estado`] = 'huerfano';
     updates[`${itemId}/huerfanoAt`] = Date.now();
     updates[`${itemId}/huerfanoPor`] = 'auto-reconcile';
-    updates[`${itemId}/descripcionHuerfano`] = 'El movimiento contable ya no existe. Pudo haber sido borrado antes de que el sistema sincronizara automáticamente.';
+    updates[`${itemId}/descripcionHuerfano`] = 'El movimiento contable fue eliminado externamente.';
     updates[`${itemId}/movId`] = null;
+    updates[`${itemId}/estadoHistorial/${histKey}`] = {
+      estado: 'huerfano', at: Date.now(), por: 'auto-reconcile',
+      nota: 'Movimiento contable eliminado'
+    };
   }
-  if (Object.keys(updates).length > 0) {
-    console.log(`[Buzón] Reconciliados ${Object.keys(updates).length / 5} items aprobados → huérfanos.`);
+  if (Object.keys(updates).length) {
+    console.log(`[Buzón] Reconciliados ${Object.keys(updates).length / 7} items → huérfanos`);
     await _dbRef('/shared/buzon').update(updates);
   }
 }
 
+// ─── Badge nav ─────────────────────────────────────────────────────────────
+
 function _actualizarBadgeBuzon() {
   const badge = document.getElementById('buzon-badge');
   if (!badge) return;
-  // Cuenta items que requieren acción del contador: pendientes + huérfanos.
-  const accionables = Object.values(_buzon.items).filter(i => i?.estado === 'pendiente' || i?.estado === 'huerfano').length;
-  if (accionables > 0) {
-    badge.style.display = '';
-    badge.textContent = accionables;
-  } else {
-    badge.style.display = 'none';
-  }
+  const n = Object.values(_buzon.items).filter(i =>
+    ['recibido', 'pendiente', 'en_revision', 'huerfano'].includes(i?.estado)
+  ).length;
+  badge.style.display = n > 0 ? '' : 'none';
+  badge.textContent = n;
 }
+
+// ─── Render principal ──────────────────────────────────────────────────────
 
 function renderBuzon() {
   _suscribirBuzon();
@@ -81,276 +139,458 @@ function renderBuzon() {
     .map(([id, it]) => ({ id, ...it }))
     .sort((a, b) => (b.creadoAt || 0) - (a.creadoAt || 0));
 
-  const counts = {
-    pendiente: all.filter(i => i.estado === 'pendiente').length,
-    aprobado: all.filter(i => i.estado === 'aprobado').length,
-    rechazado: all.filter(i => i.estado === 'rechazado').length,
-    huerfano: all.filter(i => i.estado === 'huerfano').length
-  };
-  const filtered = _buzon.filtro === 'todos' ? all : all.filter(i => i.estado === _buzon.filtro);
+  // Conteos por tab
+  const tabCounts = {};
+  for (const tab of _TABS) {
+    tabCounts[tab.key] = tab.estados
+      ? all.filter(i => tab.estados.includes(i.estado)).length
+      : all.length;
+  }
+  const accionables = all.filter(i => _ESTADOS_CFG[i?.estado]?.accionable).length;
+
+  const activeTab = _TABS.find(t => t.key === _buzon.tab) || _TABS[0];
+  const filtered  = activeTab.estados
+    ? all.filter(i => activeTab.estados.includes(i.estado))
+    : all;
 
   root.innerHTML = '';
 
-  // Header con tabs de filtro
+  // ── Header + tabs ──
   const header = document.createElement('div');
-  header.style.cssText = 'display:flex;align-items:center;gap:14px;margin-bottom:14px;flex-wrap:wrap';
+  header.style.cssText = 'margin-bottom:16px';
   header.innerHTML = `
-    <h2 style="margin:0">Buzón de aprobaciones</h2>
-    <div style="display:flex;gap:6px">
-      ${['pendiente', 'aprobado', 'huerfano', 'rechazado', 'todos'].map(f => `
-        <button class="filter-tab" data-filtro="${f}" style="padding:6px 12px;border:1px solid var(--border);background:${_buzon.filtro === f ? 'var(--accent)' : 'transparent'};color:${_buzon.filtro === f ? '#08121a' : 'var(--text)'};border-radius:6px;cursor:pointer;font-size:13px;${_buzon.filtro === f ? 'font-weight:600' : ''}">
-          ${f.charAt(0).toUpperCase() + f.slice(1)}${f !== 'todos' ? ` <span style="opacity:0.7">(${counts[f]})</span>` : ''}
-        </button>
-      `).join('')}
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+      <h2 style="margin:0">Buzón de aprobaciones</h2>
+      ${accionables > 0
+        ? `<span style="font-size:12px;color:#e0a04c">Requieren acción: <b>${accionables}</b></span>`
+        : `<span style="font-size:12px;color:var(--text-muted)">Total: ${all.length}</span>`}
     </div>
-    <div style="flex:1"></div>
-    <div style="font-size:12px;color:var(--text-muted)">
-      Total: ${all.length} · Pendientes: <b>${counts.pendiente}</b>
-    </div>
-  `;
+    <div style="display:flex;gap:0;flex-wrap:wrap;border-bottom:1px solid var(--border)">
+      ${_TABS.map(tab => {
+        const cnt   = tabCounts[tab.key] || 0;
+        const active = tab.key === _buzon.tab;
+        const urgent = tab.priority && cnt > 0;
+        return `<button class="bz-tab" data-tab="${tab.key}" style="
+          padding:8px 14px;border:none;border-bottom:${active ? '2px solid var(--accent)' : '2px solid transparent'};
+          background:transparent;cursor:pointer;font-size:13px;white-space:nowrap;
+          color:${active ? 'var(--accent)' : urgent ? '#e0a04c' : 'var(--text-muted)'};
+          font-weight:${active ? 600 : 400}">
+          ${tab.label}${cnt > 0 ? ` <small style="opacity:.75">(${cnt})</small>` : ''}
+        </button>`;
+      }).join('')}
+    </div>`;
   root.appendChild(header);
-  header.querySelectorAll('.filter-tab').forEach(btn => {
-    btn.addEventListener('click', () => {
-      _buzon.filtro = btn.dataset.filtro;
-      renderBuzon();
-    });
-  });
+  header.querySelectorAll('.bz-tab').forEach(b =>
+    b.addEventListener('click', () => { _buzon.tab = b.dataset.tab; renderBuzon(); })
+  );
 
-  // Empty state
-  if (filtered.length === 0) {
+  // ── Empty ──
+  if (!filtered.length) {
+    const msgs = {
+      recibido: 'No hay solicitudes nuevas.',
+      en_revision: 'No hay items en revisión.',
+      aprobado: 'No hay movimientos pendientes de cobro/pago.',
+      cobrado_pagado: 'Sin items cobrados o pagados.',
+      cerrado: 'Sin items cerrados.',
+      rechazado: 'Sin items rechazados.',
+      huerfano: 'Sin items huérfanos.',
+      todos: 'El buzón está vacío.',
+    };
     const empty = document.createElement('div');
-    empty.style.cssText = 'text-align:center;padding:60px 20px;color:var(--text-muted);border:1px dashed var(--border);border-radius:8px';
-    empty.innerHTML = `
-      <div style="font-size:32px;opacity:0.5;margin-bottom:8px">📥</div>
-      <div>${_buzon.filtro === 'pendiente'
-        ? 'No hay solicitudes pendientes. Las apps de estimaciones, compras, etc. enviarán items aquí cuando necesiten tu aprobación.'
-        : `No hay items en estado "${_buzon.filtro}".`}</div>
-    `;
+    empty.style.cssText = 'text-align:center;padding:60px 20px;color:var(--text-muted);border:1px dashed var(--border);border-radius:8px;margin-top:12px';
+    empty.innerHTML = `<div style="font-size:32px;opacity:.5;margin-bottom:8px">📥</div><div>${msgs[_buzon.tab] || 'Sin items.'}</div>`;
     root.appendChild(empty);
     return;
   }
 
-  // Lista de cards
+  // ── Lista ──
   const list = document.createElement('div');
-  list.style.cssText = 'display:flex;flex-direction:column;gap:10px';
+  list.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin-top:12px';
   for (const item of filtered) list.appendChild(_buzonCard(item));
   root.appendChild(list);
 }
 
+// ─── Card ──────────────────────────────────────────────────────────────────
+
 function _buzonCard(item) {
   const card = document.createElement('div');
-  const colors = {
-    pendiente: { border: '#e0a04c', bg: 'rgba(224,160,76,0.04)', tag: '#e0a04c' },
-    aprobado:  { border: '#5dd39e', bg: 'rgba(93,211,158,0.04)', tag: '#5dd39e' },
-    rechazado: { border: '#e15555', bg: 'rgba(225,85,85,0.04)', tag: '#e15555' },
-    huerfano:  { border: '#a06bd9', bg: 'rgba(160,107,217,0.05)', tag: '#a06bd9' }
-  };
-  const c = colors[item.estado] || colors.pendiente;
-  card.style.cssText = `border:1px solid var(--border);border-left:4px solid ${c.border};background:${c.bg};border-radius:8px;padding:14px 16px`;
+  const ecfg     = _ESTADOS_CFG[item.estado] || _ESTADOS_CFG.recibido;
+  const expanded  = _buzon.expanded.has(item.id);
+  const esSub     = item.tipo === 'estimacion_subcontratista';
+  const monto     = item?.monto?.importe || 0;
+  const fechaPago = item.fecha
+    ? new Date(item.fecha).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })
+    : '—';
+  const tipoLabel = { pago_cliente: '💰 Pago de cliente', estimacion_subcontratista: '🔧 Estim. subcontratista' }[item.tipo] || item.tipo;
+  const desfase   = _calcularDesfase(item);
 
-  const monto = item?.monto?.importe || 0;
-  const fechaPago = item.fecha ? new Date(item.fecha).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
-  const fechaCreado = item.creadoAt ? new Date(item.creadoAt).toLocaleString('es-MX') : '';
-  const tipoLabel = ({
-    pago_cliente: '💰 Pago de cliente',
-    estimacion_subcontratista: '🔧 Estimación a subcontratista'
-  })[item.tipo] || item.tipo;
+  card.style.cssText = `border:1px solid var(--border);border-left:4px solid ${ecfg.color};background:${ecfg.bg};border-radius:8px;overflow:hidden`;
 
-  // Renderizar metadatos según tipo
-  const esSub = item.tipo === 'estimacion_subcontratista';
-  const linea2 = esSub
-    ? `Subcontrato: <b style="color:var(--text)">${item.subcontratoNombre || '—'}</b> · Estim. del sub: <b>#${item.subEstimacionNumero ?? '—'}</b>`
-    : `Estimación: <b>#${item.estimNumero ?? '—'}</b>`;
-  const linea2b = esSub
-    ? `Pagado a: <b style="color:var(--text)">${item.proveedorNombre || '—'}</b> · Fecha: <b>${fechaPago}</b>`
-    : `Fecha del pago: <b>${fechaPago}</b>`;
-
-  card.innerHTML = `
-    <div style="display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap">
-      <div style="flex:1;min-width:240px">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-          <span style="background:${c.tag};color:white;padding:2px 8px;border-radius:10px;font-size:10px;text-transform:uppercase;letter-spacing:0.4px;font-weight:600">${item.estado}</span>
-          <span style="font-size:13px;color:var(--text-muted)">${tipoLabel}</span>
-        </div>
-        <div style="font-size:16px;font-weight:600;margin-bottom:4px">${item.descripcion || '—'}</div>
-        <div style="font-size:12px;color:var(--text-muted);line-height:1.6">
-          Obra: <b style="color:var(--text)">${item.obraNombre || item.obraId || '—'}</b><br>
-          ${linea2}<br>
-          ${linea2b}<br>
-          ${item.proyectoId
-            ? `Proyecto contable: <b style="color:#5dd39e">${_obtenerNombreProyecto(item.proyectoId)}</b>`
-            : `<span style="color:#e15555">⚠ Obra sin vincular a proyecto contable</span>`}
-          ${fechaCreado ? `<br>Recibido: ${fechaCreado}` : ''}
-        </div>
-      </div>
-      <div style="text-align:right">
-        <div style="font-size:11px;color:var(--text-muted)">${esSub ? 'Saldrá de caja' : 'Entrará a caja'}</div>
-        <div style="font-family:ui-monospace,monospace;font-size:22px;font-weight:700;color:${esSub ? '#e15555' : 'var(--accent)'}">
-          ${esSub ? '−' : ''}$${monto.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-        </div>
-        <div style="font-size:10px;color:var(--text-muted)">
-          ${item?.monto?.conIva === false
-            ? '<b style="color:#e0a04c">Sin IVA</b> — importe = subtotal'
-            : `Subtotal $${(item?.monto?.subtotal || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })} · IVA $${(item?.monto?.iva || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}`
-          }
-        </div>
+  // ── Cabecera (siempre visible, clickable) ──
+  const hdr = document.createElement('div');
+  hdr.style.cssText = 'display:flex;align-items:center;gap:10px;padding:12px 14px;cursor:pointer;user-select:none';
+  hdr.innerHTML = `
+    <span style="background:${ecfg.color};color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;text-transform:uppercase;letter-spacing:.4px;font-weight:600;flex-shrink:0">${ecfg.label}</span>
+    ${item.folio ? `<code style="font-size:11px;color:var(--text-muted);background:var(--surface);padding:1px 5px;border-radius:4px;flex-shrink:0">${item.folio}</code>` : ''}
+    <div style="flex:1;min-width:0;overflow:hidden">
+      <div style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${item.descripcion || '—'}</div>
+      <div style="font-size:11px;color:var(--text-muted)">${tipoLabel} · ${item.obraNombre || item.obraId || '—'} · ${fechaPago}</div>
+    </div>
+    ${desfase ? `<span title="${desfase.tooltip}" style="font-size:11px;color:#e0a04c;background:rgba(224,160,76,.12);padding:2px 7px;border-radius:8px;flex-shrink:0">⚠ Δ$${Math.abs(desfase.delta).toLocaleString('es-MX', {minimumFractionDigits:2})}</span>` : ''}
+    <div style="text-align:right;flex-shrink:0">
+      <div style="font-family:ui-monospace,monospace;font-size:17px;font-weight:700;color:${esSub ? '#e15555' : 'var(--accent)'}">
+        ${esSub ? '−' : '+'}$${monto.toLocaleString('es-MX', {minimumFractionDigits:2, maximumFractionDigits:2})}
       </div>
     </div>
-    ${esSub && Array.isArray(item.desglose) && item.desglose.length > 0 ? `
-      <details style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-size:11px">
-        <summary style="cursor:pointer;color:var(--text-muted)">
-          📋 Desglose por concepto OPUS (${item.desglose.length} línea${item.desglose.length === 1 ? '' : 's'} · $${item.desglose.reduce((s,d)=>s+(Number(d.importe)||0),0).toLocaleString('es-MX', { minimumFractionDigits: 2 })})
-        </summary>
-        <table style="width:100%;margin-top:6px;border-collapse:collapse;font-size:11px">
-          <thead style="color:var(--text-muted)">
-            <tr><th style="text-align:left;padding:3px 6px">Clave</th><th style="text-align:left;padding:3px 6px">Descripción</th><th style="text-align:right;padding:3px 6px">Cant.</th><th style="text-align:right;padding:3px 6px">P.U.</th><th style="text-align:right;padding:3px 6px">Importe</th></tr>
-          </thead>
-          <tbody>
-            ${item.desglose.map(d => `
-              <tr>
-                <td style="padding:3px 6px;font-family:monospace">${d.clave || '—'}</td>
-                <td style="padding:3px 6px">${(d.descripcion || '').slice(0, 60)}</td>
-                <td style="padding:3px 6px;text-align:right">${(Number(d.cantidad) || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}</td>
-                <td style="padding:3px 6px;text-align:right">$${(Number(d.precioUnitario) || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}</td>
-                <td style="padding:3px 6px;text-align:right;font-weight:600">$${(Number(d.importe) || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}</td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-        <div style="margin-top:4px;color:var(--text-muted);font-size:10px">Al aprobar, este desglose se trasladará automáticamente al campo "Distribuir a concepto OPUS" del gasto si bitácora tiene el presupuesto importado en este proyecto.</div>
-      </details>
-    ` : ''}
-    ${item.estado === 'pendiente' ? `
-      <div style="display:flex;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
-        <button class="btn-aprobar" style="background:#5dd39e;color:#0e3a25;border:none;border-radius:6px;padding:8px 14px;font-weight:600;cursor:pointer">✓ Aprobar y crear movimiento</button>
-        <button class="btn-rechazar" style="background:transparent;color:#e15555;border:1px solid #e15555;border-radius:6px;padding:8px 14px;cursor:pointer">✕ Rechazar</button>
-        ${!item.proyectoId ? '<span style="font-size:11px;color:#e15555;align-self:center">Vincula la obra primero</span>' : ''}
-      </div>
-    ` : item.estado === 'huerfano' ? `
-      <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-size:12px;color:#a06bd9;line-height:1.5">
-        ⚠ El movimiento contable que se había creado fue eliminado.<br>
-        ${item.descripcionHuerfano || 'La app de origen verá este pago como pendiente de re-aprobar.'}
-        ${item.huerfanoAt ? `<br><span style="color:var(--text-muted)">Eliminado: ${new Date(item.huerfanoAt).toLocaleString('es-MX')}</span>` : ''}
-      </div>
-      <div style="display:flex;gap:8px;margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
-        <button class="btn-reaprobar" style="background:#5dd39e;color:#0e3a25;border:none;border-radius:6px;padding:8px 14px;font-weight:600;cursor:pointer">✓ Volver a crear movimiento</button>
-        <button class="btn-cerrar-huerfano" style="background:transparent;color:#e15555;border:1px solid #e15555;border-radius:6px;padding:8px 14px;cursor:pointer">✕ Cerrar como rechazado</button>
-      </div>
-    ` : item.comentarioRechazo ? `
-      <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-size:12px;color:var(--text-muted)">
-        Motivo del rechazo: <em>${item.comentarioRechazo}</em>
-      </div>
-    ` : item.movId ? `
-      <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-size:12px;color:var(--text-muted)">
-        ✓ Movimiento creado · ID interno: <code>${item.movId}</code>${item.aprobadoAt ? ' · ' + new Date(item.aprobadoAt).toLocaleString('es-MX') : ''}
-        ${item.actualizadoPorContador ? `<br>✎ Editado por el contador${item.actualizadoAt ? ' el ' + new Date(item.actualizadoAt).toLocaleString('es-MX') : ''}` : ''}
-      </div>
-    ` : ''}
-  `;
+    <span style="color:var(--text-muted);font-size:14px;flex-shrink:0">${expanded ? '▲' : '▼'}</span>`;
 
-  if (item.estado === 'pendiente') {
-    card.querySelector('.btn-aprobar').addEventListener('click', () => _aprobarItem(item));
-    card.querySelector('.btn-rechazar').addEventListener('click', () => _rechazarItem(item));
-  } else if (item.estado === 'huerfano') {
-    card.querySelector('.btn-reaprobar').addEventListener('click', () => _aprobarItem(item));
-    card.querySelector('.btn-cerrar-huerfano').addEventListener('click', () => _rechazarItem(item));
+  hdr.addEventListener('click', () => {
+    if (_buzon.expanded.has(item.id)) {
+      _buzon.expanded.delete(item.id);
+    } else {
+      _buzon.expanded.add(item.id);
+      // Auto-transition recibido → en_revision + cambiar tab
+      if (item.estado === 'recibido' || item.estado === 'pendiente') {
+        if (_buzon.items[item.id]) _buzon.items[item.id].estado = 'en_revision'; // optimista
+        _marcarEnRevision(item).catch(e => console.warn('[Buzón] en_revision:', e));
+        _buzon.tab = 'en_revision';
+      }
+    }
+    renderBuzon();
+  });
+  card.appendChild(hdr);
+
+  // ── Cuerpo (solo cuando expandido) ──
+  if (expanded) {
+    const body = document.createElement('div');
+    body.style.cssText = 'padding:0 14px 14px;border-top:1px solid var(--border)';
+    body.innerHTML = _cardBodyHTML(item);
+    _attachAcciones(body, item);
+    card.appendChild(body);
   }
 
   return card;
 }
 
+function _cardBodyHTML(item) {
+  const esSub     = item.tipo === 'estimacion_subcontratista';
+  const fechaPago = item.fecha
+    ? new Date(item.fecha).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })
+    : '—';
+  const fechaCreado = item.creadoAt ? new Date(item.creadoAt).toLocaleString('es-MX') : '';
+  const montoInfo   = item?.monto?.conIva === false
+    ? '<span style="color:#e0a04c">Sin IVA</span> — importe = subtotal'
+    : `Subtotal $${(item?.monto?.subtotal || 0).toLocaleString('es-MX',{minimumFractionDigits:2})} · IVA $${(item?.monto?.iva || 0).toLocaleString('es-MX',{minimumFractionDigits:2})}`;
+  const proyNombre  = item.proyectoId
+    ? `<b style="color:#5dd39e">${_obtenerNombreProyecto(item.proyectoId)}</b>`
+    : `<span style="color:#e15555">⚠ Obra sin vincular</span>`;
+
+  const col1 = esSub
+    ? `Subcontrato: <b>${item.subcontratoNombre || '—'}</b><br>
+       Estim. sub: <b>#${item.subEstimacionNumero ?? '—'}</b><br>
+       Subcontratista: <b>${item.proveedorNombre || '—'}</b><br>
+       Fecha pago: <b>${fechaPago}</b>`
+    : `Estimación: <b>#${item.estimNumero ?? '—'}</b><br>
+       Fecha pago: <b>${fechaPago}</b>`;
+
+  const col2 = `${montoInfo}<br>
+    Proyecto: ${proyNombre}<br>
+    ${item.folio ? `Folio: <b>${item.folio}</b><br>` : ''}
+    ${fechaCreado ? `Recibido: ${fechaCreado}` : ''}`;
+
+  const movInfo = item.movId
+    ? `<div style="margin-top:4px;font-size:11px;color:var(--text-muted)">Movimiento: <code>${item.movId}</code>${item.actualizadoPorContador ? ' · ✎ editado por contador' : ''}</div>`
+    : '';
+
+  const pagoInfo = (item.cobradoAt || item.pagadoAt)
+    ? `<div style="margin-top:4px;font-size:11px;color:var(--text-muted)">
+        ${item.estado === 'cobrado' ? 'Cobrado' : 'Pagado'}: ${new Date(item.cobradoAt || item.pagadoAt).toLocaleString('es-MX')}
+        ${item.metodoPago ? ` · ${item.metodoPago}` : ''}
+        ${item.referenciaPago ? ` · Ref: ${item.referenciaPago}` : ''}
+       </div>`
+    : '';
+
+  const rechazInfo = item.comentarioRechazo
+    ? `<div style="margin-top:4px;font-size:12px;color:#e15555">Rechazo: <em>${item.comentarioRechazo}</em></div>`
+    : '';
+
+  const huerfanoInfo = item.descripcionHuerfano
+    ? `<div style="margin-top:4px;font-size:12px;color:#a06bd9">⚠ ${item.descripcionHuerfano}${item.huerfanoAt ? ' (' + new Date(item.huerfanoAt).toLocaleString('es-MX') + ')' : ''}</div>`
+    : '';
+
+  // Desglose OPUS
+  let desgloseHTML = '';
+  if (esSub && Array.isArray(item.desglose) && item.desglose.length > 0) {
+    const total = item.desglose.reduce((s, d) => s + (Number(d.importe) || 0), 0);
+    desgloseHTML = `
+      <details style="margin-top:10px;font-size:11px">
+        <summary style="cursor:pointer;color:var(--text-muted)">📋 Desglose OPUS (${item.desglose.length} líneas · $${total.toLocaleString('es-MX',{minimumFractionDigits:2})})</summary>
+        <table style="width:100%;margin-top:6px;border-collapse:collapse">
+          <thead style="color:var(--text-muted)"><tr>
+            <th style="text-align:left;padding:2px 5px">Clave</th>
+            <th style="text-align:left;padding:2px 5px">Descripción</th>
+            <th style="text-align:right;padding:2px 5px">Cant.</th>
+            <th style="text-align:right;padding:2px 5px">P.U.</th>
+            <th style="text-align:right;padding:2px 5px">Importe</th>
+          </tr></thead>
+          <tbody>
+            ${item.desglose.map(d => `<tr>
+              <td style="padding:2px 5px;font-family:monospace">${d.clave || '—'}</td>
+              <td style="padding:2px 5px">${(d.descripcion || '').slice(0, 55)}</td>
+              <td style="padding:2px 5px;text-align:right">${(Number(d.cantidad) || 0).toLocaleString('es-MX',{minimumFractionDigits:2})}</td>
+              <td style="padding:2px 5px;text-align:right">$${(Number(d.precioUnitario) || 0).toLocaleString('es-MX',{minimumFractionDigits:2})}</td>
+              <td style="padding:2px 5px;text-align:right;font-weight:600">$${(Number(d.importe) || 0).toLocaleString('es-MX',{minimumFractionDigits:2})}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </details>`;
+  }
+
+  // Historial de estados
+  let historialHTML = '';
+  if (item.estadoHistorial) {
+    const entradas = Object.values(item.estadoHistorial).sort((a, b) => (a.at || 0) - (b.at || 0));
+    if (entradas.length) {
+      historialHTML = `
+        <details style="margin-top:8px;font-size:11px">
+          <summary style="cursor:pointer;color:var(--text-muted)">Historial (${entradas.length} cambios)</summary>
+          <div style="margin-top:6px;display:flex;flex-direction:column;gap:3px">
+            ${entradas.map(e => {
+              const ec = _ESTADOS_CFG[e.estado] || _ESTADOS_CFG.recibido;
+              return `<div style="color:var(--text-muted)">
+                <span style="background:${ec.color};color:#fff;padding:1px 5px;border-radius:6px;font-size:10px">${e.estado}</span>
+                ${e.at ? ` ${new Date(e.at).toLocaleString('es-MX')}` : ''}
+                ${e.nota ? ` <em>— ${e.nota}</em>` : ''}
+              </div>`;
+            }).join('')}
+          </div>
+        </details>`;
+    }
+  }
+
+  return `
+    <div style="padding-top:10px;font-size:12px;color:var(--text-muted);line-height:1.7">
+      <div style="display:flex;gap:20px;flex-wrap:wrap">
+        <div>${col1}</div>
+        <div>${col2}</div>
+      </div>
+      ${movInfo}${pagoInfo}${rechazInfo}${huerfanoInfo}
+    </div>
+    ${desgloseHTML}
+    ${historialHTML}
+    <div class="bz-acciones" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+      ${_accionesHTML(item)}
+    </div>`;
+}
+
+function _accionesHTML(item) {
+  const noProj = !item.proyectoId;
+  const noVinc = noProj ? '<span style="font-size:11px;color:#e15555;align-self:center">Vincula la obra primero</span>' : '';
+  const dis    = noProj ? 'disabled style="opacity:.5;cursor:not-allowed"' : 'style="cursor:pointer"';
+  const e      = item.estado;
+
+  if (e === 'recibido' || e === 'pendiente' || e === 'en_revision') {
+    const labelPagoRapido = item.tipo === 'estimacion_subcontratista' ? 'Aprobar + Pagar' : 'Aprobar + Cobrar';
+    return `
+      <button class="bz-btn-aprobar" ${dis} style="background:#5dd39e;color:#0e3a25;border:none;border-radius:6px;padding:8px 14px;font-weight:600">✓ Aprobar</button>
+      <button class="bz-btn-aprobar-pagar" ${dis} style="background:#3ab87a;color:#0e3a25;border:none;border-radius:6px;padding:8px 14px;font-weight:600">${labelPagoRapido}</button>
+      <button class="bz-btn-rechazar" style="background:transparent;color:#e15555;border:1px solid #e15555;border-radius:6px;padding:8px 14px;cursor:pointer">✕ Rechazar</button>
+      ${noVinc}`;
+  }
+  if (e === 'aprobado') {
+    const labelMrk = item.tipo === 'estimacion_subcontratista' ? 'Marcar Pagado' : 'Marcar Cobrado';
+    return `
+      <button class="bz-btn-marcar-pagado" style="background:#5dd39e;color:#0e3a25;border:none;border-radius:6px;padding:8px 14px;font-weight:600;cursor:pointer">✓ ${labelMrk}</button>
+      <button class="bz-btn-cerrar" style="background:transparent;color:var(--text-muted);border:1px solid var(--border);border-radius:6px;padding:8px 14px;cursor:pointer">Cerrar</button>
+      <button class="bz-btn-rechazar" style="background:transparent;color:#e15555;border:1px solid #e15555;border-radius:6px;padding:8px 14px;cursor:pointer">✕ Rechazar</button>`;
+  }
+  if (e === 'cobrado' || e === 'pagado') {
+    return `
+      <button class="bz-btn-reabrir" style="background:transparent;color:#5dd39e;border:1px solid #5dd39e;border-radius:6px;padding:8px 14px;cursor:pointer">↩ Reabrir</button>
+      <button class="bz-btn-cerrar" style="background:transparent;color:var(--text-muted);border:1px solid var(--border);border-radius:6px;padding:8px 14px;cursor:pointer">Cerrar</button>`;
+  }
+  if (e === 'huerfano') {
+    return `
+      <button class="bz-btn-reaprobar" ${dis} style="background:#5dd39e;color:#0e3a25;border:none;border-radius:6px;padding:8px 14px;font-weight:600">✓ Volver a crear movimiento</button>
+      <button class="bz-btn-rechazar" style="background:transparent;color:#e15555;border:1px solid #e15555;border-radius:6px;padding:8px 14px;cursor:pointer">✕ Cerrar como rechazado</button>
+      ${noVinc}`;
+  }
+  return ''; // cerrado / rechazado — sin acciones
+}
+
+function _attachAcciones(body, item) {
+  const on = (cls, fn) => { const el = body.querySelector(cls); if (el) el.addEventListener('click', fn); };
+  on('.bz-btn-aprobar',        () => _aprobarItem(item, false));
+  on('.bz-btn-aprobar-pagar',  () => _aprobarItem(item, true));
+  on('.bz-btn-rechazar',       () => _rechazarItem(item));
+  on('.bz-btn-marcar-pagado',  () => _marcarPagadoCobrado(item));
+  on('.bz-btn-reabrir',        () => _reabrirItem(item));
+  on('.bz-btn-reaprobar',      () => _aprobarItem(item, false));
+  on('.bz-btn-cerrar',         () => _cerrarItem(item));
+}
+
+// ─── Helpers de display ────────────────────────────────────────────────────
+
 function _obtenerNombreProyecto(proyectoId) {
-  const proyectos = getCollection('sogrub_proyectos') || [];
-  const p = (Array.isArray(proyectos) ? proyectos : Object.values(proyectos)).find(x => String(x?.id) === String(proyectoId));
+  const arr = getCollection('sogrub_proyectos') || [];
+  const list = Array.isArray(arr) ? arr : Object.values(arr);
+  const p = list.find(x => String(x?.id) === String(proyectoId));
   return p?.nombre || `(proyecto ${proyectoId})`;
 }
 
-async function _aprobarItem(item) {
-  if (!item.proyectoId) {
-    _toast('Falta vincular la obra al proyecto contable. Hazlo desde la app de estimaciones (Admin → Vincular obras) y vuelve.', 'error');
-    return;
+// B7: detecta si hay una versión anterior rechazada/huérfana del mismo origen con monto distinto.
+function _calcularDesfase(item) {
+  if (!['recibido', 'pendiente', 'en_revision'].includes(item.estado)) return null;
+  const montoActual = Number(item?.monto?.importe) || 0;
+  if (!montoActual) return null;
+  const srcKey = item.tipo === 'estimacion_subcontratista'
+    ? `${item.obraId}::${item.tipo}::${item.subcontratoId}::${item.subEstimacionNumero}`
+    : `${item.obraId}::${item.tipo}::${item.estimacionId}`;
+  for (const [id, other] of Object.entries(_buzon.items)) {
+    if (id === item.id || !['rechazado', 'huerfano'].includes(other?.estado)) continue;
+    const otherKey = other.tipo === 'estimacion_subcontratista'
+      ? `${other.obraId}::${other.tipo}::${other.subcontratoId}::${other.subEstimacionNumero}`
+      : `${other.obraId}::${other.tipo}::${other.estimacionId}`;
+    if (otherKey !== srcKey) continue;
+    const otroMonto = Number(other?.monto?.importe) || 0;
+    if (!otroMonto) continue;
+    const delta = montoActual - otroMonto;
+    if (Math.abs(delta / otroMonto) > 0.001) {
+      return {
+        delta,
+        tooltip: `Versión anterior (${other.estado}): $${otroMonto.toLocaleString('es-MX',{minimumFractionDigits:2})} · Diferencia: $${Math.abs(delta).toLocaleString('es-MX',{minimumFractionDigits:2})}`
+      };
+    }
   }
+  return null;
+}
+
+// ─── Acciones ──────────────────────────────────────────────────────────────
+
+async function _marcarEnRevision(item) {
+  const histKey = `${Date.now()}_rev`;
+  await _dbRef(`/shared/buzon/${item.id}`).update({
+    estado: 'en_revision',
+    enRevisionAt: Date.now(),
+    enRevisionPor: _currentUser?.uid || '',
+    [`estadoHistorial/${histKey}`]: { estado: 'en_revision', at: Date.now(), por: _currentUser?.uid || 'system' }
+  });
+}
+
+// aprobarYPagar=false → movimiento status 'Pendiente'
+// aprobarYPagar=true  → modal de pago, movimiento status 'Pagado', estado cobrado/pagado
+async function _aprobarItem(item, aprobarYPagar = false) {
+  if (!item.proyectoId) { _toast('Falta vincular la obra al proyecto contable.', 'error'); return; }
 
   const fechaISO = item.fecha
     ? new Date(item.fecha).toISOString().slice(0, 10)
     : new Date().toISOString().slice(0, 10);
 
-  let movimiento;
-  let nombrePill;
+  let movimiento, nombrePill, folio;
 
-  if (item.tipo === 'pago_cliente') {
-    const conIvaFlag = item?.monto?.conIva !== false && (Number(item?.monto?.iva) || 0) > 0;
-    movimiento = {
-      proyecto_id: item.proyectoId,
-      fecha: fechaISO,
-      monto: Number(item?.monto?.importe) || 0,
-      concepto: `Pago de Estimación #${item.estimNumero ?? '?'} (${item.obraNombre || item.obraId || ''})${conIvaFlag ? '' : ' (sin IVA)'} — vía buzón`,
-      subcontratista: '',
-      status: 'Pagado',
-      tipo: 'abono_cliente',
-      origen_buzon_id: item.id,
-      monto_subtotal: Number(item?.monto?.subtotal) || 0,
-      monto_iva: Number(item?.monto?.iva) || 0,
-      incluye_iva: conIvaFlag
-    };
-    nombrePill = `Abono de $${movimiento.monto.toLocaleString('es-MX', { minimumFractionDigits: 2 })} registrado en el proyecto.`;
+  try {
+    if (item.tipo === 'pago_cliente') {
+      folio = await _generarFolio('CC');
+      const conIva = item?.monto?.conIva !== false && (Number(item?.monto?.iva) || 0) > 0;
+      movimiento = {
+        proyecto_id:    item.proyectoId,
+        fecha:          fechaISO,
+        monto:          Number(item?.monto?.importe) || 0,
+        concepto:       `[${folio}] Pago Est. #${item.estimNumero ?? '?'} (${item.obraNombre || item.obraId || ''})${conIva ? '' : ' (sin IVA)'}`,
+        subcontratista: '',
+        status:         aprobarYPagar ? 'Pagado' : 'Pendiente',
+        tipo:           'abono_cliente',
+        origen_buzon_id: item.id,
+        monto_subtotal: Number(item?.monto?.subtotal) || 0,
+        monto_iva:      Number(item?.monto?.iva) || 0,
+        incluye_iva:    conIva,
+      };
+      nombrePill = `${folio} · Abono $${movimiento.monto.toLocaleString('es-MX',{minimumFractionDigits:2})} registrado.`;
 
-  } else if (item.tipo === 'estimacion_subcontratista') {
-    // Buscar o crear el proveedor por nombre (case-insensitive)
-    const proveedorNombre = (item.proveedorNombre || '').trim();
-    if (!proveedorNombre) {
-      _toast('El item no tiene nombre de subcontratista.', 'error');
+    } else if (item.tipo === 'estimacion_subcontratista') {
+      folio = await _generarFolio('CP');
+      const provNombre = (item.proveedorNombre || '').trim();
+      if (!provNombre) { _toast('El item no tiene nombre de subcontratista.', 'error'); return; }
+      const provDef = _findOrCreateProveedor(provNombre, { email: item.proveedorEmail || '', telefono: item.proveedorTelefono || '' });
+      const importe  = Number(item?.monto?.importe) || 0;
+      const conIva   = item?.monto?.conIva !== false && (Number(item?.monto?.iva) || 0) > 0;
+      const desglose = await _mapearDesgloseAOpusBitacora(item.proyectoId, item.desglose);
+      movimiento = {
+        proyecto_id:    item.proyectoId,
+        fecha:          fechaISO,
+        monto:          -Math.abs(importe),
+        concepto:       `[${folio}] Pago a ${provNombre} — "${item.subcontratoNombre || ''}" estim. #${item.subEstimacionNumero ?? '?'}${conIva ? '' : ' (sin IVA)'}`,
+        subcontratista: provNombre,
+        status:         aprobarYPagar ? 'Pagado' : 'Pendiente',
+        tipo:           'gasto',
+        categoria:      'Subcontratista',
+        origen_buzon_id: item.id,
+        monto_subtotal: Number(item?.monto?.subtotal) || 0,
+        monto_iva:      Number(item?.monto?.iva) || 0,
+        incluye_iva:    conIva,
+        proveedor_id:   provDef?.id || null,
+        desglose_presupuesto: desglose.length ? desglose : undefined,
+      };
+      const desgloseExtra = desglose.length
+        ? ` · ${desglose.length} conceptos OPUS`
+        : (item.desglose?.length ? ' · ⚠ sin mapa OPUS' : '');
+      nombrePill = `${folio} · Gasto $${Math.abs(movimiento.monto).toLocaleString('es-MX',{minimumFractionDigits:2})} a ${provNombre}${provDef?._creado ? ' (nuevo proveedor)' : ''}.${desgloseExtra}`;
+
+    } else {
+      _toast('Tipo de buzón no soportado: ' + item.tipo, 'error');
       return;
     }
-    const provDef = _findOrCreateProveedor(proveedorNombre, {
-      email: item.proveedorEmail || '',
-      telefono: item.proveedorTelefono || ''
-    });
-    // Gastos en este modelo se guardan como monto NEGATIVO
-    const importe = Number(item?.monto?.importe) || 0;
-    const conIvaFlag = item?.monto?.conIva !== false && (Number(item?.monto?.iva) || 0) > 0;
-
-    // Mapear el desglose por clave OPUS al concepto_id de bitácora
-    const desglose_presupuesto = await _mapearDesgloseAOpusBitacora(item.proyectoId, item.desglose);
-
-    movimiento = {
-      proyecto_id: item.proyectoId,
-      fecha: fechaISO,
-      monto: -Math.abs(importe),
-      concepto: `Pago a ${proveedorNombre} — Subcontrato "${item.subcontratoNombre || ''}", estimación #${item.subEstimacionNumero ?? '?'}${conIvaFlag ? '' : ' (sin IVA)'} — vía buzón`,
-      subcontratista: proveedorNombre,
-      status: 'Pagado',
-      tipo: 'gasto',
-      categoria: 'Subcontratista',
-      origen_buzon_id: item.id,
-      monto_subtotal: Number(item?.monto?.subtotal) || 0,
-      monto_iva: Number(item?.monto?.iva) || 0,
-      incluye_iva: conIvaFlag,
-      proveedor_id: provDef?.id || null,
-      desglose_presupuesto: desglose_presupuesto.length ? desglose_presupuesto : undefined
-    };
-    const claveExtra = desglose_presupuesto.length
-      ? ` · ${desglose_presupuesto.length} concepto(s) OPUS distribuidos`
-      : (item.desglose?.length ? ' · ⚠ desglose no se pudo mapear (¿catálogo OPUS no importado en bitácora?)' : '');
-    nombrePill = `Gasto de $${Math.abs(movimiento.monto).toLocaleString('es-MX', { minimumFractionDigits: 2 })} a ${proveedorNombre}${provDef?._creado ? ' (proveedor nuevo creado)' : ''} registrado.${claveExtra}`;
-
-  } else {
-    _toast('Tipo de buzón no soportado todavía: ' + item.tipo, 'error');
+  } catch (err) {
+    console.error('[Buzón aprobar prep]', err);
+    _toast('Error al preparar aprobación: ' + err.message, 'error');
     return;
   }
 
+  // Si es aprobar+pagar, pedir datos de pago antes de crear el movimiento
+  let pagoData = null;
+  if (aprobarYPagar) {
+    pagoData = await _modalDatosPago(item.tipo === 'estimacion_subcontratista' ? 'pago' : 'cobro');
+    if (!pagoData) return; // cancelado
+  }
+
   try {
-    const created = addItem('sogrub_proy_movimientos', movimiento);
-    await _dbRef(`/shared/buzon/${item.id}`).update({
-      estado: 'aprobado',
-      aprobadoAt: Date.now(),
-      aprobadoPor: _currentUser?.uid || '',
-      movId: created.id,
+    const created       = addItem('sogrub_proy_movimientos', movimiento);
+    const nuevoEstado   = aprobarYPagar
+      ? (item.tipo === 'estimacion_subcontratista' ? 'pagado' : 'cobrado')
+      : 'aprobado';
+    const histKeyApr    = `${Date.now()}_apr`;
+
+    const updates = {
+      estado:       nuevoEstado,
+      folio,
+      aprobadoAt:   Date.now(),
+      aprobadoPor:  _currentUser?.uid || '',
+      movId:        created.id,
       destinoRefPath: `sogrub_proy_movimientos[id=${created.id}]`,
-      huerfanoAt: null,
-      huerfanoPor: null,
-      descripcionHuerfano: null
-    });
+      huerfanoAt:   null,
+      huerfanoPor:  null,
+      descripcionHuerfano: null,
+      [`estadoHistorial/${histKeyApr}`]: { estado: nuevoEstado, at: Date.now(), por: _currentUser?.uid || '' }
+    };
+
+    if (pagoData) {
+      const histKeyPago = `${Date.now() + 1}_pago`;
+      const tsField     = nuevoEstado === 'cobrado' ? 'cobradoAt' : 'pagadoAt';
+      updates[tsField]           = pagoData.fecha;
+      updates['metodoPago']      = pagoData.metodo;
+      updates['referenciaPago']  = pagoData.referencia || null;
+      updates[`estadoHistorial/${histKeyPago}`] = {
+        estado: nuevoEstado, at: pagoData.fecha, por: _currentUser?.uid || '',
+        nota: `${pagoData.metodo}${pagoData.referencia ? ' ref:' + pagoData.referencia : ''}`
+      };
+      // Actualizar fecha en el movimiento recién creado si el usuario eligió otra fecha
+      if (pagoData.fechaISO !== fechaISO) {
+        updateItem('sogrub_proy_movimientos', created.id, { fecha: pagoData.fechaISO });
+      }
+    }
+
+    await _dbRef(`/shared/buzon/${item.id}`).update(updates);
+    _buzon.expanded.delete(item.id);
     _toast(nombrePill, 'success');
   } catch (err) {
     console.error('[Buzón aprobar]', err);
@@ -358,102 +598,209 @@ async function _aprobarItem(item) {
   }
 }
 
-// Mapea el desglose enviado por estimaciones (clave OPUS + importe) al
-// formato que espera bitácora: [{concepto_id, importe}]. El catálogo unificado
-// vive en /shared/catalogos/{obraId}; resolvemos proyectoId → obraId via
-// obraLinks. concepto_id resultante es conceptoKey (estable cross-app).
-async function _mapearDesgloseAOpusBitacora(proyectoId, desglose) {
-  if (!Array.isArray(desglose) || desglose.length === 0 || !proyectoId) return [];
+async function _marcarPagadoCobrado(item) {
+  if (!item.movId) { _toast('No hay movimiento vinculado.', 'error'); return; }
+  const esSub  = item.tipo === 'estimacion_subcontratista';
+  const pagoData = await _modalDatosPago(esSub ? 'pago' : 'cobro');
+  if (!pagoData) return;
 
-  // Resolver proyectoId → obraId via /shared/obraLinks
-  let obraId = null;
   try {
-    const linksSnap = await _dbRef('/shared/obraLinks').get();
-    const links = linksSnap.val() || {};
-    obraId = Object.entries(links).find(([, pid]) => pid === proyectoId)?.[0] || null;
-  } catch (e) {
-    console.warn('[Buzón] No se pudo leer obraLinks:', e);
-    return [];
-  }
-  if (!obraId) return [];
+    updateItem('sogrub_proy_movimientos', item.movId, {
+      status: 'Pagado',
+      fecha:  pagoData.fechaISO,
+    });
 
-  // Leer conceptos del catálogo unificado
-  let conceptos = null;
-  try {
-    const snap = await _dbRef(`/shared/catalogos/${obraId}/conceptos`).get();
-    conceptos = snap.val();
-  } catch (e) {
-    console.warn('[Buzón] No se pudo leer /shared/catalogos:', e);
-    return [];
+    const nuevoEstado = esSub ? 'pagado' : 'cobrado';
+    const tsField     = nuevoEstado === 'cobrado' ? 'cobradoAt' : 'pagadoAt';
+    const histKey     = `${Date.now()}_pago`;
+    await _dbRef(`/shared/buzon/${item.id}`).update({
+      estado:       nuevoEstado,
+      [tsField]:    pagoData.fecha,
+      metodoPago:   pagoData.metodo,
+      referenciaPago: pagoData.referencia || null,
+      [`estadoHistorial/${histKey}`]: {
+        estado: nuevoEstado, at: pagoData.fecha, por: _currentUser?.uid || '',
+        nota: `${pagoData.metodo}${pagoData.referencia ? ' ref:' + pagoData.referencia : ''}`
+      }
+    });
+    _buzon.expanded.delete(item.id);
+    _toast(`Marcado como ${nuevoEstado}.`, 'success');
+  } catch (err) {
+    _toast('Error: ' + err.message, 'error');
   }
-  if (!conceptos) return [];
-
-  // Index por clave OPUS (PUs no archivados, primera ocurrencia gana).
-  // Si una clave aparece en múltiples partidas (Torre 1/Torre 2), tomamos
-  // la primera por orden — el contador puede re-asignar manualmente si hace falta.
-  const byClave = new Map();
-  for (const [conceptoKey, c] of Object.entries(conceptos)) {
-    if (c?.tipo !== 'precio_unitario' || c?.archivado) continue;
-    const k = (c.clave || '').trim();
-    if (!k) continue;
-    if (!byClave.has(k)) byClave.set(k, conceptoKey);
-  }
-
-  const out = [];
-  for (const linea of desglose) {
-    const k = (linea.clave || '').trim();
-    if (!k) continue;
-    const conceptoKey = byClave.get(k);
-    if (!conceptoKey) continue;
-    const importe = Number(linea.importe) || 0;
-    if (importe <= 0) continue;
-    out.push({ concepto_id: conceptoKey, importe });
-  }
-  return out;
 }
 
-// Busca proveedor en sogrub_proveedores por nombre (case-insensitive). Si no
-// existe, lo crea sobre la marcha. Devuelve el proveedor con flag _creado=true
-// si se acaba de crear, para feedback al usuario.
-function _findOrCreateProveedor(nombre, extras = {}) {
-  const proveedores = getCollection('sogrub_proveedores') || [];
-  const arr = Array.isArray(proveedores) ? proveedores : Object.values(proveedores);
-  const norm = (s) => String(s || '').trim().toLowerCase();
-  const existente = arr.find(p => norm(p?.nombre) === norm(nombre));
-  if (existente) return { ...existente, _creado: false };
-  const nuevo = addItem('sogrub_proveedores', {
-    nombre: nombre.trim(),
-    rfc: '',
-    telefono: extras.telefono || '',
-    email: extras.email || '',
-    notas: 'Creado automáticamente desde el buzón al aprobar pago a subcontratista.'
-  });
-  return { ...nuevo, _creado: true };
+async function _reabrirItem(item) {
+  if (!confirm('¿Reabrir? El movimiento volverá a estado "Pendiente".')) return;
+  try {
+    if (item.movId) updateItem('sogrub_proy_movimientos', item.movId, { status: 'Pendiente' });
+    const histKey = `${Date.now()}_reabrir`;
+    await _dbRef(`/shared/buzon/${item.id}`).update({
+      estado:       'aprobado',
+      cobradoAt:    null,
+      pagadoAt:     null,
+      metodoPago:   null,
+      referenciaPago: null,
+      [`estadoHistorial/${histKey}`]: {
+        estado: 'aprobado', at: Date.now(), por: _currentUser?.uid || '',
+        nota: 'Reabierto desde ' + item.estado
+      }
+    });
+    _buzon.expanded.delete(item.id);
+    _toast('Item reabierto como Aprobado.', 'success');
+  } catch (err) {
+    _toast('Error al reabrir: ' + err.message, 'error');
+  }
 }
 
 async function _rechazarItem(item) {
   const motivo = prompt('Motivo del rechazo (visible en la app de origen):');
   if (motivo === null) return;
   try {
+    const histKey = `${Date.now()}_rech`;
     await _dbRef(`/shared/buzon/${item.id}`).update({
-      estado: 'rechazado',
-      rechazadoAt: Date.now(),
-      rechazadoPor: _currentUser?.uid || '',
-      comentarioRechazo: motivo || ''
+      estado:             'rechazado',
+      rechazadoAt:        Date.now(),
+      rechazadoPor:       _currentUser?.uid || '',
+      comentarioRechazo:  motivo || '',
+      [`estadoHistorial/${histKey}`]: {
+        estado: 'rechazado', at: Date.now(), por: _currentUser?.uid || '', nota: motivo || ''
+      }
     });
+    _buzon.expanded.delete(item.id);
     _toast('Item rechazado.', 'success');
   } catch (err) {
     _toast('Error al rechazar: ' + err.message, 'error');
   }
 }
 
-// Toast helper compatible con el que ya tiene la app (busca uno global o hace fallback)
-function _toast(msg, kind) {
-  if (typeof showToast === 'function') return showToast(msg, kind);
-  if (typeof toast === 'function') return toast(msg, kind);
-  console.log(`[${kind}] ${msg}`);
+async function _cerrarItem(item) {
+  if (!confirm('¿Cerrar este item? Quedará archivado.')) return;
+  try {
+    const histKey = `${Date.now()}_cerr`;
+    await _dbRef(`/shared/buzon/${item.id}`).update({
+      estado:    'cerrado',
+      cerradoAt: Date.now(),
+      cerradoPor: _currentUser?.uid || '',
+      [`estadoHistorial/${histKey}`]: { estado: 'cerrado', at: Date.now(), por: _currentUser?.uid || '' }
+    });
+    _buzon.expanded.delete(item.id);
+    _toast('Item cerrado.', 'success');
+  } catch (err) {
+    _toast('Error al cerrar: ' + err.message, 'error');
+  }
 }
 
-// Suscribir tan pronto el user esté autenticado (después de Auth, no antes)
-// Lo hace el ciclo de _onFirebaseReady → _initApp; pero como esta vista solo
-// se monta al hacer click en el tab, hacemos suscripción lazy en renderBuzon().
+// ─── Folio atómico ─────────────────────────────────────────────────────────
+
+async function _generarFolio(tipo) {
+  const año        = new Date().getFullYear();
+  const counterKey = tipo === 'CC' ? 'cuentas_cobrar' : 'cuentas_pagar';
+  const ref        = _dbRef(`/legacy/bitacora/_counters/${counterKey}/${año}`);
+  let numero;
+  await ref.transaction(current => { numero = (current || 0) + 1; return numero; });
+  return `${tipo}-${año}-${String(numero).padStart(3, '0')}`;
+}
+
+// ─── Modal datos de pago ───────────────────────────────────────────────────
+
+function _modalDatosPago(modo) {
+  return new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:9999';
+    const hoy = new Date().toISOString().slice(0, 10);
+    overlay.innerHTML = `
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:24px;width:min(480px,90%)">
+        <h3 style="margin:0 0 16px">Datos de ${modo === 'pago' ? 'pago' : 'cobro'}</h3>
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <label style="font-size:13px">Fecha
+            <input type="date" id="mp-fecha" value="${hoy}"
+              style="margin-top:4px;display:block;width:100%;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px">
+          </label>
+          <label style="font-size:13px">Método
+            <select id="mp-metodo"
+              style="margin-top:4px;display:block;width:100%;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px">
+              <option>Transferencia</option><option>SPEI</option><option>Cheque</option>
+              <option>Efectivo</option><option>Otro</option>
+            </select>
+          </label>
+          <label style="font-size:13px">Referencia (opcional)
+            <input type="text" id="mp-ref" placeholder="Folio SPEI, num. cheque, etc."
+              style="margin-top:4px;display:block;width:100%;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px">
+          </label>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:20px;justify-content:flex-end">
+          <button id="mp-cancel" style="background:transparent;border:1px solid var(--border);border-radius:6px;padding:8px 16px;color:var(--text);cursor:pointer">Cancelar</button>
+          <button id="mp-ok" style="background:#5dd39e;color:#0e3a25;border:none;border-radius:6px;padding:8px 16px;font-weight:600;cursor:pointer">Confirmar</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    const cleanup = (result) => { document.body.removeChild(overlay); resolve(result); };
+    overlay.querySelector('#mp-cancel').addEventListener('click', () => cleanup(null));
+    overlay.addEventListener('click', e => { if (e.target === overlay) cleanup(null); });
+    overlay.querySelector('#mp-ok').addEventListener('click', () => {
+      const fechaStr = overlay.querySelector('#mp-fecha').value;
+      const fecha    = new Date(fechaStr + 'T12:00:00').getTime();
+      cleanup({ fecha, fechaISO: fechaStr, metodo: overlay.querySelector('#mp-metodo').value, referencia: overlay.querySelector('#mp-ref').value.trim() });
+    });
+  });
+}
+
+// ─── Desglose OPUS ─────────────────────────────────────────────────────────
+
+async function _mapearDesgloseAOpusBitacora(proyectoId, desglose) {
+  if (!Array.isArray(desglose) || !desglose.length || !proyectoId) return [];
+  let obraId = null;
+  try {
+    const snap = await _dbRef('/shared/obraLinks').get();
+    const links = snap.val() || {};
+    obraId = Object.entries(links).find(([, pid]) => pid === proyectoId)?.[0] || null;
+  } catch (e) { console.warn('[Buzón] obraLinks:', e); return []; }
+  if (!obraId) return [];
+  let conceptos = null;
+  try {
+    const snap = await _dbRef(`/shared/catalogos/${obraId}/conceptos`).get();
+    conceptos = snap.val();
+  } catch (e) { console.warn('[Buzón] shared/catalogos:', e); return []; }
+  if (!conceptos) return [];
+  const byClave = new Map();
+  for (const [key, c] of Object.entries(conceptos)) {
+    if (c?.tipo !== 'precio_unitario' || c?.archivado) continue;
+    const k = (c.clave || '').trim();
+    if (k && !byClave.has(k)) byClave.set(k, key);
+  }
+  const out = [];
+  for (const linea of desglose) {
+    const k = (linea.clave || '').trim();
+    const conceptoKey = k && byClave.get(k);
+    const importe     = Number(linea.importe) || 0;
+    if (conceptoKey && importe > 0) out.push({ concepto_id: conceptoKey, importe });
+  }
+  return out;
+}
+
+// ─── Proveedor ─────────────────────────────────────────────────────────────
+
+function _findOrCreateProveedor(nombre, extras = {}) {
+  const arr  = getCollection('sogrub_proveedores') || [];
+  const list = Array.isArray(arr) ? arr : Object.values(arr);
+  const norm = s => String(s || '').trim().toLowerCase();
+  const ex   = list.find(p => norm(p?.nombre) === norm(nombre));
+  if (ex) return { ...ex, _creado: false };
+  return {
+    ...addItem('sogrub_proveedores', {
+      nombre: nombre.trim(), rfc: '',
+      telefono: extras.telefono || '', email: extras.email || '',
+      notas: 'Creado automáticamente desde el buzón.'
+    }),
+    _creado: true
+  };
+}
+
+// ─── Toast ─────────────────────────────────────────────────────────────────
+
+function _toast(msg, kind) {
+  if (typeof showToast === 'function') return showToast(msg, kind);
+  if (typeof toast === 'function')     return toast(msg, kind);
+  console.log(`[${kind}] ${msg}`);
+}
