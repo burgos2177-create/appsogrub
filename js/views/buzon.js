@@ -420,12 +420,14 @@ function _cardBodyHTML(item) {
 function _calcularResumenFinanciero(items) {
   const cxc = { devengado: 0, pendienteRev: 0, porCobrar: 0, cobrado: 0, count: 0 };
   const cxp = { devengado: 0, pendienteRev: 0, porPagar: 0,  pagado: 0,  count: 0 };
+  const excluidos = { rechazados: 0, huerfanos: 0, montoHuerfano: 0 };
 
   for (const it of Object.values(items || {})) {
     if (!it) continue;
     const monto = Number(it?.monto?.importe) || 0;
     if (!monto) continue;
-    if (it.estado === 'rechazado' || it.estado === 'huerfano') continue;
+    if (it.estado === 'rechazado') { excluidos.rechazados++; continue; }
+    if (it.estado === 'huerfano')  { excluidos.huerfanos++; excluidos.montoHuerfano += monto; continue; }
 
     const target = it.tipo === 'pago_cliente' ? cxc
                  : it.tipo === 'estimacion_subcontratista' ? cxp
@@ -445,12 +447,12 @@ function _calcularResumenFinanciero(items) {
     }
   }
 
-  return { cxc, cxp };
+  return { cxc, cxp, excluidos };
 }
 
 function _resumenFinancieroHTML(stats) {
   const { cxc, cxp } = stats;
-  if (cxc.devengado === 0 && cxp.devengado === 0) return '';
+  const sinCartera = cxc.devengado === 0 && cxp.devengado === 0;
 
   const fmt = n => '$' + Math.round(n).toLocaleString('es-MX');
   const pctTxt = (n, t) => t > 0 ? Math.round((n / t) * 100) + '%' : '0%';
@@ -507,10 +509,25 @@ function _resumenFinancieroHTML(stats) {
       <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${sub}</div>
     </div>`;
 
+  const exc = stats.excluidos || { rechazados: 0, huerfanos: 0, montoHuerfano: 0 };
+  const avisoExcluidos = (exc.rechazados > 0 || exc.huerfanos > 0)
+    ? `<div style="font-size:11px;color:var(--text-muted);margin-top:8px;padding:6px 10px;background:rgba(0,0,0,.15);border-radius:4px">
+         ℹ Excluidos del análisis: ${exc.rechazados > 0 ? `<b>${exc.rechazados}</b> rechazado${exc.rechazados===1?'':'s'}` : ''}${exc.rechazados > 0 && exc.huerfanos > 0 ? ' · ' : ''}${exc.huerfanos > 0 ? `<b>${exc.huerfanos}</b> huérfano${exc.huerfanos===1?'':'s'} (${fmt(exc.montoHuerfano)})` : ''}.
+       </div>`
+    : '';
+
+  const avisoSinCartera = sinCartera
+    ? `<div style="padding:14px 16px;background:rgba(224,160,76,.08);border:1px dashed #e0a04c;border-radius:6px;margin-bottom:14px;font-size:12px;color:var(--text-muted);line-height:1.55">
+         <div style="color:#e0a04c;font-weight:600;margin-bottom:4px">Sin cartera viva</div>
+         No hay items aprobados, en revisión, ni recibidos. ${exc.rechazados + exc.huerfanos > 0 ? `Tus ${exc.rechazados + exc.huerfanos} items existentes están en estado rechazado o huérfano y no representan obligaciones reales.` : 'Cuando lleguen items del lado de estimaciones aparecerán aquí.'}
+       </div>`
+    : '';
+
   return `
     <details open style="margin-bottom:12px;border:1px solid var(--border);border-radius:8px;background:rgba(0,0,0,.1)">
       <summary style="cursor:pointer;padding:10px 14px;font-weight:600;font-size:13px">📈 Análisis financiero — toda la cartera</summary>
       <div style="padding:0 14px 14px">
+        ${avisoSinCartera}
         <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px">
           ${blockCxC}
           ${blockCxP}
@@ -520,6 +537,7 @@ function _resumenFinancieroHTML(stats) {
           ${saldoCard('Saldo en libros',       saldoLibros,     '+ CxC y CxP aprobadas')}
           ${saldoCard('Saldo proyectado',      saldoProyectado, 'si todo lo devengado se materializa')}
         </div>
+        ${avisoExcluidos}
       </div>
     </details>`;
 }
