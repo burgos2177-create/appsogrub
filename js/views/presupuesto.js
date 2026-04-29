@@ -15,7 +15,7 @@ const _presListeners = {};   // { [proyectoId]: Firebase listener ref }
 
 function subscribePresupuesto(proyectoId, onChange) {
   if (_presListeners[proyectoId]) return;
-  const ref = _db.ref(`sogrub_presupuestos/${proyectoId}`);
+  const ref = _dbRef(`sogrub_presupuestos/${proyectoId}`);
   _presListeners[proyectoId] = ref.on('value', snap => {
     _presCache[proyectoId] = snap.val() || null;
     onChange?.();
@@ -28,7 +28,7 @@ function getPresupuesto(proyectoId) {
 
 function savePresupuesto(proyectoId, data) {
   _presCache[proyectoId] = data;
-  return _db.ref(`sogrub_presupuestos/${proyectoId}`).set(data);
+  return _dbRef(`sogrub_presupuestos/${proyectoId}`).set(data);
 }
 
 // =====================================================

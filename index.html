@@ -50,6 +50,29 @@
     </div>
   </header>
 
+  <!-- ===================== LOGIN SCREEN ===================== -->
+  <div id="app-login" class="app-loading" style="display:none">
+    <div class="app-loading__inner" style="max-width:360px;width:90%">
+      <svg viewBox="0 0 44 44" fill="none" width="48" height="48">
+        <path d="M4 38 L4 18 L17 9 L17 29 Z" fill="#1a9fd4"/>
+        <path d="M20 38 L20 18 L33 9 L33 29 Z" fill="#1a9fd4" opacity="0.65"/>
+      </svg>
+      <span class="app-loading__name">SOGRUB</span>
+      <span class="app-loading__msg">Acceso para administradores</span>
+      <form id="login-form" style="display:flex;flex-direction:column;gap:10px;width:100%;margin-top:18px">
+        <input type="email" id="login-email" placeholder="correo@empresa.com" required autocomplete="email"
+               style="padding:10px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:14px"/>
+        <input type="password" id="login-password" placeholder="••••••••" required autocomplete="current-password"
+               style="padding:10px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:14px"/>
+        <button type="submit" id="login-submit"
+                style="padding:10px;background:var(--accent);color:#08121a;border:none;border-radius:6px;font-weight:600;cursor:pointer;font-size:14px">
+          Entrar
+        </button>
+        <div id="login-error" style="color:#e15555;font-size:13px;min-height:18px;text-align:center"></div>
+      </form>
+    </div>
+  </div>
+
   <!-- ===================== LOADING SCREEN ===================== -->
   <div id="app-loading" class="app-loading">
     <div class="app-loading__inner">
@@ -94,6 +117,7 @@
 
   <!-- ===================== FIREBASE SDK (CDN compat) ===================== -->
   <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-storage-compat.js"></script>
 

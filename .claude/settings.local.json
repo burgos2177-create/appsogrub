@@ -8,7 +8,10 @@
       "Bash(py -m pip install openpyxl pandas)",
       "Bash(py -c \":*)",
       "Bash(gh auth:*)",
-      "Bash(git config:*)"
+      "Bash(git config:*)",
+      "Bash(git fetch:*)",
+      "Bash(git merge:*)",
+      "WebFetch(domain:burgos2177-create.github.io)"
     ]
   }
 }

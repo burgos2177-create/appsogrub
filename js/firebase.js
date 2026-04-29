@@ -1,24 +1,43 @@
 /* =====================================================
    SOGRUB Bitácora — Firebase Realtime Database
-   Sincronización en tiempo real entre dispositivos
+   Migrado a proyecto unificado sogrub-suite (2026-04-29).
+   Datos de esta app viven bajo /legacy/bitacora/* en el RTDB compartido.
+   Pares con app-estimaciones bajo /legacy/estimaciones/*.
+   Plan futuro: /shared/* por entidad.
    ===================================================== */
 'use strict';
 
-// ---- Configuración Firebase ----
+// ---- Configuración Firebase: proyecto sogrub-suite ----
 const firebaseConfig = {
-  apiKey:            "AIzaSyA0Y5s_alrZv6Y0Do03yZZG3lpUlDDhbQI",
-  authDomain:        "database-sogrub.firebaseapp.com",
-  databaseURL:       "https://database-sogrub-default-rtdb.firebaseio.com",
-  projectId:         "database-sogrub",
-  storageBucket:     "database-sogrub.firebasestorage.app",
-  messagingSenderId: "363314772797",
-  appId:             "1:363314772797:web:1927acdcc749bbb1a62354",
-  measurementId:     "G-7X9745Q9F5"
+  apiKey:            "AIzaSyBjOrl1JW4Y383diRe4WO4rX5IF23UEN0k",
+  authDomain:        "sogrub-suite.firebaseapp.com",
+  databaseURL:       "https://sogrub-suite-default-rtdb.firebaseio.com",
+  projectId:         "sogrub-suite",
+  storageBucket:     "sogrub-suite.firebasestorage.app",
+  messagingSenderId: "330378687274",
+  appId:             "1:330378687274:web:8be51640a6d9d7006ca453",
+  measurementId:     "G-98BM4PNBPP"
 };
 
+// Base path donde vive todo el dato de esta app dentro del RTDB compartido.
+const BITACORA_BASE = 'legacy/bitacora';
+
 // ---- Inicializar app ----
-const _fbApp = firebase.initializeApp(firebaseConfig);
-const _db    = firebase.database();
+const _fbApp  = firebase.initializeApp(firebaseConfig);
+const _db     = firebase.database();
+const _fbAuth = firebase.auth();
+
+// _dbRef: prefija TODA path con BITACORA_BASE automáticamente.
+// Excepciones (no se prefijan):
+//   · paths que empiezan con '/' → se tratan como absolutos (escape para /shared/* o /legacy/estimaciones/*)
+//   · '.info/*' → metadata del SDK, no es dato de app
+function _dbRef(path) {
+  if (typeof path !== 'string') return _db.ref(path);
+  if (path.startsWith('.info/')) return _db.ref(path);
+  if (path === '/') return _db.ref(BITACORA_BASE);
+  if (path.startsWith('/')) return _db.ref(path.slice(1));
+  return _db.ref(`${BITACORA_BASE}/${path}`);
+}
 
 // ---- Estado de conexión interno ----
 let _fbReady    = false;   // true cuando la primera carga de datos terminó
@@ -55,7 +74,7 @@ function saveCollection(key, data) {
   // Actualizar cache inmediatamente (optimistic update)
   _cache[key] = data;
   // Persistir en Firebase
-  _db.ref(key).set(data).catch(err => {
+  _dbRef(key).set(data).catch(err => {
     console.error(`[Firebase] Error al guardar "${key}":`, err);
   });
   return true;
@@ -171,7 +190,7 @@ function _suscribirColecciones() {
   }
 
   _COLECCIONES.forEach(key => {
-    _db.ref(key).on('value', snapshot => {
+    _dbRef(key).on('value', snapshot => {
       const data = snapshot.val();
       if (data !== null) {
         _cache[key] = data;
@@ -192,7 +211,7 @@ function _suscribirColecciones() {
 // INDICADOR DE CONEXIÓN
 // =====================================================
 function _initConnectionStatus() {
-  const connRef = _db.ref('.info/connected');
+  const connRef = _dbRef('.info/connected');
   connRef.on('value', snap => {
     _fbOnline = snap.val() === true;
     _updateStatusUI(_fbOnline ? 'online' : 'offline');
@@ -265,7 +284,7 @@ async function _migrarLocalStorageSiEsNecesario() {
   try {
     // Timeout de 8s para no colgar la app si Firebase tarda
     snap = await Promise.race([
-      _db.ref('sogrub_movimientos').get(),
+      _dbRef('sogrub_movimientos').get(),
       new Promise((_, reject) =>
         setTimeout(() => reject(new Error('migration-timeout')), 8000)
       ),
@@ -313,23 +332,115 @@ async function _migrarLocalStorageSiEsNecesario() {
     }
   }
 
-  await _db.ref('/').update(updates);
+  await _dbRef('/').update(updates);
   console.log('[Firebase] Migración completada.');
+}
+
+// =====================================================
+// AUTH — requerido por las reglas de sogrub-suite
+// El usuario debe loguearse con un email/password de Firebase Auth
+// y tener role='admin' en /legacy/estimaciones/users/{uid}/role
+// para poder leer/escribir esta base.
+// =====================================================
+let _currentUser = null;
+
+async function _verifyAdminRole(uid) {
+  // Lee /legacy/estimaciones/users/{uid}/role — leading slash = path absoluto
+  const snap = await _dbRef(`/legacy/estimaciones/users/${uid}/role`).get();
+  return snap.exists() && snap.val() === 'admin';
+}
+
+function _showLogin() {
+  document.getElementById('app-loading').style.display = 'none';
+  document.getElementById('app-login').style.display = '';
+}
+function _hideLogin() {
+  document.getElementById('app-login').style.display = 'none';
+  document.getElementById('app-loading').style.display = '';
+}
+
+function _bindLoginForm() {
+  const form = document.getElementById('login-form');
+  if (!form || form.dataset.bound) return;
+  form.dataset.bound = '1';
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const errEl = document.getElementById('login-error');
+    const btn = document.getElementById('login-submit');
+    const email = document.getElementById('login-email').value.trim();
+    const pass = document.getElementById('login-password').value;
+    errEl.textContent = '';
+    btn.disabled = true; btn.textContent = 'Entrando…';
+    try {
+      await _fbAuth.signInWithEmailAndPassword(email, pass);
+      // El listener onAuthStateChanged arranca el resto.
+    } catch (err) {
+      const m = err?.code || err?.message || '';
+      let msg = 'No se pudo iniciar sesión';
+      if (m.includes('invalid-credential') || m.includes('wrong-password') || m.includes('user-not-found')) msg = 'Credenciales incorrectas';
+      else if (m.includes('too-many-requests')) msg = 'Demasiados intentos. Espera unos minutos.';
+      else if (m.includes('network')) msg = 'Sin conexión a Firebase';
+      else if (m.includes('unauthorized-domain')) msg = 'Dominio no autorizado en Firebase Auth';
+      errEl.textContent = msg;
+      btn.disabled = false; btn.textContent = 'Entrar';
+    }
+  });
+}
+
+function _showAccessDenied() {
+  document.getElementById('app-login').style.display = '';
+  const errEl = document.getElementById('login-error');
+  if (errEl) errEl.textContent = 'Tu cuenta no tiene rol admin. Pídelo al administrador.';
+  const btn = document.getElementById('login-submit');
+  if (btn) { btn.disabled = false; btn.textContent = 'Entrar'; }
+  // Botón para cerrar sesión y reintentar
+  if (!document.getElementById('login-signout-link')) {
+    const a = document.createElement('a');
+    a.id = 'login-signout-link';
+    a.href = '#';
+    a.textContent = 'Cerrar sesión';
+    a.style.cssText = 'display:block;text-align:center;margin-top:8px;color:var(--text-muted);font-size:12px';
+    a.onclick = (ev) => { ev.preventDefault(); _fbAuth.signOut(); };
+    document.getElementById('login-form').appendChild(a);
+  }
 }
 
 // =====================================================
 // INICIALIZACIÓN — reemplaza initializeData()
 // =====================================================
 function initializeData() {
-  try {
-    _initConnectionStatus();
-    _suscribirColecciones(); // arranca inmediatamente, sin esperar migración
-  } catch (err) {
-    console.error('[Firebase] Error de inicialización:', err);
-    const msgEl = document.getElementById('loading-msg');
-    if (msgEl) msgEl.textContent = 'Error — reintentando…';
-    setTimeout(initializeData, 3000);
-  }
+  _bindLoginForm();
+  // Listener de auth — fuente única de verdad
+  _fbAuth.onAuthStateChanged(async (user) => {
+    if (!user) {
+      _currentUser = null;
+      _showLogin();
+      return;
+    }
+    _currentUser = user;
+    // Verificar role admin antes de proceder
+    let isAdmin = false;
+    try { isAdmin = await _verifyAdminRole(user.uid); }
+    catch (err) { console.error('[Auth] Error verificando role:', err); }
+
+    if (!isAdmin) {
+      _showAccessDenied();
+      return;
+    }
+
+    _hideLogin();
+    try {
+      _initConnectionStatus();
+      _suscribirColecciones();
+    } catch (err) {
+      console.error('[Firebase] Error de inicialización:', err);
+      const msgEl = document.getElementById('loading-msg');
+      if (msgEl) msgEl.textContent = 'Error — reintentando…';
+      setTimeout(() => {
+        try { _suscribirColecciones(); } catch {}
+      }, 3000);
+    }
+  });
 }
 
 // =====================================================
