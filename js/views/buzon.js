@@ -159,12 +159,38 @@ function renderBuzon() {
   const header = document.createElement('div');
   header.style.cssText = 'margin-bottom:16px';
   header.innerHTML = `
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
       <h2 style="margin:0">Buzón de aprobaciones</h2>
       ${accionables > 0
         ? `<span style="font-size:12px;color:#e0a04c">Requieren acción: <b>${accionables}</b></span>`
         : `<span style="font-size:12px;color:var(--text-muted)">Total: ${all.length}</span>`}
     </div>
+    <details style="margin-bottom:10px;font-size:12px;color:var(--text-muted)">
+      <summary style="cursor:pointer;padding:4px 0">📊 Los 3 momentos contables — qué significa cada estado</summary>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;padding:10px 12px;margin-top:6px;background:rgba(0,0,0,.15);border-radius:6px;line-height:1.45">
+        <div>
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+            <span style="width:18px;height:18px;border-radius:50%;background:#e0a04c;color:#08121a;display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:700">1</span>
+            <b style="color:#e0a04c">Devengado</b>
+          </div>
+          <span>El trabajo <b>ya se generó</b> (estimación cobrada al cliente, sub entregó). Nace la obligación, pero todavía no se reconoce contablemente. Estados: <em>Recibido, En revisión</em>.</span>
+        </div>
+        <div>
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+            <span style="width:18px;height:18px;border-radius:50%;background:#5dd39e;color:#08121a;display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:700">2</span>
+            <b style="color:#5dd39e">Por cobrar / Por pagar</b>
+          </div>
+          <span>El contador <b>valida el compromiso</b>. Queda como cuenta por cobrar (CxC) o por pagar (CxP) con folio. El movimiento existe en libros con status <em>Pendiente</em>. Estado: <em>Aprobado</em>.</span>
+        </div>
+        <div>
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+            <span style="width:18px;height:18px;border-radius:50%;background:#4db884;color:#08121a;display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:700">3</span>
+            <b style="color:#4db884">Cobrado / Pagado</b>
+          </div>
+          <span>El <b>dinero efectivamente</b> entró o salió de caja. Movimiento con status <em>Pagado</em> + fecha + método. Estados: <em>Cobrado, Pagado, Cerrado</em>.</span>
+        </div>
+      </div>
+    </details>
     <div style="display:flex;gap:0;flex-wrap:wrap;border-bottom:1px solid var(--border)">
       ${_TABS.map(tab => {
         const cnt   = tabCounts[tab.key] || 0;
@@ -369,6 +395,7 @@ function _cardBodyHTML(item) {
   }
 
   return `
+    ${_stepperHTML(item)}
     <div style="padding-top:10px;font-size:12px;color:var(--text-muted);line-height:1.7">
       <div style="display:flex;gap:20px;flex-wrap:wrap">
         <div>${col1}</div>
@@ -380,6 +407,65 @@ function _cardBodyHTML(item) {
     ${historialHTML}
     <div class="bz-acciones" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
       ${_accionesHTML(item)}
+    </div>`;
+}
+
+// Stepper visual de los 3 momentos contables. La etapa actual queda resaltada,
+// las anteriores marcadas con ✓, las futuras grises. Rechazado/huerfano muestran ✕.
+function _stepperHTML(item) {
+  const esCxP   = item.tipo === 'estimacion_subcontratista';
+  const labels  = esCxP
+    ? ['Devengado', 'Por pagar', 'Pagado']
+    : ['Devengado', 'Por cobrar', 'Cobrado'];
+  const sublabels = esCxP
+    ? ['obligación nace', 'CxP en libros', 'salió de caja']
+    : ['obligación nace', 'CxC en libros', 'entró a caja'];
+
+  // map estado → step alcanzado (1, 2 o 3)
+  const stepMap = {
+    recibido: 1, pendiente: 1, en_revision: 1,
+    aprobado: 2,
+    cobrado: 3, pagado: 3, cerrado: 3,
+    rechazado: 1, huerfano: 2,
+  };
+  const current   = stepMap[item.estado] ?? 1;
+  const isReject  = item.estado === 'rechazado';
+  const isOrphan  = item.estado === 'huerfano';
+  const broken    = isReject || isOrphan;
+
+  const renderDot = (n) => {
+    const done   = n < current && !broken;
+    const active = n === current && !broken;
+    const future = n > current;
+    let bg, fg, border, content;
+    if (broken && n === current) {
+      bg = isReject ? '#e15555' : '#a06bd9';
+      fg = '#fff';
+      border = bg;
+      content = isReject ? '✕' : '⚠';
+    } else if (done) {
+      bg = '#5dd39e'; fg = '#08121a'; border = '#5dd39e'; content = '✓';
+    } else if (active) {
+      bg = '#e0a04c'; fg = '#08121a'; border = '#e0a04c'; content = String(n);
+    } else {
+      bg = 'transparent'; fg = 'var(--text-muted)'; border = 'var(--border)'; content = String(n);
+    }
+    const labelColor = (done || active) ? 'var(--text)' : 'var(--text-muted)';
+    return `
+      <div style="display:flex;flex-direction:column;align-items:center;gap:3px;flex:0 0 auto;min-width:78px">
+        <div style="width:26px;height:26px;border-radius:50%;background:${bg};color:${fg};border:2px solid ${border};display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">${content}</div>
+        <span style="font-size:11px;font-weight:600;color:${labelColor}">${labels[n - 1]}</span>
+        <span style="font-size:9px;color:var(--text-muted)">${sublabels[n - 1]}</span>
+      </div>`;
+  };
+  const renderConn = (after) => {
+    const filled = after < current && !broken;
+    return `<div style="flex:1;height:2px;background:${filled ? '#5dd39e' : 'var(--border)'};margin-top:13px;min-width:18px"></div>`;
+  };
+
+  return `
+    <div style="display:flex;align-items:flex-start;padding:12px 8px;background:rgba(0,0,0,.18);border-radius:6px;margin-top:10px">
+      ${renderDot(1)}${renderConn(1)}${renderDot(2)}${renderConn(2)}${renderDot(3)}
     </div>`;
 }
 
