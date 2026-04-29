@@ -19,11 +19,44 @@ function _suscribirBuzon() {
   _buzon.subscribed = true;
   _dbRef('/shared/buzon').on('value', snap => {
     _buzon.items = snap.val() || {};
+    // Reconciliar: detecta aprobados cuyo movimiento ya no existe (fueron
+    // borrados antes de que el hook automático estuviera, o desde otro lado).
+    _reconciliarBuzon().catch(e => console.warn('[Buzón reconcile]', e));
     _actualizarBadgeBuzon();
     if (typeof _activeView !== 'undefined' && _activeView === 'buzon') {
       renderBuzon();
     }
   }, err => console.error('[Buzón] listener:', err));
+}
+
+// Recorre items APROBADOS y verifica si su movimiento contable sigue vivo.
+// Si no existe, marca el item como huérfano. Se invoca:
+//   · cada vez que /shared/buzon cambia
+//   · cada vez que sogrub_proy_movimientos cambia (vía _onRemoteChange en firebase.js)
+async function _reconciliarBuzon() {
+  // No corras hasta que el cache de movimientos haya terminado la carga inicial,
+  // porque si no, marcaríamos todo como huérfano por falsos negativos.
+  if (!_fbReady) return;
+  const movs = getCollection('sogrub_proy_movimientos');
+  if (!Array.isArray(movs)) return;
+  const movIds = new Set(movs.map(m => m?.id).filter(Boolean));
+
+  const updates = {};
+  for (const [itemId, item] of Object.entries(_buzon.items)) {
+    if (item?.estado !== 'aprobado') continue;
+    if (!item.movId) continue;
+    if (movIds.has(item.movId)) continue;
+    // Aprobado pero el movimiento ya no existe → huérfano
+    updates[`${itemId}/estado`] = 'huerfano';
+    updates[`${itemId}/huerfanoAt`] = Date.now();
+    updates[`${itemId}/huerfanoPor`] = 'auto-reconcile';
+    updates[`${itemId}/descripcionHuerfano`] = 'El movimiento contable ya no existe. Pudo haber sido borrado antes de que el sistema sincronizara automáticamente.';
+    updates[`${itemId}/movId`] = null;
+  }
+  if (Object.keys(updates).length > 0) {
+    console.log(`[Buzón] Reconciliados ${Object.keys(updates).length / 5} items aprobados → huérfanos.`);
+    await _dbRef('/shared/buzon').update(updates);
+  }
 }
 
 function _actualizarBadgeBuzon() {

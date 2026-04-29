@@ -320,6 +320,13 @@ function _onRemoteChange(changedKey) {
   };
 
   rerender[_activeView]?.();
+
+  // Si cambiaron los movimientos contables y existe el reconciliador del
+  // buzón, dispararlo: por si un movimiento ligado a un item aprobado fue
+  // borrado/modificado desde otra ventana, o si el hook no alcanzó a actuar.
+  if (changedKey === 'sogrub_proy_movimientos' && typeof _reconciliarBuzon === 'function') {
+    _reconciliarBuzon().catch(e => console.warn('[Buzón reconcile from movs]', e));
+  }
 }
 
 // =====================================================
