@@ -158,6 +158,8 @@ function renderBuzon() {
   // ── Header + tabs ──
   const header = document.createElement('div');
   header.style.cssText = 'margin-bottom:16px';
+  const stats = _calcularResumenFinanciero(_buzon.items);
+
   header.innerHTML = `
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
       <h2 style="margin:0">Buzón de aprobaciones</h2>
@@ -165,6 +167,7 @@ function renderBuzon() {
         ? `<span style="font-size:12px;color:#e0a04c">Requieren acción: <b>${accionables}</b></span>`
         : `<span style="font-size:12px;color:var(--text-muted)">Total: ${all.length}</span>`}
     </div>
+    ${_resumenFinancieroHTML(stats)}
     <details style="margin-bottom:10px;font-size:12px;color:var(--text-muted)">
       <summary style="cursor:pointer;padding:4px 0">📊 Los 3 momentos contables — qué significa cada estado</summary>
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;padding:10px 12px;margin-top:6px;background:rgba(0,0,0,.15);border-radius:6px;line-height:1.45">
@@ -408,6 +411,117 @@ function _cardBodyHTML(item) {
     <div class="bz-acciones" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
       ${_accionesHTML(item)}
     </div>`;
+}
+
+// ─── Análisis financiero (los 3 momentos × CxC/CxP) ───────────────────────
+
+// Recorre todos los items y suma por tipo (CxC = pago_cliente / CxP = sub) y
+// momento contable. Excluye rechazados y huérfanos (no son obligaciones reales).
+function _calcularResumenFinanciero(items) {
+  const cxc = { devengado: 0, pendienteRev: 0, porCobrar: 0, cobrado: 0, count: 0 };
+  const cxp = { devengado: 0, pendienteRev: 0, porPagar: 0,  pagado: 0,  count: 0 };
+
+  for (const it of Object.values(items || {})) {
+    if (!it) continue;
+    const monto = Number(it?.monto?.importe) || 0;
+    if (!monto) continue;
+    if (it.estado === 'rechazado' || it.estado === 'huerfano') continue;
+
+    const target = it.tipo === 'pago_cliente' ? cxc
+                 : it.tipo === 'estimacion_subcontratista' ? cxp
+                 : null;
+    if (!target) continue;
+
+    target.devengado += monto;
+    target.count++;
+    if (['recibido', 'pendiente', 'en_revision'].includes(it.estado)) {
+      target.pendienteRev += monto;
+    } else if (it.estado === 'aprobado') {
+      if (it.tipo === 'pago_cliente') target.porCobrar += monto;
+      else target.porPagar += monto;
+    } else if (['cobrado', 'pagado', 'cerrado'].includes(it.estado)) {
+      if (it.tipo === 'pago_cliente') target.cobrado += monto;
+      else target.pagado += monto;
+    }
+  }
+
+  return { cxc, cxp };
+}
+
+function _resumenFinancieroHTML(stats) {
+  const { cxc, cxp } = stats;
+  if (cxc.devengado === 0 && cxp.devengado === 0) return '';
+
+  const fmt = n => '$' + Math.round(n).toLocaleString('es-MX');
+  const pctTxt = (n, t) => t > 0 ? Math.round((n / t) * 100) + '%' : '0%';
+  const pctNum = (n, t) => t > 0 ? (n / t) * 100 : 0;
+
+  // Bloque por flujo (CxC o CxP). Stacked bar + tabla compacta de 3 momentos.
+  const renderFlujo = (titulo, color, total, count, pendRev, comp, compLbl, mat, matLbl) => {
+    if (total === 0) {
+      return `<div style="flex:1;min-width:280px;padding:14px;border:1px dashed var(--border);border-radius:8px;color:var(--text-muted);font-size:12px;text-align:center">${titulo}: sin items</div>`;
+    }
+    return `
+      <div style="flex:1;min-width:280px;padding:12px 14px;background:var(--surface);border:1px solid var(--border);border-left:3px solid ${color};border-radius:8px">
+        <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px">
+          <div><b style="color:${color}">${titulo}</b> <span style="font-size:11px;color:var(--text-muted)">${count} item${count===1?'':'s'}</span></div>
+          <span style="font-family:ui-monospace,monospace;font-weight:700;font-size:15px">${fmt(total)}</span>
+        </div>
+        <div style="height:9px;display:flex;background:rgba(0,0,0,.25);border-radius:4px;overflow:hidden;margin-bottom:10px">
+          <div style="width:${pctNum(mat,total)}%;background:#4db884"  title="${matLbl}: ${fmt(mat)}"></div>
+          <div style="width:${pctNum(comp,total)}%;background:#5dd39e" title="${compLbl}: ${fmt(comp)}"></div>
+          <div style="width:${pctNum(pendRev,total)}%;background:#e0a04c" title="Pendiente revisión: ${fmt(pendRev)}"></div>
+        </div>
+        <div style="font-size:11px;display:grid;grid-template-columns:1fr auto auto;gap:3px 10px;color:var(--text-muted)">
+          <span><span style="display:inline-block;width:8px;height:8px;background:#e0a04c;border-radius:2px;vertical-align:middle;margin-right:4px"></span>1. Devengado, sin revisar</span>
+          <span style="font-family:ui-monospace,monospace">${fmt(pendRev)}</span>
+          <span style="font-family:ui-monospace,monospace">${pctTxt(pendRev, total)}</span>
+          <span><span style="display:inline-block;width:8px;height:8px;background:#5dd39e;border-radius:2px;vertical-align:middle;margin-right:4px"></span>2. ${compLbl}</span>
+          <span style="font-family:ui-monospace,monospace">${fmt(comp)}</span>
+          <span style="font-family:ui-monospace,monospace">${pctTxt(comp, total)}</span>
+          <span><span style="display:inline-block;width:8px;height:8px;background:#4db884;border-radius:2px;vertical-align:middle;margin-right:4px"></span>3. ${matLbl}</span>
+          <span style="font-family:ui-monospace,monospace">${fmt(mat)}</span>
+          <span style="font-family:ui-monospace,monospace">${pctTxt(mat, total)}</span>
+        </div>
+      </div>`;
+  };
+
+  const blockCxC = renderFlujo('Por cobrar (clientes)', '#5dd39e',
+    cxc.devengado, cxc.count, cxc.pendienteRev,
+    cxc.porCobrar, 'En CxC (libros)', cxc.cobrado, 'Cobrado (caja)');
+  const blockCxP = renderFlujo('Por pagar (subcontratistas)', '#e15555',
+    cxp.devengado, cxp.count, cxp.pendienteRev,
+    cxp.porPagar, 'En CxP (libros)', cxp.pagado, 'Pagado (caja)');
+
+  // Saldos
+  const saldoCaja        = cxc.cobrado    - cxp.pagado;
+  const saldoLibros      = (cxc.cobrado + cxc.porCobrar) - (cxp.pagado + cxp.porPagar);
+  const saldoProyectado  = cxc.devengado  - cxp.devengado;
+
+  const sgn      = n => n >= 0 ? '+' : '−';
+  const sgnColor = n => n >= 0 ? '#5dd39e' : '#e15555';
+  const saldoCard = (titulo, valor, sub) => `
+    <div style="padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:6px">
+      <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">${titulo}</div>
+      <div style="font-family:ui-monospace,monospace;font-size:18px;font-weight:700;color:${sgnColor(valor)}">${sgn(valor)}${fmt(Math.abs(valor))}</div>
+      <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${sub}</div>
+    </div>`;
+
+  return `
+    <details open style="margin-bottom:12px;border:1px solid var(--border);border-radius:8px;background:rgba(0,0,0,.1)">
+      <summary style="cursor:pointer;padding:10px 14px;font-weight:600;font-size:13px">📈 Análisis financiero — toda la cartera</summary>
+      <div style="padding:0 14px 14px">
+        <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+          ${blockCxC}
+          ${blockCxP}
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px">
+          ${saldoCard('Saldo en caja',         saldoCaja,       'cobrado − pagado (real)')}
+          ${saldoCard('Saldo en libros',       saldoLibros,     '+ CxC y CxP aprobadas')}
+          ${saldoCard('Saldo proyectado',      saldoProyectado, 'si todo lo devengado se materializa')}
+        </div>
+      </div>
+    </details>`;
 }
 
 // Stepper visual de los 3 momentos contables. La etapa actual queda resaltada,
