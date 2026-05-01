@@ -675,7 +675,14 @@ function _accionesHTML(item) {
       // Caja chica: aprobar = asentar contable directamente. No hay flujo
       // CxC/CxP, así que tampoco hay "Aprobar + Pagar".
       const lbl = item.tipo === 'gasto_caja_chica' ? '✓ Aprobar gasto' : '✓ Aprobar y asentar';
+      // El botón "Ver recepción" abre un modal con el ticket, items, factura
+      // y atajos para solicitar/subir factura antes de aprobar — solo aplica
+      // a gastos de caja chica con recepción asociada.
+      const verRecepcion = (item.tipo === 'gasto_caja_chica' && item.refRecepcionId)
+        ? `<button class="bz-btn-ver-recepcion" style="background:transparent;color:var(--accent);border:1px solid var(--accent);border-radius:6px;padding:8px 14px;cursor:pointer">👁 Ver recepción + factura</button>`
+        : '';
       return `
+        ${verRecepcion}
         <button class="bz-btn-aprobar" ${dis} style="background:#5dd39e;color:#0e3a25;border:none;border-radius:6px;padding:8px 14px;font-weight:600">${lbl}</button>
         <button class="bz-btn-rechazar" style="background:transparent;color:#e15555;border:1px solid #e15555;border-radius:6px;padding:8px 14px;cursor:pointer">✕ Rechazar</button>`;
     }
@@ -688,8 +695,13 @@ function _accionesHTML(item) {
   }
   if (e === 'aprobado') {
     if (esCajaChica) {
-      // Aprobado en caja chica = ya asentado. Solo permitir reabrir o cerrar.
+      // Aprobado en caja chica = ya asentado. Permitir ver recepción (revisión
+      // post-hoc / subir factura tardía), reabrir o cerrar.
+      const verRecepcion = (item.tipo === 'gasto_caja_chica' && item.refRecepcionId)
+        ? `<button class="bz-btn-ver-recepcion" style="background:transparent;color:var(--accent);border:1px solid var(--accent);border-radius:6px;padding:8px 14px;cursor:pointer">👁 Ver recepción</button>`
+        : '';
       return `
+        ${verRecepcion}
         <button class="bz-btn-reabrir" style="background:transparent;color:#5dd39e;border:1px solid #5dd39e;border-radius:6px;padding:8px 14px;cursor:pointer">↺ Reabrir</button>
         <button class="bz-btn-cerrar" style="background:transparent;color:var(--text-muted);border:1px solid var(--border);border-radius:6px;padding:8px 14px;cursor:pointer">Cerrar</button>`;
     }
@@ -722,6 +734,7 @@ function _attachAcciones(body, item) {
   on('.bz-btn-reabrir',        () => _reabrirItem(item));
   on('.bz-btn-reaprobar',      () => _aprobarItem(item, false));
   on('.bz-btn-cerrar',         () => _cerrarItem(item));
+  on('.bz-btn-ver-recepcion',  () => _modalVerRecepcion(item));
 }
 
 // ─── Helpers de display ────────────────────────────────────────────────────
@@ -1255,6 +1268,11 @@ async function _aprobarGastoCajaChica(item) {
     incluye_iva:    true,
     proveedor_id:   provDef?.id || null,
     desglose_presupuesto: mapped.length ? mapped : undefined,
+    // Factura adjuntada antes de aprobar (subida desde el modal Ver recepción)
+    factura_drive_url:   item.factura_drive_url   || null,
+    factura_nombre:      item.factura_nombre      || null,
+    factura_xml_url:     item.factura_xml_url     || null,
+    factura_xml_nombre:  item.factura_xml_nombre  || null,
   };
 
   try {
@@ -1352,6 +1370,319 @@ async function _aprobarDepositoCajaChica(item) {
     console.error('[Buzón aprobar depósito CC]', err);
     _toast('Error al aprobar: ' + err.message, 'error');
   }
+}
+
+// ─── Recepción de almacén — modal de validación ────────────────────────────
+//
+// Antes de aprobar un `gasto_caja_chica` el contador necesita ver la recepción
+// que el almacenista cargó en materiales: ticket, items, proveedor, factura
+// folio, etc. Este modal abre el detalle, permite solicitar la factura al
+// proveedor y subir el PDF/XML cuando llega, y dispara la aprobación o
+// rechazo desde el mismo lugar.
+//
+// La recepción vive en /shared/materiales/obras/{obraId}/recepciones/{recId}.
+// El catálogo de materiales (para resolver descripciones) en
+// /shared/materiales/obras/{obraId}/catalogo/items.
+
+async function _modalVerRecepcion(item) {
+  if (!item.obraId || !item.refRecepcionId) {
+    _toast('Este item no tiene recepción asociada.', 'error');
+    return;
+  }
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;z-index:9999;padding:20px;overflow:auto';
+  const card = document.createElement('div');
+  card.style.cssText = 'background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:0;width:min(1100px,100%);max-height:92vh;display:flex;flex-direction:column;overflow:hidden';
+  card.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-muted)">Cargando recepción…</div>';
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+
+  const close = () => { try { document.body.removeChild(overlay); } catch (e) {} };
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+
+  // Carga paralela: recepción + catálogo materiales + catálogo conceptos +
+  // requisiciones (para resolver el dropdown "Requisición vinculada") +
+  // movimiento de caja chica espejo (para el badge de status, igual que en
+  // la app de materiales).
+  let rec = null, materiales = {}, conceptos = {}, requisiciones = {}, ccMov = null;
+  try {
+    const [recSnap, matSnap, conSnap, reqSnap, ccSnap] = await Promise.all([
+      _dbRef(`/shared/materiales/obras/${item.obraId}/recepciones/${item.refRecepcionId}`).get(),
+      _dbRef(`/shared/materiales/obras/${item.obraId}/catalogo/items`).get(),
+      _dbRef(`/shared/catalogos/${item.obraId}/conceptos`).get(),
+      _dbRef(`/shared/materiales/obras/${item.obraId}/requisiciones`).get(),
+      item.movimientoId
+        ? _dbRef(`/shared/cajaChica/${item.obraId}/movimientos/${item.movimientoId}`).get()
+        : Promise.resolve({ exists: () => false }),
+    ]);
+    rec = recSnap.val();
+    materiales = matSnap.val() || {};
+    conceptos = conSnap.val() || {};
+    requisiciones = reqSnap.val() || {};
+    if (ccSnap.exists && ccSnap.exists()) ccMov = ccSnap.val();
+  } catch (err) {
+    console.error('[VerRecepcion]', err);
+  }
+
+  if (!rec) {
+    card.innerHTML = `
+      <div style="padding:24px">
+        <h3 style="margin-top:0">⚠ Recepción no encontrada</h3>
+        <p class="text-muted">No se pudo leer <code>${item.refRecepcionId}</code> bajo la obra <code>${item.obraId}</code>. Puede haber sido borrada por el almacenista.</p>
+        <div style="text-align:right;margin-top:16px">
+          <button id="vr-close" style="background:transparent;border:1px solid var(--border);border-radius:6px;padding:8px 16px;color:var(--text);cursor:pointer">Cerrar</button>
+        </div>
+      </div>`;
+    card.querySelector('#vr-close').addEventListener('click', close);
+    return;
+  }
+
+  // Re-fetch buzón item por si cambió mientras tanto
+  let liveItem = item;
+  try {
+    const liveSnap = await _dbRef(`/shared/buzon/${item.id}`).get();
+    if (liveSnap.exists()) liveItem = { id: item.id, ...liveSnap.val() };
+  } catch {}
+
+  _renderRecepcionModal(card, liveItem, rec, materiales, conceptos, requisiciones, ccMov, close);
+}
+
+// Réplica fiel del form de app-materiales (recepciones.js > renderMetaCard +
+// renderItemsCard), en modo SOLO LECTURA. La idea es que el contador vea
+// exactamente lo que el almacenista capturó, sin reformatear ni resumir.
+// Cuando materiales habilite la foto del ticket, agrega el campo
+// `rec.fotoTicketUrl` (o equivalente) y se renderiza automáticamente abajo.
+function _renderRecepcionModal(card, item, rec, materiales, conceptos, requisiciones, ccMov, close) {
+  const numeroFmt = `E-${String(rec.numero || 0).padStart(4, '0')}`;
+  const fechaIso = rec.fecha
+    ? new Date(rec.fecha).toISOString().slice(0, 10)
+    : '';
+  const isCajaChica = rec.origenTipo === 'caja_chica';
+  const total = Number(rec.totalRecepcion) || 0;
+  const recibidoPor = rec.recibidoPor?.displayName || rec.recibidoPor?.email || '—';
+
+  // ── Items con resolución de material y concepto ──
+  const itemsArr = Object.entries(rec.items || {}).map(([id, it]) => {
+    const mat = materiales[it.materialKey] || null;
+    const concepto = it.conceptoKey ? conceptos[it.conceptoKey] : null;
+    return { id, mat, concepto, ...it };
+  });
+
+  // ── Requisición vinculada: igual que en materiales, solo enviadas + borrador ──
+  const reqEntries = Object.entries(requisiciones || {})
+    .filter(([, r]) => r.estado === 'enviada' || r.estado === 'borrador')
+    .sort((a, b) => (b[1].numero || 0) - (a[1].numero || 0));
+  const reqOptions = `
+    <option value="">— sin vínculo —</option>
+    ${reqEntries.map(([rid, r]) => `<option value="${rid}" ${rec.origenRef?.reqId === rid ? 'selected' : ''}>R-${String(r.numero).padStart(4, '0')}  (${Object.keys(r.items || {}).length} items, ${r.estado})</option>`).join('')}
+  `;
+
+  // ── Foto del ticket: lectura defensiva sobre múltiples shapes posibles ──
+  const fotoUrl = rec.fotoTicketUrl
+    || rec.origenRef?.fotoUrl
+    || rec.origenRef?.fotoTicketUrl
+    || rec.ticketFotoUrl
+    || (Array.isArray(rec.fotos) && rec.fotos.length ? rec.fotos[0] : null)
+    || null;
+  const ticketTxt = rec.origenRef?.ticketDescripcion || '';
+
+  // ── Status caja chica (réplica de renderCajaChicaStatus en materiales) ──
+  let cajaChicaStatusHTML = '';
+  if (ccMov) {
+    const totalRec = Number(rec.totalRecepcion) || 0;
+    const needsUpdate = Math.abs((Number(ccMov.monto) || 0) - totalRec) > 0.01 && ccMov.estado !== 'aprobado';
+    const badgeStr = ccMov.estado === 'reportado' ? '<span class="badge badge-warning">⏳ Reportado a caja chica</span>'
+      : ccMov.estado === 'aprobado' ? '<span class="badge badge-success">✓ Aprobado por contador</span>'
+      : ccMov.estado === 'rechazado' ? '<span class="badge badge-danger">✕ Rechazado por contador</span>'
+      : `<span class="badge badge-muted">${ccMov.estado || '—'}</span>`;
+    cajaChicaStatusHTML = `
+      <div class="form-group" style="grid-column:span 3">
+        <div style="padding:10px 12px;background:rgba(0,0,0,.18);border:1px solid var(--border);border-radius:6px">
+          <div class="text-muted" style="font-size:11px;text-transform:uppercase;letter-spacing:0.4px">Caja chica</div>
+          <div style="margin-top:6px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            ${badgeStr}
+            <span style="font-size:13px">Monto reportado: <b>${formatMXN(Number(ccMov.monto) || 0)}</b></span>
+            ${needsUpdate ? `<span class="badge badge-warning">⚠ Total real ahora: ${formatMXN(totalRec)}</span>` : ''}
+          </div>
+        </div>
+      </div>`;
+  }
+
+  card.innerHTML = `
+    <div style="padding:14px 22px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <div style="flex:1;min-width:200px">
+        <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.4px">Recepción de almacén · vista del contador</div>
+        <h3 style="margin:2px 0 0">${numeroFmt}${rec.proveedor ? ' · ' + rec.proveedor : ''}</h3>
+      </div>
+      <span class="badge ${isCajaChica ? 'badge-warning' : 'badge-info'}">${isCajaChica ? '💰 Caja chica' : '📋 OC'}</span>
+      <button id="vr-close" style="background:transparent;border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);cursor:pointer">✕</button>
+    </div>
+
+    <div style="overflow:auto;padding:18px 22px;flex:1">
+
+      <!-- ============ DATOS (grid 3 col idéntico al form de materiales) ============ -->
+      <div class="card" style="padding:16px;margin-bottom:16px">
+        <h3 class="text-muted" style="margin:0 0 12px;font-size:11px;text-transform:uppercase;letter-spacing:0.4px;font-weight:600">Datos</h3>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px">
+
+          <div class="form-group">
+            <label class="form-label">Folio</label>
+            <div style="padding:7px 0;font-weight:600">${numeroFmt}</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Fecha</label>
+            <input type="date" class="form-input" value="${fechaIso}" disabled>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Total recepción</label>
+            <div style="padding:7px 0;font-weight:700;font-family:ui-monospace,monospace;color:var(--accent)">${formatMXN(total)}</div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Proveedor</label>
+            <input type="text" class="form-input" value="${(rec.proveedor || '').replace(/"/g, '&quot;')}" placeholder="Proveedor" disabled>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Factura</label>
+            <input type="text" class="form-input" value="${(rec.factura || '').replace(/"/g, '&quot;')}" placeholder="Folio de factura (opcional)" disabled>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Recibido por</label>
+            <div style="padding:7px 0;font-weight:600">${recibidoPor}</div>
+          </div>
+
+          <div class="form-group" style="grid-column:span 3">
+            <label class="form-label">Requisición vinculada</label>
+            <select class="form-select" disabled>${reqOptions}</select>
+          </div>
+
+          ${isCajaChica ? `
+            <div class="form-group" style="grid-column:span 3">
+              <label class="form-label">Ticket</label>
+              <input type="text" class="form-input" value="${(ticketTxt || '').replace(/"/g, '&quot;')}" placeholder="Descripción del ticket / referencia (foto se subirá próximamente)" disabled>
+              ${fotoUrl ? `
+                <div style="margin-top:10px">
+                  <a href="${fotoUrl}" target="_blank" rel="noopener" title="Abrir foto del ticket en pestaña nueva">
+                    <img src="${fotoUrl}" alt="Foto del ticket"
+                         style="max-width:100%;max-height:340px;border:1px solid var(--border);border-radius:6px;cursor:zoom-in;display:block">
+                  </a>
+                  <div class="text-muted" style="font-size:11px;margin-top:4px">📷 Click para abrir en pestaña nueva</div>
+                </div>
+              ` : `
+                <div class="text-muted" style="font-size:11px;margin-top:6px">📷 <em>Foto del ticket: pendiente — se mostrará aquí cuando el almacenista la suba.</em></div>
+              `}
+            </div>
+          ` : ''}
+
+          ${cajaChicaStatusHTML}
+
+          <div class="form-group" style="grid-column:span 3">
+            <label class="form-label">Notas</label>
+            <input type="text" class="form-input" value="${(rec.notas || '').replace(/"/g, '&quot;')}" placeholder="Notas (opcional)" disabled>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- ============ ITEMS ============ -->
+      <div class="card" style="padding:0;overflow:hidden">
+        <div style="padding:14px 18px 0">
+          <h3 class="text-muted" style="margin:0;font-size:11px;text-transform:uppercase;letter-spacing:0.4px;font-weight:600">Items <span style="text-transform:none;font-weight:normal">(${itemsArr.length})</span></h3>
+        </div>
+        ${itemsArr.length === 0 ? `
+          <div class="empty-state" style="padding:30px"><div class="empty-state-title">Sin items</div></div>
+        ` : `
+          <div class="table-wrapper">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Material</th>
+                  <th>Unidad</th>
+                  <th class="num">Cantidad</th>
+                  <th class="num">Costo unit.</th>
+                  <th class="num">Importe</th>
+                  <th>Concepto</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${itemsArr.map(it => _filaItemRecepcion(it)).join('')}
+              </tbody>
+            </table>
+          </div>
+        `}
+      </div>
+
+    </div>
+
+    <!-- ============ ACCIONES ============ -->
+    <div style="padding:14px 22px;border-top:1px solid var(--border);background:rgba(0,0,0,.15);display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
+      ${(item.estado === 'recibido' || item.estado === 'pendiente' || item.estado === 'en_revision') ? `
+        <span class="text-muted" style="font-size:12px;align-self:center;margin-right:auto">Revisa la información que capturó el almacenista. Al aprobar se asienta el gasto contable.</span>
+        <button id="vr-rechazar" style="background:transparent;color:#e15555;border:1px solid #e15555;border-radius:6px;padding:8px 14px;cursor:pointer">✕ Rechazar</button>
+        <button id="vr-aprobar" style="background:#5dd39e;color:#0e3a25;border:none;border-radius:6px;padding:8px 14px;font-weight:600;cursor:pointer">✓ Aprobar y asentar gasto</button>
+      ` : `
+        <span class="text-muted" style="font-size:12px;align-self:center;margin-right:auto">Estado actual: <b>${item.estado}</b></span>
+      `}
+      <button id="vr-cerrar" style="background:transparent;border:1px solid var(--border);border-radius:6px;padding:8px 14px;color:var(--text);cursor:pointer">Cerrar</button>
+    </div>
+  `;
+
+  card.querySelector('#vr-close').addEventListener('click', close);
+  card.querySelector('#vr-cerrar').addEventListener('click', close);
+  const btnAprobar = card.querySelector('#vr-aprobar');
+  if (btnAprobar) btnAprobar.addEventListener('click', async () => {
+    close();
+    await _aprobarGastoCajaChica(item);
+  });
+  const btnRechazar = card.querySelector('#vr-rechazar');
+  if (btnRechazar) btnRechazar.addEventListener('click', async () => {
+    close();
+    await _rechazarItem(item);
+  });
+}
+
+function _filaItemRecepcion(it) {
+  const mat = it.mat;
+  const cant = Number(it.cantidad) || 0;
+  const cu = Number(it.costoUnitario) || 0;
+  const importe = cant * cu;
+
+  const matCell = mat
+    ? `<div>
+         <div style="font-family:monospace;font-size:11px;color:var(--text-muted)">${mat.clave || ''}</div>
+         <div style="font-weight:600">${mat.descripcion || '—'}</div>
+         ${mat.marca ? `<div class="text-muted" style="font-size:11px">${mat.marca}</div>` : ''}
+       </div>`
+    : `<span class="badge badge-danger">⚠ Material eliminado del catálogo</span>`;
+
+  // Δ vs requisición original — replica de la lógica en materiales
+  let cantStr = cant.toLocaleString('es-MX', { minimumFractionDigits: 2 });
+  if (it.requisicionItemRef) {
+    const orig = Number(it.requisicionItemRef.cantidadOriginal) || 0;
+    const delta = cant - orig;
+    if (Math.abs(delta) >= 0.0001) {
+      const sign = delta > 0 ? '+' : '';
+      const tooltip = `Requisitada: ${orig} · Recibida: ${cant} · Δ ${sign}${delta}` + (it.razonDiferencia ? ` · Razón: ${it.razonDiferencia}` : ' · Sin razón registrada');
+      cantStr += ` <span class="badge ${delta > 0 ? 'badge-info' : 'badge-warning'}" style="font-size:10px" title="${tooltip}">Δ ${sign}${delta}</span>`;
+    }
+  }
+
+  const conceptoCell = it.concepto
+    ? `<span title="${(it.concepto.descripcion || '').replace(/"/g, '&quot;')}">
+         <span style="font-family:monospace;font-size:11px">${it.concepto.clave || ''}</span>
+         <span class="text-muted" style="margin-left:6px;font-size:11px">${(it.concepto.descripcion || '').slice(0, 30)}</span>
+       </span>`
+    : '<span class="text-muted">—</span>';
+
+  return `
+    <tr>
+      <td style="max-width:340px">${matCell}</td>
+      <td>${mat?.unidad || ''}</td>
+      <td class="num font-mono">${cantStr}</td>
+      <td class="num font-mono">${formatMXN(cu)}</td>
+      <td class="num font-mono" style="font-weight:600">${formatMXN(importe)}</td>
+      <td>${conceptoCell}</td>
+    </tr>`;
 }
 
 // Acción originada desde la vista por proyecto (caja-chica.js): el contador

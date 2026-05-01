@@ -201,6 +201,18 @@ function _renderCajaChicaContenido(proyectoId, proyecto) {
     btn.addEventListener('click', () => _reabrirFilaCC(btn.dataset.movId, obraId)));
   root.querySelectorAll('.cc-btn-borrar').forEach(btn =>
     btn.addEventListener('click', () => _borrarFilaCC(btn.dataset.movId, obraId)));
+  root.querySelectorAll('.cc-btn-ver-rec').forEach(btn =>
+    btn.addEventListener('click', () => _verRecepcionFilaCC(btn.dataset.movId, obraId)));
+}
+
+async function _verRecepcionFilaCC(movCajaChicaId, obraId) {
+  // Resolver el item del buzón (mismo lookup que aprobar/rechazar)
+  const buzonItem = await _buscarBuzonItem(obraId, movCajaChicaId);
+  if (!buzonItem) {
+    showToast('No se encontró el item del buzón asociado.', 'warning');
+    return;
+  }
+  await _modalVerRecepcion(buzonItem);
 }
 
 function _kpiCajaChica(label, value, sub, color) {
@@ -244,12 +256,17 @@ function _filaMovimientoCC(obraId, movId, m) {
 
   // Acciones según estado
   let acciones = '';
+  // "Ver recepción" disponible para gastos con refRecepcionId (cualquier estado),
+  // así el contador puede revisar el ticket / factura antes y después de aprobar.
+  if (m.tipo === 'gasto' && m.refRecepcionId) {
+    acciones += `<button class="btn btn-sm btn-secondary cc-btn-ver-rec" data-mov-id="${movId}" title="Ver recepción + ticket + factura">👁</button>`;
+  }
   if (isReportado) {
-    acciones = `
+    acciones += `
       <button class="btn btn-sm btn-primary cc-btn-aprobar" data-mov-id="${movId}" title="Aprobar y asentar contable">✓</button>
       <button class="btn btn-sm btn-secondary cc-btn-rechazar" data-mov-id="${movId}" title="Rechazar">✕</button>`;
   } else if (isAprobado) {
-    acciones = `<button class="btn btn-sm btn-ghost cc-btn-reabrir" data-mov-id="${movId}" title="Reabrir">↺</button>`;
+    acciones += `<button class="btn btn-sm btn-ghost cc-btn-reabrir" data-mov-id="${movId}" title="Reabrir">↺</button>`;
   }
   acciones += `<button class="btn btn-sm btn-ghost cc-btn-borrar" data-mov-id="${movId}" title="Borrar movimiento">🗑</button>`;
 
