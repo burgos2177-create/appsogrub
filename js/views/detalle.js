@@ -192,8 +192,24 @@ function renderDetalleKPIs(proyectoId, proyecto) {
       </div>
       <div class="kpi-sub">de ${formatMXN(proyecto.presupuesto_contrato)} contratados</div>
     </div>
-    ${detalleKPI('⚠️', 'Deuda pendiente',      formatMXN(deudaPend),     deudaPend > 0 ? 'text-warning' : 'text-muted')}
+    <div class="kpi-card" id="kpi-deuda-pendiente-${proyectoId}">
+      <div class="kpi-label">⚠️ Deuda pendiente</div>
+      <div class="kpi-value ${deudaPend > 0 ? 'text-warning' : 'text-muted'}" style="font-size:20px" id="deuda-total-${proyectoId}">${formatMXN(deudaPend)}</div>
+      <div class="kpi-sub" style="display:flex;flex-direction:column;gap:3px;margin-top:4px" id="deuda-desglose-${proyectoId}">
+        <div style="display:flex;justify-content:space-between">
+          <span>A proveedores</span>
+          <strong style="font-variant-numeric:tabular-nums">${formatMXN(deudaPend)}</strong>
+        </div>
+        <div style="display:flex;justify-content:space-between" id="deuda-cc-row-${proyectoId}">
+          <span>De caja chica</span>
+          <strong style="font-variant-numeric:tabular-nums;color:var(--text-muted)" id="deuda-cc-${proyectoId}">—</strong>
+        </div>
+      </div>
+    </div>
   `;
+
+  // Cargar deuda de caja chica async (vive en /shared/cajaChica)
+  setTimeout(() => _cargarDeudaCajaChica(proyectoId, deudaPend), 0);
 
   // Toggle IVA info + botón estado de cuenta
   setTimeout(() => {
@@ -218,6 +234,53 @@ function detalleKPI(icon, label, valueStr, colorClass) {
       <div class="kpi-value ${colorClass}" style="font-size:20px">${valueStr}</div>
     </div>
   `;
+}
+
+// Carga el saldo conciliado de caja chica (async, vive en /shared/cajaChica)
+// y, si es negativo, lo refleja en el KPI Deuda Pendiente como "deuda de caja
+// chica" — significa que el almacenista puso de su bolsillo. Actualiza el
+// total y el desglose en su lugar, sin re-renderizar todo el grid.
+async function _cargarDeudaCajaChica(proyectoId, deudaProveedores) {
+  try {
+    const linksSnap = await _dbRef('/shared/obraLinks').get();
+    const links = linksSnap.val() || {};
+    const obraId = Object.entries(links).find(([, pid]) => String(pid) === String(proyectoId))?.[0];
+    if (!obraId) return;
+
+    const movsSnap = await _dbRef(`/shared/cajaChica/${obraId}/movimientos`).get();
+    const movs = movsSnap.val() || {};
+
+    // Réplica de _computeSaldoCajaChica (caja-chica.js) — saldo conciliado:
+    // depósitos transferencia − gastos aprobados.
+    let saldo = 0;
+    for (const m of Object.values(movs)) {
+      if (m.tipo === 'deposito' && (m.metodoDeposito || 'transferencia') !== 'efectivo') {
+        saldo += Number(m.monto) || 0;
+      } else if (m.tipo === 'gasto' && m.estado === 'aprobado') {
+        saldo -= Number(m.monto) || 0;
+      }
+    }
+    const deudaCC = Math.max(0, -saldo);
+    const total = deudaProveedores + deudaCC;
+
+    // Update KPI in place
+    const totalEl = document.getElementById(`deuda-total-${proyectoId}`);
+    const ccEl = document.getElementById(`deuda-cc-${proyectoId}`);
+    if (totalEl) {
+      totalEl.textContent = formatMXN(total);
+      totalEl.className = `kpi-value ${total > 0 ? 'text-warning' : 'text-muted'}`;
+      totalEl.style.fontSize = '20px';
+    }
+    if (ccEl) {
+      ccEl.textContent = formatMXN(deudaCC);
+      ccEl.style.color = deudaCC > 0 ? 'var(--warning)' : 'var(--text-muted)';
+      if (deudaCC > 0) {
+        ccEl.title = `El almacenista puso $${deudaCC.toLocaleString('es-MX', {minimumFractionDigits:2})} de su bolsillo (saldo de caja chica negativo). Deposita para reponérselo.`;
+      }
+    }
+  } catch (err) {
+    console.warn('[Deuda CC]', err);
+  }
 }
 
 function refreshDetalleKPIs(proyectoId) {
@@ -306,6 +369,7 @@ function refreshDetalleTable(proyectoId) {
       <option value="gasto">Gastos</option>
       <option value="abono_cliente">Abonos cliente</option>
       <option value="transferencia_sogrub">De SOGRUB</option>
+      <option value="deposito_caja_chica">Depósito caja chica</option>
     </select>
     <select class="filter-select" id="dt-filter-categoria">
       <option value="Todas">Todas las categorías</option>
@@ -423,7 +487,7 @@ function renderDetalleTableOnly(proyectoId, wrap) {
               <tr>
                 <td class="text-muted">${formatDate(m.fecha)}</td>
                 <td>${m.concepto || '—'}</td>
-                <td>${m.tipo === 'gasto' ? categoriaBadge(m.categoria) : '—'}</td>
+                <td>${m.tipo === 'gasto' ? categoriaBadge(m.categoria) + (m.paga_de_caja_chica ? ' <span class="badge badge-warning" style="font-size:10px" title="Pagado con caja chica · no descuenta saldo del proyecto (ya bajó al depositar)">💰 caja chica</span>' : '') : '—'}</td>
                 <td class="text-muted">${m.subcontratista || '—'}</td>
                 <td>${tipoBadge(m.tipo)}</td>
                 <td class="${colorMonto} font-mono">${formatMXN(m.monto)}</td>

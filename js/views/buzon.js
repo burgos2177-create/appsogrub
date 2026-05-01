@@ -1285,7 +1285,16 @@ async function _aprobarGastoCajaChica(item) {
     subcontratista: proveedorNombre,
     status:         'Pagado',
     tipo:           'gasto',
-    categoria:      'Caja chica',
+    // Las recepciones de caja chica de materiales son siempre compras de
+    // material — vienen pre-categorizadas para evitar reclasificación. El
+    // marcador de "vino de caja chica" es movimiento_caja_chica_id, no la
+    // categoria. Cuando se agregue el módulo de indirectos en materiales,
+    // ese flujo enviará un tipo distinto con categoria='Indirecto'.
+    categoria:      'Material',
+    // El gasto se pagó con caja chica → ya bajó saldo cuando se depositó.
+    // calcSaldoCajaProyecto y calcSaldoMifel excluyen estos gastos para no
+    // doble-contar. El monto sí cuenta para utilidad / total gastado / IVA.
+    paga_de_caja_chica: true,
     origen_buzon_id: item.id,
     monto_subtotal: subtotal,
     monto_iva:      iva,
@@ -1349,12 +1358,14 @@ async function _aprobarDepositoCajaChica(item) {
 
   const proyectoId = item.proyectoId || await _resolverProyectoIdPorObra(item.obraId);
 
-  // Egreso de Mifel — el saldo de caja chica vive en /shared/cajaChica, no
-  // duplicamos con un ingreso al ledger del proyecto.
-  const movimiento = {
+  // Asentar dos movimientos: egreso de Mifel (banco) + egreso del proyecto
+  // (saldo en caja del proyecto baja, ya que caja chica es un sub-fondo del
+  // proyecto). El saldo conciliado de caja chica sube en /shared/cajaChica.
+  const concepto = `[${folio}] Depósito caja chica${item.obraNombre ? ' · ' + item.obraNombre : ''} · TRANSF${item.comentario ? ' · ' + item.comentario.slice(0, 60) : ''}`;
+  const movMifel = {
     fecha:          fechaISO,
     monto:          -Math.abs(importe),
-    concepto:       `[${folio}] Depósito caja chica${item.obraNombre ? ' · ' + item.obraNombre : ''} · TRANSF${item.comentario ? ' · ' + item.comentario.slice(0, 60) : ''}`,
+    concepto,
     status:         'Pagado',
     tipo:           'deposito_caja_chica',
     proyecto_id:    proyectoId || null,
@@ -1364,15 +1375,33 @@ async function _aprobarDepositoCajaChica(item) {
   };
 
   try {
-    const created = addItem('sogrub_movimientos', movimiento);
+    const createdMifel = addItem('sogrub_movimientos', movMifel);
+
+    // Espejo en el ledger del proyecto (solo si está vinculado)
+    let createdProy = null;
+    if (proyectoId) {
+      createdProy = addItem('sogrub_proy_movimientos', {
+        proyecto_id: proyectoId,
+        obraId:      item.obraId,
+        fecha:       fechaISO,
+        monto:       -Math.abs(importe),
+        concepto,
+        status:      'Pagado',
+        tipo:        'deposito_caja_chica',
+        movimiento_caja_chica_id: item.movimientoId,
+        sogrub_movimiento_id: createdMifel.id,
+        origen_buzon_id: item.id,
+      });
+    }
+
     const histKey = `${Date.now()}_apr_dep`;
     const buzonPatch = {
       estado:       'aprobado',
       folio,
       aprobadoAt:   Date.now(),
       aprobadoPor:  _currentUser?.uid || '',
-      movId:        created.id,
-      destinoRefPath: `sogrub_movimientos[id=${created.id}]`,
+      movId:        createdMifel.id,
+      destinoRefPath: `sogrub_movimientos[id=${createdMifel.id}]`,
       huerfanoAt:   null,
       huerfanoPor:  null,
       descripcionHuerfano: null,
@@ -1383,13 +1412,15 @@ async function _aprobarDepositoCajaChica(item) {
       updates[`/shared/cajaChica/${item.obraId}/movimientos/${item.movimientoId}`] = {
         asentadoAt: Date.now(),
         asentadoPor: { uid: _currentUser?.uid || '', email: _currentUser?.email || '' },
+        asentadoBancarioId: createdMifel.id,
+        asentadoProyectoMovId: createdProy?.id || null,
         actualizadoAt: Date.now(),
         pendienteAsentar: false
       };
     }
     await _multiPathUpdate(updates);
     _buzon.expanded.delete(item.id);
-    _toast(`${folio} · Depósito $${importe.toLocaleString('es-MX', {minimumFractionDigits:2})} asentado en Mifel.`, 'success');
+    _toast(`${folio} · Depósito $${importe.toLocaleString('es-MX', {minimumFractionDigits:2})} asentado en Mifel y caja del proyecto.`, 'success');
   } catch (err) {
     console.error('[Buzón aprobar depósito CC]', err);
     _toast('Error al aprobar: ' + err.message, 'error');
@@ -1738,25 +1769,47 @@ async function _depositarCajaChicaDesdeBitacora({ obraId, obraNombre, monto, fec
   const movCajaChicaId = movRef.key;
 
   // 2) Si es transferencia, asentar el egreso bancario en sogrub_movimientos
+  //    + un egreso espejo en sogrub_proy_movimientos para que el saldo en
+  //    caja del proyecto baje (la caja chica es un sub-fondo del proyecto).
   if (metodo === 'transferencia') {
     const folio = await _generarFolio('CC');
-    const created = addItem('sogrub_movimientos', {
+    const concepto = `[${folio}] Depósito caja chica${obraNombre ? ' · ' + obraNombre : ''} · TRANSF${comentario ? ' · ' + comentario.slice(0, 60) : ''}`;
+
+    const createdMifel = addItem('sogrub_movimientos', {
       fecha:    fechaISO,
       monto:    -Math.abs(importe),
-      concepto: `[${folio}] Depósito caja chica${obraNombre ? ' · ' + obraNombre : ''} · TRANSF${comentario ? ' · ' + comentario.slice(0, 60) : ''}`,
+      concepto,
       status:   'Pagado',
       tipo:     'deposito_caja_chica',
       proyecto_id: proyectoId || null,
       obraId,
       movimiento_caja_chica_id: movCajaChicaId,
     });
-    // Marcar el movimiento de caja chica como ya asentado
+
+    // Egreso del saldo del proyecto. Solo si el proyecto está vinculado;
+    // si no, se omite (saldo del proyecto no se ve afectado, solo Mifel).
+    let createdProy = null;
+    if (proyectoId) {
+      createdProy = addItem('sogrub_proy_movimientos', {
+        proyecto_id: proyectoId,
+        obraId,
+        fecha:    fechaISO,
+        monto:    -Math.abs(importe),
+        concepto,
+        status:   'Pagado',
+        tipo:     'deposito_caja_chica',
+        movimiento_caja_chica_id: movCajaChicaId,
+        sogrub_movimiento_id: createdMifel.id,
+      });
+    }
+
     await _dbRef(`/shared/cajaChica/${obraId}/movimientos/${movCajaChicaId}`).update({
       asentadoAt: Date.now(),
-      asentadoBancarioId: created.id,
+      asentadoBancarioId: createdMifel.id,
+      asentadoProyectoMovId: createdProy?.id || null,
       folioBancario: folio
     });
-    return { movCajaChicaId, mifelMovId: created.id, folio };
+    return { movCajaChicaId, mifelMovId: createdMifel.id, proyMovId: createdProy?.id || null, folio };
   }
 
   // Efectivo: solo el registro en /shared/cajaChica, sin egreso bancario.

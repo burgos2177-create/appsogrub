@@ -144,9 +144,9 @@ async function _syncBuzonOnMovimientoUpdate(previo, nuevo) {
   if (nuevo.monto !== previo.monto || nuevo.monto_subtotal !== previo.monto_subtotal || nuevo.monto_iva !== previo.monto_iva) {
     const importeAbs = Math.abs(Number(nuevo.monto) || 0);
     // Items de caja chica usan monto plano; CxC/CxP usan { subtotal, iva, importe }.
-    if (nuevo.tipo === 'gasto' && nuevo.categoria === 'Caja chica') {
-      cambios.monto = importeAbs;
-    } else if (nuevo.tipo === 'deposito_caja_chica') {
+    // El marcador "es de caja chica" es la presencia de movimiento_caja_chica_id,
+    // no la categoria (los gastos vienen pre-categorizados como Material).
+    if (nuevo.movimiento_caja_chica_id || nuevo.tipo === 'deposito_caja_chica') {
       cambios.monto = importeAbs;
     } else {
       cambios.monto = {
@@ -188,8 +188,11 @@ async function _syncCajaChicaMirrorOnUpdate(previo, nuevo) {
   const obraId = nuevo.obraId || previo.obraId;
   const movCajaChicaId = nuevo.movimiento_caja_chica_id || previo.movimiento_caja_chica_id;
   if (!obraId || !movCajaChicaId) return;
+  // Marcador "es de caja chica": movimiento_caja_chica_id presente. La
+  // categoria del gasto contable es 'Material' (default) y no se usa para
+  // identificar el origen, para no acoplar la sync a la taxonomía contable.
   const esCajaChica =
-    (nuevo.tipo === 'gasto' && nuevo.categoria === 'Caja chica') ||
+    (nuevo.tipo === 'gasto' && !!movCajaChicaId) ||
     nuevo.tipo === 'deposito_caja_chica';
   if (!esCajaChica) return;
 
@@ -218,7 +221,8 @@ async function _syncCajaChicaMirrorOnDelete(item) {
   if (!obraId || !movCajaChicaId) return;
 
   try {
-    if (item.tipo === 'gasto' && item.categoria === 'Caja chica') {
+    // Identificamos por presencia de movimiento_caja_chica_id, no por categoria.
+    if (item.tipo === 'gasto' && !!item.movimiento_caja_chica_id) {
       await _dbRef(`/shared/cajaChica/${obraId}/movimientos/${movCajaChicaId}`).update({
         estado: 'reportado',
         aprobadoAt: null,

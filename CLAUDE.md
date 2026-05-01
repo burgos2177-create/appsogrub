@@ -69,13 +69,36 @@ En `js/firebase.js` (`_syncBuzonOnMovimientoUpdate` / `_syncBuzonOnMovimientoDel
 - Cuando el contador **borra** un movimiento con `origen_buzon_id`, marca el item del buzón como `huerfano`. Si era gasto de caja chica, además reabre el espejo a `estado='reportado'` (saldo en materiales recupera el monto). Si era depósito, marca `pendienteAsentar=true`.
 - Tipos sincronizados: `abono_cliente`, `gasto`, `deposito_caja_chica`.
 
-## Decisiones (2026-05-01)
+## Decisiones (2026-05-01, revisadas)
 
-1. **Categoría 'Caja chica'**: agregada a `CATEGORIAS` en `js/calculations.js` (5ta categoría: `Material, Mano de Obra, Subcontratista, Indirecto, Caja chica`). Permite filtrar/desglosar gastos de caja chica en analítica y fiscal sin tocar el modelo. Badge de categoría definido en `components.js#categoriaBadge`.
+1. **Categoría: pre-clasificada por origen, no por caja chica.** Los `CATEGORIAS` quedan en `Material, Mano de Obra, Subcontratista, Indirecto` — no hay categoría "Caja chica". La categoría es para *qué se compró*, no *de dónde salió el dinero*. Las recepciones de caja chica que vienen de materiales son siempre compras de material (es lo que captura el almacenista), así que `_aprobarGastoCajaChica` crea el contable con `categoria='Material'` por default. Cuando se construya el módulo de **indirectos** en materiales, ese flujo enviará un `tipo` distinto al buzón con `categoria='Indirecto'` propia, evitando reclasificación manual. Marcador "vino de caja chica" para los hooks bidireccionales: presencia de `movimiento_caja_chica_id` en el contable, no la categoría.
 
-2. **Modelo de cuenta para depósitos**: cuenta única "Caja chica" con `obraId` como etiqueta en cada movimiento. **No** se crea una cuenta bancaria separada por obra. El egreso de Mifel cuando se deposita a caja chica vive en `sogrub_movimientos` con `tipo='deposito_caja_chica'` y `obraId` para auditoría. Si después se decide separar por cuenta, es refactor de etiquetado, no de modelo.
+2. **Modelo de tres cajas anidadas + regla anti-doble-conteo (CRÍTICA)**
 
-3. **No duplico ingreso al ledger del proyecto**: cuando se deposita a caja chica, **solo** se crea el egreso en Mifel; no se crea un `transferencia_sogrub` en `sogrub_proy_movimientos`. El saldo de la caja chica vive en `/shared/cajaChica`, así que duplicarlo en el ledger del proyecto sería contabilidad inflada. El detalle del proyecto sigue mostrando solo el efecto bancario (egreso de Mifel).
+   ```
+   Mifel (banco) → Caja del proyecto (saldo virtual) → Caja chica (sub-fondo)
+   ```
+
+   El dinero baja **una sola vez**, al **depositar**. El gasto de caja chica registra el costo en bitácora pero **no descuenta saldos otra vez**. Cada movimiento mueve dinero entre dos cajas adyacentes:
+
+   | Movimiento | Mifel | Caja proyecto | Caja chica |
+   |---|---|---|---|
+   | Transfer SOGRUB → proyecto | ↓ | ↑ | — |
+   | Depósito a caja chica | ↓ | ↓ | ↑ |
+   | **Gasto pagado con caja chica** | — | — | ↓ |
+   | Gasto pagado del proyecto (directo) | ↓ | ↓ | — |
+
+   **Implementación** (`js/calculations.js`):
+   - `calcSaldoCajaProyecto`: resta gastos pagados (excluyendo `paga_de_caja_chica===true`) **y** `tipo='deposito_caja_chica'`.
+   - `calcSaldoMifel`: excluye `paga_de_caja_chica===true` de gastosPagados.
+   - El gasto con `paga_de_caja_chica:true` SÍ cuenta en utilidad, total gastado, IVA, fiscal y desglose por categoría/proveedor — solo NO descuenta de los saldos de Mifel y caja del proyecto.
+
+   **Persistencia: todo se ve en bitácora.** Tanto el depósito (`tipo='deposito_caja_chica'`) como el gasto (`tipo='gasto', paga_de_caja_chica:true`) se crean en `sogrub_proy_movimientos`. Aparecen en la tabla de movimientos del proyecto. Badge `💰 caja chica` junto a la categoría de los gastos pagados con caja chica para que sea evidente que no descuentan saldo otra vez.
+
+3. **Deuda Pendiente con desglose** (KPI del detalle):
+   - **A proveedores**: gastos `tipo='gasto', status='Pendiente'` (lo de siempre).
+   - **De caja chica**: derivado del saldo conciliado negativo de `/shared/cajaChica/{obraId}` (almacenista puso de su bolsillo). Carga async vía `_cargarDeudaCajaChica`. Cuando se reponga la caja con un depósito, baja a 0.
+   - **Total**: suma de ambas. Se muestra grande arriba con el desglose abajo.
 
 4. **Status de gastos caja chica = 'Pagado'**: el dinero ya salió de la caja física al pagar el ticket; no hay un segundo momento "pendiente de pago". El stepper del buzón refleja esto saltando de step 1 (Reportado) a step 3 (Asentado) cuando se aprueba.
 

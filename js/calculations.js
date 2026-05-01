@@ -18,7 +18,8 @@
 function calcSaldoMifel() {
   const { saldo_inicial_mifel } = getConfig();
 
-  // Movimientos generales de SOGRUB (incluye transferencias internas a proyectos)
+  // Movimientos generales de SOGRUB (incluye transferencias internas a proyectos
+  // y egresos por depósitos a caja chica — ambos ya descuentan acá).
   const movSOGRUB = (getCollection(KEYS.MOVIMIENTOS) ?? [])
     .filter(m => m.status === 'Pagado')
     .reduce((acc, m) => acc + m.monto, 0);
@@ -30,9 +31,12 @@ function calcSaldoMifel() {
     .filter(m => m.tipo === 'abono_cliente')
     .reduce((acc, m) => acc + m.monto, 0);
 
-  // Gastos pagados → salen del banco de SOGRUB (monto ya es negativo en BD)
+  // Gastos pagados → salen del banco de SOGRUB (monto ya es negativo en BD).
+  // Excluye los pagados con caja chica: ese dinero ya bajó de Mifel cuando se
+  // hizo el depósito a caja chica (vía sogrub_movimientos egreso). Si volvemos
+  // a contarlo aquí, doble descuento.
   const gastosPagados = proyMov
-    .filter(m => m.tipo === 'gasto' && m.status === 'Pagado')
+    .filter(m => m.tipo === 'gasto' && m.status === 'Pagado' && !m.paga_de_caja_chica)
     .reduce((acc, m) => acc + m.monto, 0);
 
   return saldo_inicial_mifel + movSOGRUB + abonosCliente + gastosPagados;
@@ -64,11 +68,20 @@ function calcSaldoCajaProyecto(proyectoId) {
     .filter(m => m.tipo === 'transferencia_sogrub')
     .reduce((acc, m) => acc + m.monto, 0);
 
+  // Gastos pagados que SÍ descuentan del saldo del proyecto. Excluye los
+  // pagados con caja chica: para esos, el saldo ya bajó cuando se depositó
+  // a caja chica (movimiento `tipo='deposito_caja_chica'` abajo). Si los
+  // restáramos también aquí, doble conteo.
   const gastosPagados = movs
-    .filter(m => m.tipo === 'gasto' && m.status === 'Pagado')
+    .filter(m => m.tipo === 'gasto' && m.status === 'Pagado' && !m.paga_de_caja_chica)
     .reduce((acc, m) => acc + Math.abs(m.monto), 0);
 
-  return abonos + transferencias - gastosPagados;
+  // Depósitos del proyecto a caja chica → bajan saldo del proyecto.
+  const depositosCajaChica = movs
+    .filter(m => m.tipo === 'deposito_caja_chica' && m.status === 'Pagado')
+    .reduce((acc, m) => acc + Math.abs(m.monto), 0);
+
+  return abonos + transferencias - gastosPagados - depositosCajaChica;
 }
 
 // =====================================================
@@ -98,13 +111,29 @@ function calcDisponibleReal() {
 }
 
 // =====================================================
-// REGLA 6 — Deuda pendiente de un proyecto
-// Suma de gastos con status "Pendiente" (valor absoluto)
+// REGLA 6 — Deuda pendiente de un proyecto (compat: número total)
+// Total = deuda a proveedores (gastos con status='Pendiente').
+// Para el desglose con caja chica, usar calcDeudaPendienteDesglose() abajo.
 // =====================================================
 function calcDeudaPendiente(proyectoId) {
   const movs = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
     .filter(m => m.proyecto_id === proyectoId && m.tipo === 'gasto' && m.status === 'Pendiente');
   return movs.reduce((acc, m) => acc + Math.abs(m.monto), 0);
+}
+
+// Desglose de deuda pendiente:
+//   - proveedores: gastos status='Pendiente' (lo de siempre)
+//   - cajaChica: cuando alguien (almacenista/auxiliar) puso de su bolsillo
+//                porque la caja chica no tenía saldo. Se deriva del saldo
+//                conciliado: si saldo < 0, la diferencia es la deuda.
+//   - total = proveedores + cajaChica
+//
+// `saldoCajaChica` se inyecta como parámetro porque vive en /shared/cajaChica
+// (lectura async). El caller pasa el valor ya resuelto o 0 si no hay vínculo.
+function calcDeudaPendienteDesglose(proyectoId, saldoCajaChica = 0) {
+  const proveedores = calcDeudaPendiente(proyectoId);
+  const cajaChica = Math.max(0, -Number(saldoCajaChica || 0));
+  return { proveedores, cajaChica, total: proveedores + cajaChica };
 }
 
 // =====================================================
@@ -268,7 +297,7 @@ function calcIVADesglose(proyectoId) {
 // =====================================================
 // ANALYTICS — Gasto por categoría (proyecto)
 // =====================================================
-const CATEGORIAS = ['Material', 'Mano de Obra', 'Subcontratista', 'Indirecto', 'Caja chica'];
+const CATEGORIAS = ['Material', 'Mano de Obra', 'Subcontratista', 'Indirecto'];
 
 function calcGastoPorCategoria(proyectoId) {
   const movs = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])

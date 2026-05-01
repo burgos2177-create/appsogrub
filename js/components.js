@@ -205,11 +205,12 @@ function estadoBadge(estado) {
 
 function tipoBadge(tipo, proyectoNombre = '') {
   const map = {
-    'gasto_general':        { cls: 'badge-muted',   label: 'Gasto general' },
+    'gasto_general':         { cls: 'badge-muted',   label: 'Gasto general' },
     'transferencia_proyecto':{ cls: 'badge-info',    label: proyectoNombre ? `→ ${proyectoNombre}` : 'Transferencia' },
-    'gasto':                { cls: 'badge-danger',  label: 'Gasto' },
-    'abono_cliente':        { cls: 'badge-success', label: 'Abono cliente' },
-    'transferencia_sogrub': { cls: 'badge-info',    label: 'De SOGRUB' },
+    'gasto':                 { cls: 'badge-danger',  label: 'Gasto' },
+    'abono_cliente':         { cls: 'badge-success', label: 'Abono cliente' },
+    'transferencia_sogrub':  { cls: 'badge-info',    label: 'De SOGRUB' },
+    'deposito_caja_chica':   { cls: 'badge-warning', label: '💰 Depósito caja chica' },
   };
   const def = map[tipo] ?? { cls: 'badge-muted', label: tipo };
   return `<span class="badge ${def.cls}">${def.label}</span>`;
@@ -246,7 +247,6 @@ function categoriaBadge(cat) {
     'Mano de Obra':   { cls: 'badge-warning', label: 'Mano de Obra' },
     'Subcontratista': { cls: 'badge-danger',  label: 'Subcontratista' },
     'Indirecto':      { cls: 'badge-muted',   label: 'Indirecto' },
-    'Caja chica':     { cls: 'badge-warning', label: 'Caja chica' },
   };
   const def = map[cat] ?? { cls: 'badge-muted', label: cat || '—' };
   return `<span class="badge ${def.cls}">${def.label}</span>`;
