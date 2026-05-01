@@ -246,6 +246,7 @@ function categoriaBadge(cat) {
     'Mano de Obra':   { cls: 'badge-warning', label: 'Mano de Obra' },
     'Subcontratista': { cls: 'badge-danger',  label: 'Subcontratista' },
     'Indirecto':      { cls: 'badge-muted',   label: 'Indirecto' },
+    'Caja chica':     { cls: 'badge-warning', label: 'Caja chica' },
   };
   const def = map[cat] ?? { cls: 'badge-muted', label: cat || '—' };
   return `<span class="badge ${def.cls}">${def.label}</span>`;

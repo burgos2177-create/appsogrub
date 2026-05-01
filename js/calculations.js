@@ -268,7 +268,7 @@ function calcIVADesglose(proyectoId) {
 // =====================================================
 // ANALYTICS — Gasto por categoría (proyecto)
 // =====================================================
-const CATEGORIAS = ['Material', 'Mano de Obra', 'Subcontratista', 'Indirecto'];
+const CATEGORIAS = ['Material', 'Mano de Obra', 'Subcontratista', 'Indirecto', 'Caja chica'];
 
 function calcGastoPorCategoria(proyectoId) {
   const movs = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])

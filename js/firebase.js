@@ -129,8 +129,10 @@ function deleteItem(key, id) {
 // origen (estimaciones) vea el estado actualizado.
 
 async function _syncBuzonOnMovimientoUpdate(previo, nuevo) {
-  // Sincroniza para tipos que pueden venir del buzón: abono_cliente y gasto.
-  if (nuevo.tipo !== 'abono_cliente' && nuevo.tipo !== 'gasto') return;
+  // Sincroniza para tipos que pueden venir del buzón: abono_cliente, gasto y
+  // los dos tipos de caja chica.
+  const tiposBuzon = ['abono_cliente', 'gasto', 'deposito_caja_chica'];
+  if (!tiposBuzon.includes(nuevo.tipo)) return;
   const itemId = previo.origen_buzon_id;
   const cambios = {
     actualizadoPorContador: true,
@@ -141,17 +143,28 @@ async function _syncBuzonOnMovimientoUpdate(previo, nuevo) {
   // del tipo dice si es entrada o salida de caja).
   if (nuevo.monto !== previo.monto || nuevo.monto_subtotal !== previo.monto_subtotal || nuevo.monto_iva !== previo.monto_iva) {
     const importeAbs = Math.abs(Number(nuevo.monto) || 0);
-    cambios.monto = {
-      subtotal: Math.abs(Number(nuevo.monto_subtotal) || 0),
-      iva: Math.abs(Number(nuevo.monto_iva) || 0),
-      importe: importeAbs
-    };
+    // Items de caja chica usan monto plano; CxC/CxP usan { subtotal, iva, importe }.
+    if (nuevo.tipo === 'gasto' && nuevo.categoria === 'Caja chica') {
+      cambios.monto = importeAbs;
+    } else if (nuevo.tipo === 'deposito_caja_chica') {
+      cambios.monto = importeAbs;
+    } else {
+      cambios.monto = {
+        subtotal: Math.abs(Number(nuevo.monto_subtotal) || 0),
+        iva: Math.abs(Number(nuevo.monto_iva) || 0),
+        importe: importeAbs
+      };
+    }
   }
   if (nuevo.fecha !== previo.fecha) {
     const [yy, mm, dd] = (nuevo.fecha || '').split('-').map(Number);
     if (yy && mm && dd) cambios.fecha = new Date(yy, mm - 1, dd).getTime();
   }
   await _dbRef(`/shared/buzon/${itemId}`).update(cambios);
+
+  // Si el movimiento es de caja chica, además sincronizar el espejo en
+  // /shared/cajaChica/{obraId}/movimientos/{movId} para que materiales lo vea.
+  await _syncCajaChicaMirrorOnUpdate(previo, nuevo);
 }
 
 async function _syncBuzonOnMovimientoDelete(item) {
@@ -163,6 +176,64 @@ async function _syncBuzonOnMovimientoDelete(item) {
     movId: null,
     descripcionHuerfano: 'El contador eliminó el movimiento contable. La app de origen puede regenerar este pago si fue por error.'
   });
+  // Si era de caja chica, además reabrir el movimiento espejo a 'reportado'
+  // para que el saldo en materiales recupere el monto.
+  await _syncCajaChicaMirrorOnDelete(item);
+}
+
+// Espejo en /shared/cajaChica: cuando el contador edita un movimiento de
+// caja chica, propaga monto/fecha al ledger compartido. (El estado se maneja
+// desde el buzón al aprobar/rechazar, no desde aquí.)
+async function _syncCajaChicaMirrorOnUpdate(previo, nuevo) {
+  const obraId = nuevo.obraId || previo.obraId;
+  const movCajaChicaId = nuevo.movimiento_caja_chica_id || previo.movimiento_caja_chica_id;
+  if (!obraId || !movCajaChicaId) return;
+  const esCajaChica =
+    (nuevo.tipo === 'gasto' && nuevo.categoria === 'Caja chica') ||
+    nuevo.tipo === 'deposito_caja_chica';
+  if (!esCajaChica) return;
+
+  const patch = { actualizadoPorContador: true, actualizadoAt: Date.now() };
+  if (nuevo.monto !== previo.monto) {
+    patch.monto = Math.abs(Number(nuevo.monto) || 0);
+  }
+  if (nuevo.fecha !== previo.fecha) {
+    const [yy, mm, dd] = (nuevo.fecha || '').split('-').map(Number);
+    if (yy && mm && dd) patch.fecha = new Date(yy, mm - 1, dd).getTime();
+  }
+  if (Object.keys(patch).length > 2) {
+    try {
+      await _dbRef(`/shared/cajaChica/${obraId}/movimientos/${movCajaChicaId}`).update(patch);
+    } catch (e) { console.warn('[CajaChica sync update]', e); }
+  }
+}
+
+// Cuando el contador borra un movimiento de caja chica, reabrir el espejo:
+//   - Gasto aprobado borrado → reportado (saldo en materiales recupera monto).
+//   - Depósito borrado → marcar pendienteAsentar=true (informativo; el saldo
+//     conciliado en materiales no cambia: el depósito sigue ahí).
+async function _syncCajaChicaMirrorOnDelete(item) {
+  const obraId = item.obraId;
+  const movCajaChicaId = item.movimiento_caja_chica_id;
+  if (!obraId || !movCajaChicaId) return;
+
+  try {
+    if (item.tipo === 'gasto' && item.categoria === 'Caja chica') {
+      await _dbRef(`/shared/cajaChica/${obraId}/movimientos/${movCajaChicaId}`).update({
+        estado: 'reportado',
+        aprobadoAt: null,
+        aprobadoPor: null,
+        actualizadoAt: Date.now(),
+        notaContador: 'Movimiento contable eliminado por el contador — vuelve a estar pendiente de aprobación.'
+      });
+    } else if (item.tipo === 'deposito_caja_chica') {
+      await _dbRef(`/shared/cajaChica/${obraId}/movimientos/${movCajaChicaId}`).update({
+        pendienteAsentar: true,
+        actualizadoAt: Date.now(),
+        notaContador: 'El asentamiento bancario fue eliminado — pedir al contador re-asentar el depósito.'
+      });
+    }
+  } catch (e) { console.warn('[CajaChica sync delete]', e); }
 }
 
 /** Busca un item por id en el cache */

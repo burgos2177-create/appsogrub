@@ -246,11 +246,20 @@ function _buzonCard(item) {
   const ecfg     = _ESTADOS_CFG[item.estado] || _ESTADOS_CFG.recibido;
   const expanded  = _buzon.expanded.has(item.id);
   const esSub     = item.tipo === 'estimacion_subcontratista';
-  const monto     = item?.monto?.importe || 0;
+  // Caja chica usa monto plano (number); CxC/CxP usan { subtotal, iva, importe }.
+  const esCajaChica = item.tipo === 'gasto_caja_chica' || item.tipo === 'deposito_caja_chica';
+  const monto     = esCajaChica
+    ? Number(item.monto) || 0
+    : (item?.monto?.importe || 0);
   const fechaPago = item.fecha
     ? new Date(item.fecha).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })
     : '—';
-  const tipoLabel = { pago_cliente: '💰 Pago de cliente', estimacion_subcontratista: '🔧 Estim. subcontratista' }[item.tipo] || item.tipo;
+  const tipoLabel = {
+    pago_cliente: '💰 Pago de cliente',
+    estimacion_subcontratista: '🔧 Estim. subcontratista',
+    gasto_caja_chica: '🧾 Gasto caja chica',
+    deposito_caja_chica: '🏦 Depósito caja chica'
+  }[item.tipo] || item.tipo;
   const desfase   = _calcularDesfase(item);
 
   card.style.cssText = `border:1px solid var(--border);border-left:4px solid ${ecfg.color};background:${ecfg.bg};border-radius:8px;overflow:hidden`;
@@ -267,8 +276,8 @@ function _buzonCard(item) {
     </div>
     ${desfase ? `<span title="${desfase.tooltip}" style="font-size:11px;color:#e0a04c;background:rgba(224,160,76,.12);padding:2px 7px;border-radius:8px;flex-shrink:0">⚠ Δ$${Math.abs(desfase.delta).toLocaleString('es-MX', {minimumFractionDigits:2})}</span>` : ''}
     <div style="text-align:right;flex-shrink:0">
-      <div style="font-family:ui-monospace,monospace;font-size:17px;font-weight:700;color:${esSub ? '#e15555' : 'var(--accent)'}">
-        ${esSub ? '−' : '+'}$${monto.toLocaleString('es-MX', {minimumFractionDigits:2, maximumFractionDigits:2})}
+      <div style="font-family:ui-monospace,monospace;font-size:17px;font-weight:700;color:${(esSub || item.tipo === 'gasto_caja_chica') ? '#e15555' : 'var(--accent)'}">
+        ${(esSub || item.tipo === 'gasto_caja_chica') ? '−' : '+'}$${monto.toLocaleString('es-MX', {minimumFractionDigits:2, maximumFractionDigits:2})}
       </div>
     </div>
     <span style="color:var(--text-muted);font-size:14px;flex-shrink:0">${expanded ? '▲' : '▼'}</span>`;
@@ -303,13 +312,19 @@ function _buzonCard(item) {
 
 function _cardBodyHTML(item) {
   const esSub     = item.tipo === 'estimacion_subcontratista';
+  const esGastoCC = item.tipo === 'gasto_caja_chica';
+  const esDepCC   = item.tipo === 'deposito_caja_chica';
+  const esCajaChica = esGastoCC || esDepCC;
   const fechaPago = item.fecha
     ? new Date(item.fecha).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })
     : '—';
   const fechaCreado = item.creadoAt ? new Date(item.creadoAt).toLocaleString('es-MX') : '';
-  const montoInfo   = item?.monto?.conIva === false
-    ? '<span style="color:#e0a04c">Sin IVA</span> — importe = subtotal'
-    : `Subtotal $${(item?.monto?.subtotal || 0).toLocaleString('es-MX',{minimumFractionDigits:2})} · IVA $${(item?.monto?.iva || 0).toLocaleString('es-MX',{minimumFractionDigits:2})}`;
+  const montoNum = esCajaChica ? Number(item.monto) || 0 : 0;
+  const montoInfo = esCajaChica
+    ? `Importe: <b>$${montoNum.toLocaleString('es-MX',{minimumFractionDigits:2})}</b> <span style="color:var(--text-muted);font-size:11px">(monto plano · sin desglose IVA del lado almacén)</span>`
+    : (item?.monto?.conIva === false
+        ? '<span style="color:#e0a04c">Sin IVA</span> — importe = subtotal'
+        : `Subtotal $${(item?.monto?.subtotal || 0).toLocaleString('es-MX',{minimumFractionDigits:2})} · IVA $${(item?.monto?.iva || 0).toLocaleString('es-MX',{minimumFractionDigits:2})}`);
   const proyNombre  = item.proyectoId
     ? `<b style="color:#5dd39e">${_obtenerNombreProyecto(item.proyectoId)}</b>`
     : `<span style="color:#e15555">⚠ Obra sin vincular</span>`;
@@ -319,6 +334,15 @@ function _cardBodyHTML(item) {
        Estim. sub: <b>#${item.subEstimacionNumero ?? '—'}</b><br>
        Subcontratista: <b>${item.proveedorNombre || '—'}</b><br>
        Fecha pago: <b>${fechaPago}</b>`
+    : esGastoCC
+    ? `Proveedor: <b>${item.proveedor || '—'}</b><br>
+       Factura: <b>${item.factura || '<span style=\'color:#e0a04c\'>sin factura</span>'}</b><br>
+       Recepción: <b>${item.refRecepcionId ? '<code style=\'font-size:11px\'>' + item.refRecepcionId.slice(-8) + '</code>' : '—'}</b><br>
+       Fecha: <b>${fechaPago}</b>`
+    : esDepCC
+    ? `Método: <b>${item.metodoDeposito === 'transferencia' ? '🏦 Transferencia bancaria' : item.metodoDeposito || '—'}</b><br>
+       Comentario: <b>${item.comentario || '—'}</b><br>
+       Fecha depósito: <b>${fechaPago}</b>`
     : `Estimación: <b>#${item.estimNumero ?? '—'}</b><br>
        Fecha pago: <b>${fechaPago}</b>`;
 
@@ -347,9 +371,29 @@ function _cardBodyHTML(item) {
     ? `<div style="margin-top:4px;font-size:12px;color:#a06bd9">⚠ ${item.descripcionHuerfano}${item.huerfanoAt ? ' (' + new Date(item.huerfanoAt).toLocaleString('es-MX') + ')' : ''}</div>`
     : '';
 
-  // Desglose OPUS
+  // Desglose OPUS — caja chica usa shape distinta {conceptoKey, conceptoClave, conceptoDescripcion, monto}
   let desgloseHTML = '';
-  if (esSub && Array.isArray(item.desglose) && item.desglose.length > 0) {
+  if (esGastoCC && Array.isArray(item.desglose) && item.desglose.length > 0) {
+    const totalCC = item.desglose.reduce((s, d) => s + (Number(d.monto) || 0), 0);
+    desgloseHTML = `
+      <details open style="margin-top:10px;font-size:11px">
+        <summary style="cursor:pointer;color:var(--text-muted)">📋 Desglose por concepto OPUS (${item.desglose.length} líneas · $${totalCC.toLocaleString('es-MX',{minimumFractionDigits:2})})</summary>
+        <table style="width:100%;margin-top:6px;border-collapse:collapse">
+          <thead style="color:var(--text-muted)"><tr>
+            <th style="text-align:left;padding:2px 5px">Clave</th>
+            <th style="text-align:left;padding:2px 5px">Descripción</th>
+            <th style="text-align:right;padding:2px 5px">Importe</th>
+          </tr></thead>
+          <tbody>
+            ${item.desglose.map(d => `<tr>
+              <td style="padding:2px 5px;font-family:monospace">${d.conceptoClave || '—'}</td>
+              <td style="padding:2px 5px">${(d.conceptoDescripcion || '').slice(0, 60)}</td>
+              <td style="padding:2px 5px;text-align:right;font-weight:600">$${(Number(d.monto) || 0).toLocaleString('es-MX',{minimumFractionDigits:2})}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </details>`;
+  } else if (esSub && Array.isArray(item.desglose) && item.desglose.length > 0) {
     const total = item.desglose.reduce((s, d) => s + (Number(d.importe) || 0), 0);
     desgloseHTML = `
       <details style="margin-top:10px;font-size:11px">
@@ -545,16 +589,34 @@ function _resumenFinancieroHTML(stats) {
 // Stepper visual de los 3 momentos contables. La etapa actual queda resaltada,
 // las anteriores marcadas con ✓, las futuras grises. Rechazado/huerfano muestran ✕.
 function _stepperHTML(item) {
-  const esCxP   = item.tipo === 'estimacion_subcontratista';
-  const labels  = esCxP
-    ? ['Devengado', 'Por pagar', 'Pagado']
-    : ['Devengado', 'Por cobrar', 'Cobrado'];
-  const sublabels = esCxP
-    ? ['obligación nace', 'CxP en libros', 'salió de caja']
-    : ['obligación nace', 'CxC en libros', 'entró a caja'];
+  const esCxP     = item.tipo === 'estimacion_subcontratista';
+  const esGastoCC = item.tipo === 'gasto_caja_chica';
+  const esDepCC   = item.tipo === 'deposito_caja_chica';
+  let labels, sublabels;
+  if (esGastoCC) {
+    labels    = ['Reportado', 'Aprobado', 'Asentado'];
+    sublabels = ['gasto en almacén', 'libros + saldo', 'gasto contable creado'];
+  } else if (esDepCC) {
+    labels    = ['Solicitado', 'Aprobado', 'Asentado'];
+    sublabels = ['materiales reportó', 'autorizado', 'egreso bancario'];
+  } else if (esCxP) {
+    labels    = ['Devengado', 'Por pagar', 'Pagado'];
+    sublabels = ['obligación nace', 'CxP en libros', 'salió de caja'];
+  } else {
+    labels    = ['Devengado', 'Por cobrar', 'Cobrado'];
+    sublabels = ['obligación nace', 'CxC en libros', 'entró a caja'];
+  }
 
   // map estado → step alcanzado (1, 2 o 3)
-  const stepMap = {
+  // Para caja chica, aprobar = asentar inmediatamente (no hay segundo momento
+  // separado entre libros y caja como en CxC/CxP), así que aprobado → step 3.
+  const esCC = esGastoCC || esDepCC;
+  const stepMap = esCC ? {
+    recibido: 1, pendiente: 1, en_revision: 1,
+    aprobado: 3,
+    cobrado: 3, pagado: 3, cerrado: 3,
+    rechazado: 1, huerfano: 2,
+  } : {
     recibido: 1, pendiente: 1, en_revision: 1,
     aprobado: 2,
     cobrado: 3, pagado: 3, cerrado: 3,
@@ -602,12 +664,21 @@ function _stepperHTML(item) {
 }
 
 function _accionesHTML(item) {
-  const noProj = !item.proyectoId;
+  const esCajaChica = item.tipo === 'gasto_caja_chica' || item.tipo === 'deposito_caja_chica';
+  const noProj = !item.proyectoId && !esCajaChica;  // CC resuelve via obraLinks al aprobar
   const noVinc = noProj ? '<span style="font-size:11px;color:#e15555;align-self:center">Vincula la obra primero</span>' : '';
   const dis    = noProj ? 'disabled style="opacity:.5;cursor:not-allowed"' : 'style="cursor:pointer"';
   const e      = item.estado;
 
   if (e === 'recibido' || e === 'pendiente' || e === 'en_revision') {
+    if (esCajaChica) {
+      // Caja chica: aprobar = asentar contable directamente. No hay flujo
+      // CxC/CxP, así que tampoco hay "Aprobar + Pagar".
+      const lbl = item.tipo === 'gasto_caja_chica' ? '✓ Aprobar gasto' : '✓ Aprobar y asentar';
+      return `
+        <button class="bz-btn-aprobar" ${dis} style="background:#5dd39e;color:#0e3a25;border:none;border-radius:6px;padding:8px 14px;font-weight:600">${lbl}</button>
+        <button class="bz-btn-rechazar" style="background:transparent;color:#e15555;border:1px solid #e15555;border-radius:6px;padding:8px 14px;cursor:pointer">✕ Rechazar</button>`;
+    }
     const labelPagoRapido = item.tipo === 'estimacion_subcontratista' ? 'Aprobar + Pagar' : 'Aprobar + Cobrar';
     return `
       <button class="bz-btn-aprobar" ${dis} style="background:#5dd39e;color:#0e3a25;border:none;border-radius:6px;padding:8px 14px;font-weight:600">✓ Aprobar</button>
@@ -616,6 +687,12 @@ function _accionesHTML(item) {
       ${noVinc}`;
   }
   if (e === 'aprobado') {
+    if (esCajaChica) {
+      // Aprobado en caja chica = ya asentado. Solo permitir reabrir o cerrar.
+      return `
+        <button class="bz-btn-reabrir" style="background:transparent;color:#5dd39e;border:1px solid #5dd39e;border-radius:6px;padding:8px 14px;cursor:pointer">↺ Reabrir</button>
+        <button class="bz-btn-cerrar" style="background:transparent;color:var(--text-muted);border:1px solid var(--border);border-radius:6px;padding:8px 14px;cursor:pointer">Cerrar</button>`;
+    }
     const labelMrk = item.tipo === 'estimacion_subcontratista' ? 'Marcar Pagado' : 'Marcar Cobrado';
     return `
       <button class="bz-btn-marcar-pagado" style="background:#5dd39e;color:#0e3a25;border:none;border-radius:6px;padding:8px 14px;font-weight:600;cursor:pointer">✓ ${labelMrk}</button>
@@ -698,6 +775,10 @@ async function _marcarEnRevision(item) {
 // aprobarYPagar=false → movimiento status 'Pendiente'
 // aprobarYPagar=true  → modal de pago, movimiento status 'Pagado', estado cobrado/pagado
 async function _aprobarItem(item, aprobarYPagar = false) {
+  // Caja chica: rutas especializadas (ver _aprobarGastoCajaChica / _aprobarDepositoCajaChica)
+  if (item.tipo === 'gasto_caja_chica')   return _aprobarGastoCajaChica(item);
+  if (item.tipo === 'deposito_caja_chica') return _aprobarDepositoCajaChica(item);
+
   if (!item.proyectoId) { _toast('Falta vincular la obra al proyecto contable.', 'error'); return; }
 
   const fechaISO = item.fecha
@@ -849,6 +930,10 @@ async function _marcarPagadoCobrado(item) {
 }
 
 async function _reabrirItem(item) {
+  // Caja chica no tiene paso intermedio "Pendiente" — reabrir = volver a 'reportado'.
+  if (item.tipo === 'gasto_caja_chica' || item.tipo === 'deposito_caja_chica') {
+    return _reabrirItemCajaChica(item);
+  }
   if (!confirm('¿Reabrir? El movimiento volverá a estado "Pendiente".')) return;
   try {
     if (item.movId) updateItem('sogrub_proy_movimientos', item.movId, { status: 'Pendiente' });
@@ -871,12 +956,59 @@ async function _reabrirItem(item) {
   }
 }
 
+// Reabrir = borrar el movimiento contable creado al aprobar y devolver el
+// item del buzón + el espejo en /shared/cajaChica al estado 'reportado'
+// (gasto) o limpiar el asentamiento (depósito).
+async function _reabrirItemCajaChica(item) {
+  if (!confirm('¿Reabrir este movimiento de caja chica? Se eliminará el asentamiento contable y volverá a estado "reportado".')) return;
+  try {
+    if (item.movId) {
+      // Borra el movimiento — el hook onDelete sincroniza el espejo a
+      // 'reportado' automáticamente. (Ver firebase.js _syncCajaChicaMirrorOnDelete)
+      if (item.tipo === 'gasto_caja_chica') {
+        deleteItem('sogrub_proy_movimientos', item.movId);
+      } else if (item.tipo === 'deposito_caja_chica') {
+        deleteItem('sogrub_movimientos', item.movId);
+      }
+    }
+    // El delete hook del firebase ya marca el buzón como 'huerfano' — sobreescribimos a 'recibido'
+    // porque aquí la reapertura es intencional, no una pérdida.
+    const histKey = `${Date.now()}_reabrir_cc`;
+    const buzonPatch = {
+      estado:       'recibido',
+      aprobadoAt:   null,
+      aprobadoPor:  null,
+      huerfanoAt:   null,
+      huerfanoPor:  null,
+      descripcionHuerfano: null,
+      movId:        null,
+      [`estadoHistorial/${histKey}`]: {
+        estado: 'recibido', at: Date.now(), por: _currentUser?.uid || '',
+        nota: 'Reabierto desde ' + item.estado + ' (caja chica)'
+      }
+    };
+    const updates = { [`/shared/buzon/${item.id}`]: buzonPatch };
+    if (item.obraId && item.movimientoId) {
+      const ccPatch = item.tipo === 'gasto_caja_chica'
+        ? { estado: 'reportado', aprobadoAt: null, aprobadoPor: null, actualizadoAt: Date.now() }
+        : { pendienteAsentar: true, actualizadoAt: Date.now() };
+      updates[`/shared/cajaChica/${item.obraId}/movimientos/${item.movimientoId}`] = ccPatch;
+    }
+    await _multiPathUpdate(updates);
+    _buzon.expanded.delete(item.id);
+    _toast('Movimiento reabierto. Vuelve a estado reportado.', 'success');
+  } catch (err) {
+    console.error('[Buzón reabrir CC]', err);
+    _toast('Error al reabrir: ' + err.message, 'error');
+  }
+}
+
 async function _rechazarItem(item) {
   const motivo = prompt('Motivo del rechazo (visible en la app de origen):');
   if (motivo === null) return;
   try {
     const histKey = `${Date.now()}_rech`;
-    await _dbRef(`/shared/buzon/${item.id}`).update({
+    const buzonPatch = {
       estado:             'rechazado',
       rechazadoAt:        Date.now(),
       rechazadoPor:       _currentUser?.uid || '',
@@ -884,12 +1016,36 @@ async function _rechazarItem(item) {
       [`estadoHistorial/${histKey}`]: {
         estado: 'rechazado', at: Date.now(), por: _currentUser?.uid || '', nota: motivo || ''
       }
-    });
+    };
+    // Multi-path update: si es caja chica, también actualizar el espejo en
+    // /shared/cajaChica/{obraId}/movimientos/{movimientoId} para que el
+    // saldo conciliado y el estado en materiales queden sincronizados.
+    const updates = { [`/shared/buzon/${item.id}`]: buzonPatch };
+    if ((item.tipo === 'gasto_caja_chica' || item.tipo === 'deposito_caja_chica')
+        && item.obraId && item.movimientoId) {
+      updates[`/shared/cajaChica/${item.obraId}/movimientos/${item.movimientoId}`] = {
+        estado: 'rechazado',
+        rechazadoAt: Date.now(),
+        rechazadoPor: { uid: _currentUser?.uid || '', email: _currentUser?.email || '' },
+        motivoRechazo: motivo || '',
+        actualizadoAt: Date.now()
+      };
+    }
+    await _multiPathUpdate(updates);
     _buzon.expanded.delete(item.id);
     _toast('Item rechazado.', 'success');
   } catch (err) {
     _toast('Error al rechazar: ' + err.message, 'error');
   }
+}
+
+// Helper: aplica varios update() bajo distintos paths absolutos. Firebase RTDB
+// soporta multi-path update solo si comparten root; aquí los ejecuto en
+// paralelo, individualmente. Atomicidad relajada (best-effort).
+async function _multiPathUpdate(updates) {
+  await Promise.all(Object.entries(updates).map(([path, patch]) =>
+    _dbRef(path).update(patch)
+  ));
 }
 
 async function _cerrarItem(item) {
@@ -995,6 +1151,261 @@ async function _mapearDesgloseAOpusBitacora(proyectoId, desglose) {
     if (conceptoKey && importe > 0) out.push({ concepto_id: conceptoKey, importe });
   }
   return out;
+}
+
+// ─── Caja chica ────────────────────────────────────────────────────────────
+//
+// Tipos del buzón originados desde app-materiales:
+//   - gasto_caja_chica     → recepción de almacén pagada con caja chica.
+//   - deposito_caja_chica  → depósito por transferencia desde Mifel a la caja
+//                            (los depósitos en efectivo no se publican).
+//
+// Aprobar gasto:    crear sogrub_proy_movimientos {tipo:'gasto', categoria:'Caja chica'}.
+// Aprobar depósito: crear sogrub_movimientos {tipo:'deposito_caja_chica'} (egreso de Mifel).
+// En ambos casos: multi-path update del buzón + espejo en /shared/cajaChica.
+//
+// Estas funciones están exportadas implícitamente al scope global para que la
+// vista por proyecto (caja-chica.js) pueda invocarlas desde la fila de la tabla.
+
+async function _resolverProyectoIdPorObra(obraId) {
+  if (!obraId) return null;
+  try {
+    const snap = await _dbRef(`/shared/obraLinks/${obraId}`).get();
+    return snap.exists() ? snap.val() : null;
+  } catch (e) { console.warn('[Buzón] obraLinks lookup:', e); return null; }
+}
+
+// Mapea el desglose de un gasto_caja_chica al shape de bitácora
+// `[{concepto_id, importe}]`. El payload de materiales ya incluye conceptoKey
+// (la clave del catálogo /shared/catalogos/{obraId}/conceptos), así que solo
+// validamos su existencia.
+async function _mapearDesgloseCajaChica(obraId, desglose) {
+  if (!Array.isArray(desglose) || !desglose.length || !obraId) return { mapped: [], faltantes: 0 };
+  let conceptos = null;
+  try {
+    const snap = await _dbRef(`/shared/catalogos/${obraId}/conceptos`).get();
+    conceptos = snap.val();
+  } catch (e) { console.warn('[Buzón] shared/catalogos:', e); return { mapped: [], faltantes: desglose.length }; }
+  const mapped = [];
+  let faltantes = 0;
+  for (const d of desglose) {
+    const ck = d.conceptoKey;
+    const importe = Number(d.monto) || 0;
+    if (importe <= 0) continue;
+    if (ck && conceptos?.[ck]) {
+      mapped.push({ concepto_id: ck, importe });
+    } else {
+      faltantes++;
+    }
+  }
+  return { mapped, faltantes };
+}
+
+async function _aprobarGastoCajaChica(item) {
+  // Resolver proyectoId
+  const proyectoId = item.proyectoId || await _resolverProyectoIdPorObra(item.obraId);
+  if (!proyectoId) {
+    _toast('No hay proyecto vinculado a esta obra. Crea el link en /shared/obraLinks primero.', 'error');
+    return;
+  }
+
+  const importe = Number(item.monto) || 0;
+  if (importe <= 0) { _toast('Monto inválido.', 'error'); return; }
+
+  // Mapear desglose contra catálogo
+  const { mapped, faltantes } = await _mapearDesgloseCajaChica(item.obraId, item.desglose);
+
+  if (faltantes > 0) {
+    if (!confirm(`⚠ ${faltantes} de ${item.desglose.length} líneas no encontraron concepto OPUS en el catálogo. ¿Aprobar de todas formas? (esas líneas no se cargarán al desglose contable)`)) {
+      return;
+    }
+  }
+
+  let folio;
+  try { folio = await _generarFolio('CP'); }
+  catch (err) { _toast('Error al generar folio: ' + err.message, 'error'); return; }
+
+  // Tickets de caja chica suelen traer IVA mexicano del 16% bruto
+  const subtotal = importe / 1.16;
+  const iva = importe - subtotal;
+
+  const proveedorNombre = (item.proveedor || '').trim();
+  const provDef = proveedorNombre
+    ? _findOrCreateProveedor(proveedorNombre, {})
+    : null;
+
+  const fechaISO = item.fecha
+    ? new Date(item.fecha).toISOString().slice(0, 10)
+    : new Date().toISOString().slice(0, 10);
+
+  const movimiento = {
+    proyecto_id:    proyectoId,
+    obraId:         item.obraId,
+    movimiento_caja_chica_id: item.movimientoId,
+    fecha:          fechaISO,
+    monto:          -Math.abs(importe),
+    concepto:       `[${folio}] Caja chica · ${proveedorNombre || '(sin proveedor)'}${item.factura ? ' · F.' + item.factura : ''}${item.comentario ? ' · ' + item.comentario.slice(0, 60) : ''}`,
+    subcontratista: proveedorNombre,
+    status:         'Pagado',
+    tipo:           'gasto',
+    categoria:      'Caja chica',
+    origen_buzon_id: item.id,
+    monto_subtotal: subtotal,
+    monto_iva:      iva,
+    incluye_iva:    true,
+    proveedor_id:   provDef?.id || null,
+    desglose_presupuesto: mapped.length ? mapped : undefined,
+  };
+
+  try {
+    const created = addItem('sogrub_proy_movimientos', movimiento);
+    const histKey = `${Date.now()}_apr_cc`;
+    const buzonPatch = {
+      estado:       'aprobado',
+      folio,
+      aprobadoAt:   Date.now(),
+      aprobadoPor:  _currentUser?.uid || '',
+      movId:        created.id,
+      destinoRefPath: `sogrub_proy_movimientos[id=${created.id}]`,
+      huerfanoAt:   null,
+      huerfanoPor:  null,
+      descripcionHuerfano: null,
+      [`estadoHistorial/${histKey}`]: { estado: 'aprobado', at: Date.now(), por: _currentUser?.uid || '' }
+    };
+    const updates = { [`/shared/buzon/${item.id}`]: buzonPatch };
+    if (item.obraId && item.movimientoId) {
+      updates[`/shared/cajaChica/${item.obraId}/movimientos/${item.movimientoId}`] = {
+        estado: 'aprobado',
+        aprobadoAt: Date.now(),
+        aprobadoPor: { uid: _currentUser?.uid || '', email: _currentUser?.email || '' },
+        actualizadoAt: Date.now()
+      };
+    }
+    await _multiPathUpdate(updates);
+    _buzon.expanded.delete(item.id);
+    const desgloseExtra = mapped.length
+      ? ` · ${mapped.length} concepto${mapped.length === 1 ? '' : 's'} OPUS${faltantes > 0 ? ' · ⚠ ' + faltantes + ' faltante(s)' : ''}`
+      : (faltantes > 0 ? ' · ⚠ sin desglose OPUS' : '');
+    _toast(`${folio} · Gasto $${importe.toLocaleString('es-MX', {minimumFractionDigits:2})} asentado.${desgloseExtra}`, 'success');
+  } catch (err) {
+    console.error('[Buzón aprobar gasto CC]', err);
+    _toast('Error al aprobar: ' + err.message, 'error');
+  }
+}
+
+async function _aprobarDepositoCajaChica(item) {
+  const importe = Number(item.monto) || 0;
+  if (importe <= 0) { _toast('Monto inválido.', 'error'); return; }
+
+  let folio;
+  try { folio = await _generarFolio('CC'); }
+  catch (err) { _toast('Error al generar folio: ' + err.message, 'error'); return; }
+
+  const fechaISO = item.fecha
+    ? new Date(item.fecha).toISOString().slice(0, 10)
+    : new Date().toISOString().slice(0, 10);
+
+  const proyectoId = item.proyectoId || await _resolverProyectoIdPorObra(item.obraId);
+
+  // Egreso de Mifel — el saldo de caja chica vive en /shared/cajaChica, no
+  // duplicamos con un ingreso al ledger del proyecto.
+  const movimiento = {
+    fecha:          fechaISO,
+    monto:          -Math.abs(importe),
+    concepto:       `[${folio}] Depósito caja chica${item.obraNombre ? ' · ' + item.obraNombre : ''} · TRANSF${item.comentario ? ' · ' + item.comentario.slice(0, 60) : ''}`,
+    status:         'Pagado',
+    tipo:           'deposito_caja_chica',
+    proyecto_id:    proyectoId || null,
+    obraId:         item.obraId,
+    movimiento_caja_chica_id: item.movimientoId,
+    origen_buzon_id: item.id,
+  };
+
+  try {
+    const created = addItem('sogrub_movimientos', movimiento);
+    const histKey = `${Date.now()}_apr_dep`;
+    const buzonPatch = {
+      estado:       'aprobado',
+      folio,
+      aprobadoAt:   Date.now(),
+      aprobadoPor:  _currentUser?.uid || '',
+      movId:        created.id,
+      destinoRefPath: `sogrub_movimientos[id=${created.id}]`,
+      huerfanoAt:   null,
+      huerfanoPor:  null,
+      descripcionHuerfano: null,
+      [`estadoHistorial/${histKey}`]: { estado: 'aprobado', at: Date.now(), por: _currentUser?.uid || '' }
+    };
+    const updates = { [`/shared/buzon/${item.id}`]: buzonPatch };
+    if (item.obraId && item.movimientoId) {
+      updates[`/shared/cajaChica/${item.obraId}/movimientos/${item.movimientoId}`] = {
+        asentadoAt: Date.now(),
+        asentadoPor: { uid: _currentUser?.uid || '', email: _currentUser?.email || '' },
+        actualizadoAt: Date.now(),
+        pendienteAsentar: false
+      };
+    }
+    await _multiPathUpdate(updates);
+    _buzon.expanded.delete(item.id);
+    _toast(`${folio} · Depósito $${importe.toLocaleString('es-MX', {minimumFractionDigits:2})} asentado en Mifel.`, 'success');
+  } catch (err) {
+    console.error('[Buzón aprobar depósito CC]', err);
+    _toast('Error al aprobar: ' + err.message, 'error');
+  }
+}
+
+// Acción originada desde la vista por proyecto (caja-chica.js): el contador
+// deposita directamente desde bitácora (no pasa por el buzón). Crea el
+// movimiento en /shared/cajaChica + el egreso bancario en sogrub_movimientos.
+async function _depositarCajaChicaDesdeBitacora({ obraId, obraNombre, monto, fecha, comentario, metodoDeposito }) {
+  if (!obraId) throw new Error('obraId requerido');
+  const importe = Number(monto) || 0;
+  if (importe <= 0) throw new Error('Monto inválido');
+  const fechaMs = fecha ? new Date(fecha + 'T12:00').getTime() : Date.now();
+  const fechaISO = fecha || new Date().toISOString().slice(0, 10);
+  const metodo = metodoDeposito || 'transferencia';
+
+  const proyectoId = await _resolverProyectoIdPorObra(obraId);
+
+  // 1) Crear movimiento en /shared/cajaChica (source of truth del saldo)
+  const ccData = {
+    tipo: 'deposito',
+    metodoDeposito: metodo,
+    monto: importe,
+    fecha: fechaMs,
+    comentario: comentario || null,
+    autor: { uid: _currentUser?.uid || '', email: _currentUser?.email || '' },
+    origen: 'bitacora',
+    createdAt: Date.now()
+  };
+  const movRef = _dbRef(`/shared/cajaChica/${obraId}/movimientos`).push();
+  await movRef.set(ccData);
+  const movCajaChicaId = movRef.key;
+
+  // 2) Si es transferencia, asentar el egreso bancario en sogrub_movimientos
+  if (metodo === 'transferencia') {
+    const folio = await _generarFolio('CC');
+    const created = addItem('sogrub_movimientos', {
+      fecha:    fechaISO,
+      monto:    -Math.abs(importe),
+      concepto: `[${folio}] Depósito caja chica${obraNombre ? ' · ' + obraNombre : ''} · TRANSF${comentario ? ' · ' + comentario.slice(0, 60) : ''}`,
+      status:   'Pagado',
+      tipo:     'deposito_caja_chica',
+      proyecto_id: proyectoId || null,
+      obraId,
+      movimiento_caja_chica_id: movCajaChicaId,
+    });
+    // Marcar el movimiento de caja chica como ya asentado
+    await _dbRef(`/shared/cajaChica/${obraId}/movimientos/${movCajaChicaId}`).update({
+      asentadoAt: Date.now(),
+      asentadoBancarioId: created.id,
+      folioBancario: folio
+    });
+    return { movCajaChicaId, mifelMovId: created.id, folio };
+  }
+
+  // Efectivo: solo el registro en /shared/cajaChica, sin egreso bancario.
+  return { movCajaChicaId, mifelMovId: null, folio: null };
 }
 
 // ─── Proveedor ─────────────────────────────────────────────────────────────

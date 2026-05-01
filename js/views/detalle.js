@@ -42,12 +42,13 @@ function renderDetalle(proyectoId) {
   // ---- Toolbar acciones ----
   root.appendChild(renderDetalleToolbar(proyectoId, proyecto));
 
-  // ---- Sub-tabs: Movimientos | Presupuesto ----
+  // ---- Sub-tabs: Movimientos | Presupuesto | Caja chica ----
   const subNav = document.createElement('div');
   subNav.className = 'detalle-sub-nav';
   subNav.innerHTML = `
     <button class="detalle-sub-tab${_detalleState.activeTab === 'movimientos' ? ' active' : ''}" data-tab="movimientos">Movimientos</button>
     <button class="detalle-sub-tab${_detalleState.activeTab === 'presupuesto' ? ' active' : ''}" data-tab="presupuesto">Presupuesto OPUS</button>
+    <button class="detalle-sub-tab${_detalleState.activeTab === 'caja_chica' ? ' active' : ''}" data-tab="caja_chica">💰 Caja chica</button>
   `;
   root.appendChild(subNav);
 
@@ -57,6 +58,11 @@ function renderDetalle(proyectoId) {
   root.appendChild(contentArea);
 
   function _showDetalleTab(tab) {
+    // Limpiar suscripción de caja chica del tab anterior si aplica
+    if (_detalleState.activeTab === 'caja_chica' && tab !== 'caja_chica' &&
+        typeof _detenerCajaChica === 'function') {
+      _detenerCajaChica(proyectoId);
+    }
     _detalleState.activeTab = tab;
     subNav.querySelectorAll('.detalle-sub-tab').forEach(b =>
       b.classList.toggle('active', b.dataset.tab === tab)
@@ -73,11 +79,16 @@ function renderDetalle(proyectoId) {
       tableWrap.id = 'detalle-table-wrap';
       contentArea.appendChild(tableWrap);
       refreshDetalleTable(proyectoId);
-    } else {
+    } else if (tab === 'presupuesto') {
       const presWrap = document.createElement('div');
       presWrap.id = 'presupuesto-tab-wrap';
       contentArea.appendChild(presWrap);
       renderPresupuestoTab(proyectoId);
+    } else if (tab === 'caja_chica') {
+      const ccWrap = document.createElement('div');
+      ccWrap.id = 'caja-chica-tab-wrap';
+      contentArea.appendChild(ccWrap);
+      renderCajaChicaProyecto(proyectoId);
     }
   }
 
