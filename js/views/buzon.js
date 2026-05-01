@@ -42,17 +42,38 @@ const _TABS = [
 
 const _buzon = {
   items:      {},
+  obraLinks:  {},        // mapa obraId → proyectoId (cargado de /shared/obraLinks)
   tab:        'recibido',
   expanded:   new Set(),
   subscribed: false,
+  linksSubscribed: false,
   migrated:   false,
 };
+
+// Resuelve proyectoId para un item del buzón. Items de estimaciones lo traen
+// directo en el payload (item.proyectoId); items de materiales (gasto/depósito
+// caja chica) sólo traen obraId, así que hay que cruzar contra /shared/obraLinks.
+function _resolverProyectoIdItem(item) {
+  return item.proyectoId || (item.obraId && _buzon.obraLinks[item.obraId]) || null;
+}
 
 // ─── Suscripción ───────────────────────────────────────────────────────────
 
 function _suscribirBuzon() {
   if (_buzon.subscribed) return;
   _buzon.subscribed = true;
+  // /shared/obraLinks: mapa pequeño (un entry por obra). Lo suscribimos una vez
+  // y queda en cache para resolver proyectoId de items de caja chica al render.
+  if (!_buzon.linksSubscribed) {
+    _buzon.linksSubscribed = true;
+    _dbRef('/shared/obraLinks').on('value', s => {
+      _buzon.obraLinks = s.val() || {};
+      _actualizarBadgeBuzon();
+      if (typeof _activeView !== 'undefined' && _activeView === 'buzon') {
+        renderBuzon();
+      }
+    }, err => console.warn('[Buzón] obraLinks listener:', err));
+  }
   _dbRef('/shared/buzon').on('value', snap => {
     _buzon.items = snap.val() || {};
     if (!_buzon.migrated) {
@@ -325,9 +346,10 @@ function _cardBodyHTML(item) {
     : (item?.monto?.conIva === false
         ? '<span style="color:#e0a04c">Sin IVA</span> — importe = subtotal'
         : `Subtotal $${(item?.monto?.subtotal || 0).toLocaleString('es-MX',{minimumFractionDigits:2})} · IVA $${(item?.monto?.iva || 0).toLocaleString('es-MX',{minimumFractionDigits:2})}`);
-  const proyNombre  = item.proyectoId
-    ? `<b style="color:#5dd39e">${_obtenerNombreProyecto(item.proyectoId)}</b>`
-    : `<span style="color:#e15555">⚠ Obra sin vincular</span>`;
+  const proyectoIdResuelto = _resolverProyectoIdItem(item);
+  const proyNombre  = proyectoIdResuelto
+    ? `<b style="color:#5dd39e">${_obtenerNombreProyecto(proyectoIdResuelto)}</b>${(!item.proyectoId && proyectoIdResuelto) ? '<span class="text-muted" style="font-size:11px"> (vía obraLinks)</span>' : ''}`
+    : `<span style="color:#e15555">⚠ Obra sin vincular${item.obraId ? ` <code style='font-size:10px'>${item.obraId}</code>` : ''}</span>`;
 
   const col1 = esSub
     ? `Subcontrato: <b>${item.subcontratoNombre || '—'}</b><br>
@@ -665,7 +687,9 @@ function _stepperHTML(item) {
 
 function _accionesHTML(item) {
   const esCajaChica = item.tipo === 'gasto_caja_chica' || item.tipo === 'deposito_caja_chica';
-  const noProj = !item.proyectoId && !esCajaChica;  // CC resuelve via obraLinks al aprobar
+  // Resolvemos via obraLinks para items que sólo traen obraId (los de materiales).
+  const proyectoResuelto = _resolverProyectoIdItem(item);
+  const noProj = !proyectoResuelto;
   const noVinc = noProj ? '<span style="font-size:11px;color:#e15555;align-self:center">Vincula la obra primero</span>' : '';
   const dis    = noProj ? 'disabled style="opacity:.5;cursor:not-allowed"' : 'style="cursor:pointer"';
   const e      = item.estado;
