@@ -15,6 +15,7 @@ function _initApp() {
   initNavigation();
   navigateTo('dashboard');
   initScrollHints();
+  initSyncFinanzas(); // sync saldo → fnz-psnal (sync-finanzas.js)
 }
 
 // =====================================================
