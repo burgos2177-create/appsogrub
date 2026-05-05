@@ -39,9 +39,14 @@
       </button>
     </nav>
 
-    <!-- Indicador de conexión Firebase + sync fnz -->
+    <!-- Indicador de conexión Firebase + configuración -->
     <div style="display:flex;align-items:center;gap:8px">
-      <div id="fnz-sync-widget" style="display:flex;align-items:center"></div>
+      <button id="btn-settings" title="Configuración"
+        style="background:none;border:1px solid var(--border);border-radius:20px;padding:4px 10px;cursor:pointer;color:var(--text-muted);font-size:14px;line-height:1;transition:all var(--transition);display:flex;align-items:center"
+        onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'"
+        onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-muted)'">
+        &#9881;
+      </button>
       <button id="btn-hard-refresh" title="Recargar app" onclick="location.reload(true)"
         style="background:none;border:1px solid var(--border);border-radius:20px;padding:4px 10px;cursor:pointer;color:var(--text-muted);font-size:12px;line-height:1;transition:all var(--transition);display:flex;align-items:center;gap:5px"
         onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'"
@@ -151,28 +156,29 @@
        Cache-busting: el suffix ?v=... se debe bumpear en CADA deploy
        que toque cualquier .js local. Find-replace todas las ocurrencias
        de la versión actual al pushear (ver CLAUDE.md). -->
-  <script src="js/drive.js?v=20260505-1357"></script>
-  <script src="js/firebase.js?v=20260505-1357"></script>
-  <script src="js/ocr.js?v=20260505-1357"></script>
-  <script src="js/storage.js?v=20260505-1357"></script>
-  <script src="js/calculations.js?v=20260505-1357"></script>
-  <script src="js/components.js?v=20260505-1357"></script>
-  <script src="js/views/dashboard.js?v=20260505-1357"></script>
-  <script src="js/views/caja.js?v=20260505-1357"></script>
-  <script src="js/views/proyectos.js?v=20260505-1357"></script>
-  <script src="js/views/detalle.js?v=20260505-1357"></script>
-  <script src="js/views/presupuesto.js?v=20260505-1357"></script>
-  <script src="js/views/proveedores.js?v=20260505-1357"></script>
-  <script src="js/views/importar.js?v=20260505-1357"></script>
-  <script src="js/views/analisis.js?v=20260505-1357"></script>
-  <script src="js/fiscal-calculations.js?v=20260505-1357"></script>
-  <script src="js/fiscal-xml-parser.js?v=20260505-1357"></script>
-  <script src="js/views/fiscal.js?v=20260505-1357"></script>
-  <script src="js/fiscal-export.js?v=20260505-1357"></script>
-  <script src="js/views/buzon.js?v=20260505-1357"></script>
-  <script src="js/views/caja-chica.js?v=20260505-1357"></script>
-  <script src="js/sync-finanzas.js?v=20260505-1357"></script>
-  <script src="js/app.js?v=20260505-1357"></script>
+  <script src="js/drive.js?v=20260505-1424"></script>
+  <script src="js/firebase.js?v=20260505-1424"></script>
+  <script src="js/ocr.js?v=20260505-1424"></script>
+  <script src="js/storage.js?v=20260505-1424"></script>
+  <script src="js/calculations.js?v=20260505-1424"></script>
+  <script src="js/components.js?v=20260505-1424"></script>
+  <script src="js/views/dashboard.js?v=20260505-1424"></script>
+  <script src="js/views/caja.js?v=20260505-1424"></script>
+  <script src="js/views/proyectos.js?v=20260505-1424"></script>
+  <script src="js/views/detalle.js?v=20260505-1424"></script>
+  <script src="js/views/presupuesto.js?v=20260505-1424"></script>
+  <script src="js/views/proveedores.js?v=20260505-1424"></script>
+  <script src="js/views/importar.js?v=20260505-1424"></script>
+  <script src="js/views/analisis.js?v=20260505-1424"></script>
+  <script src="js/fiscal-calculations.js?v=20260505-1424"></script>
+  <script src="js/fiscal-xml-parser.js?v=20260505-1424"></script>
+  <script src="js/views/fiscal.js?v=20260505-1424"></script>
+  <script src="js/fiscal-export.js?v=20260505-1424"></script>
+  <script src="js/views/buzon.js?v=20260505-1424"></script>
+  <script src="js/views/caja-chica.js?v=20260505-1424"></script>
+  <script src="js/settings.js?v=20260505-1424"></script>
+  <script src="js/sync-finanzas.js?v=20260505-1424"></script>
+  <script src="js/app.js?v=20260505-1424"></script>
 
 </body>
 </html>

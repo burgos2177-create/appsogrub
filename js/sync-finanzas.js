@@ -48,7 +48,7 @@ function _initPsnApp() {
     // Persistencia de sesión — Firebase la maneja en localStorage
     _psnAuth.onAuthStateChanged(user => {
       _psnUser = user;
-      _renderSyncWidget();
+      _renderFnzSection();
       if (user) syncSaldo(); // sync inmediato al detectar sesión
     });
   } catch (err) {
@@ -65,7 +65,7 @@ async function syncSaldo() {
   if (!_psnUser || !_psnDb) return;
 
   _syncState = 'syncing';
-  _renderSyncWidget();
+  _renderFnzSection();
 
   let saldo;
   try {
@@ -74,7 +74,7 @@ async function syncSaldo() {
   } catch (e) {
     console.warn('[SyncFinanzas] calcSaldoGlobal error:', e);
     _syncState = 'error';
-    _renderSyncWidget();
+    _renderFnzSection();
     return;
   }
 
@@ -119,7 +119,7 @@ async function syncSaldo() {
     }
   }
 
-  _renderSyncWidget();
+  _renderFnzSection();
 }
 
 // =====================================================
@@ -161,64 +161,93 @@ async function _logoutPsn() {
   _psnUser  = null;
   _syncState = 'idle';
   _lastSync  = null;
-  _renderSyncWidget();
+  _renderFnzSection();
 }
 
 // =====================================================
-// WIDGET UI — renderizado en el div #fnz-sync-widget
+// FNZ SECTION — renderizada dentro del modal de configuración
+// (#settings-fnz-section). Si el modal está cerrado, no-op.
 // =====================================================
-function _renderSyncWidget() {
-  const el = document.getElementById('fnz-sync-widget');
-  if (!el) return;
+function _renderFnzSection() {
+  const sec = document.getElementById('settings-fnz-section');
+  if (!sec) return;
 
-  // ---- Sin sesión → botón "fnz" para conectar ----
+  const H = 'font-size:13px;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:.5px;margin:0';
+  const ROW = 'display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:13px';
+  const LBL = 'color:var(--text-muted);font-size:12px';
+  const VAL = 'color:var(--text);font-family:ui-monospace,monospace;font-size:12px';
+  const BTN = 'background:var(--accent);color:#08121a;border:none;border-radius:6px;padding:6px 12px;font-weight:600;cursor:pointer;font-size:12px';
+  const BTN_GHOST  = 'background:none;border:1px solid var(--border);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;color:var(--text-muted)';
+  const BTN_DANGER = 'background:none;border:1px solid #e15555;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;color:#e15555';
+
+  // Saldo actual a sincronizar (preview)
+  let saldoPreview = '—';
+  try { saldoPreview = '$' + calcSaldoGlobal().toLocaleString('es-MX', { minimumFractionDigits: 2 }); }
+  catch (_) {}
+
+  // ---- Sin sesión ----
   if (!_psnUser) {
-    el.innerHTML = `
-      <button id="fnz-login-btn" title="Conectar Finanzas Personales (fnz)"
-        style="display:flex;align-items:center;gap:5px;background:none;
-               border:1px solid var(--border);border-radius:20px;
-               padding:4px 10px;cursor:pointer;color:var(--text-muted);
-               font-size:12px;line-height:1;transition:all var(--transition)"
-        onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'"
-        onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-muted)'">
-        ⇄ fnz
-      </button>`;
-    el.querySelector('#fnz-login-btn')?.addEventListener('click', _loginGoogle);
+    sec.innerHTML = `
+      <h4 style="${H}">Bitácora Personal · fnz-psnal</h4>
+      <div style="${ROW}">
+        <span style="${LBL}">Estado</span>
+        <span style="${VAL};color:var(--text-muted)">Sin conexión</span>
+      </div>
+      <div style="${ROW}">
+        <span style="${LBL}">Saldo a sincronizar</span>
+        <span style="${VAL}">${saldoPreview} (${_PSN_EMPRESA_NOMBRE})</span>
+      </div>
+      <p style="font-size:12px;color:var(--text-muted);margin:0;line-height:1.5">
+        Inicia sesión con la cuenta Google dueña de la bitácora personal para
+        empezar a publicar el saldo de SOGRUB en vivo.
+      </p>
+      <div style="display:flex;justify-content:flex-end">
+        <button id="fnz-login-btn" style="${BTN}">Iniciar sesión con Google</button>
+      </div>
+    `;
+    sec.querySelector('#fnz-login-btn')?.addEventListener('click', _loginGoogle);
     return;
   }
 
-  // ---- Con sesión → indicador + sync manual + logout ----
-  const stateIcon  = { ok: '✓', syncing: '⟳', error: '⚠', idle: '·' }[_syncState] ?? '·';
-  const stateColor = { ok: '#2dbd7a', syncing: 'var(--accent)', error: '#e15555', idle: 'var(--text-muted)' }[_syncState];
-  const timeStr    = _lastSync
-    ? _lastSync.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })
-    : '–';
-  const tooltip = _psnUser.email
-    + (_lastSync ? `\nÚltimo sync: ${timeStr}` : '\nSin sync aún');
+  // ---- Con sesión ----
+  const icon  = { ok: '✓', syncing: '⟳', error: '⚠', idle: '·' }[_syncState] ?? '·';
+  const color = { ok: '#2dbd7a', syncing: 'var(--accent)', error: '#e15555', idle: 'var(--text-muted)' }[_syncState];
+  const stateLabel = { ok: 'Sincronizado', syncing: 'Sincronizando…', error: 'Error de sync', idle: 'Listo' }[_syncState];
+  const timeStr = _lastSync
+    ? _lastSync.toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'medium' })
+    : 'Nunca';
 
-  el.innerHTML = `
-    <div style="display:flex;align-items:center;gap:4px" title="${tooltip}">
-      <span style="display:flex;align-items:center;gap:4px;font-size:12px;
-                   border:1px solid var(--border);border-radius:20px;
-                   padding:4px 8px;line-height:1;color:${stateColor}">
-        <span style="font-weight:700">${stateIcon}</span>
-        <span style="color:var(--text-muted)">fnz</span>
-        ${_lastSync ? `<span style="color:var(--text-muted);font-size:11px">${timeStr}</span>` : ''}
+  sec.innerHTML = `
+    <h4 style="${H}">Bitácora Personal · fnz-psnal</h4>
+    <div style="${ROW}">
+      <span style="${LBL}">Estado</span>
+      <span style="${VAL};color:${color};display:flex;align-items:center;gap:6px">
+        <span style="font-weight:700">${icon}</span> ${stateLabel}
       </span>
-      <button id="fnz-sync-now" title="Sync manual"
-        style="background:none;border:none;cursor:pointer;color:var(--text-muted);
-               font-size:13px;padding:2px 3px;line-height:1"
-        onmouseover="this.style.color='var(--accent)'"
-        onmouseout="this.style.color='var(--text-muted)'">⟳</button>
-      <button id="fnz-logout" title="Desconectar fnz"
-        style="background:none;border:none;cursor:pointer;color:var(--text-muted);
-               font-size:11px;padding:2px 3px;line-height:1"
-        onmouseover="this.style.color='#e15555'"
-        onmouseout="this.style.color='var(--text-muted)'">✕</button>
-    </div>`;
-
-  el.querySelector('#fnz-sync-now')?.addEventListener('click', syncSaldo);
-  el.querySelector('#fnz-logout')?.addEventListener('click', _logoutPsn);
+    </div>
+    <div style="${ROW}">
+      <span style="${LBL}">Cuenta Google</span>
+      <span style="${VAL}">${_psnUser.email}</span>
+    </div>
+    <div style="${ROW}">
+      <span style="${LBL}">Empresa publicada</span>
+      <span style="${VAL}">${_PSN_EMPRESA_NOMBRE} (id: ${_PSN_EMPRESA_ID})</span>
+    </div>
+    <div style="${ROW}">
+      <span style="${LBL}">Saldo actual</span>
+      <span style="${VAL}">${saldoPreview}</span>
+    </div>
+    <div style="${ROW}">
+      <span style="${LBL}">Último sync</span>
+      <span style="${VAL}">${timeStr}</span>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:4px">
+      <button id="fnz-sync-now" style="${BTN_GHOST}">⟳ Sincronizar ahora</button>
+      <button id="fnz-logout" style="${BTN_DANGER}">Desconectar</button>
+    </div>
+  `;
+  sec.querySelector('#fnz-sync-now')?.addEventListener('click', syncSaldo);
+  sec.querySelector('#fnz-logout')?.addEventListener('click', _logoutPsn);
 }
 
 // =====================================================
@@ -226,5 +255,5 @@ function _renderSyncWidget() {
 // =====================================================
 function initSyncFinanzas() {
   _initPsnApp();
-  _renderSyncWidget(); // render inicial antes de que auth responda
+  _renderFnzSection(); // render inicial antes de que auth responda
 }
