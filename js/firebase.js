@@ -403,6 +403,12 @@ function _onRemoteChange(changedKey) {
   if (changedKey === 'sogrub_proy_movimientos' && typeof _reconciliarBuzon === 'function') {
     _reconciliarBuzon().catch(e => console.warn('[Buzón reconcile from movs]', e));
   }
+
+  // Sincronizar saldo Mifel a fnz-psnal cuando cambian datos que lo afectan
+  const _MIFEL_KEYS = ['sogrub_movimientos', 'sogrub_proy_movimientos', 'sogrub_config'];
+  if (_MIFEL_KEYS.includes(changedKey) && typeof scheduleSyncSaldoMifel === 'function') {
+    scheduleSyncSaldoMifel();
+  }
 }
 
 // =====================================================
