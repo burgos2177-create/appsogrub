@@ -267,19 +267,25 @@ function _buzonCard(item) {
   const ecfg     = _ESTADOS_CFG[item.estado] || _ESTADOS_CFG.recibido;
   const expanded  = _buzon.expanded.has(item.id);
   const esSub     = item.tipo === 'estimacion_subcontratista';
+  const esOC      = item.tipo === 'oc_materiales';
   // Caja chica usa monto plano (number); CxC/CxP usan { subtotal, iva, importe }.
   const esCajaChica = item.tipo === 'gasto_caja_chica' || item.tipo === 'deposito_caja_chica';
-  const monto     = esCajaChica
-    ? Number(item.monto) || 0
-    : (item?.monto?.importe || 0);
+  const monto     = esOC
+    ? Number(item.total) || 0
+    : (esCajaChica
+      ? Number(item.monto) || 0
+      : (item?.monto?.importe || 0));
   const fechaPago = item.fecha
     ? new Date(item.fecha).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })
-    : '—';
+    : (item.fechaEmision
+      ? new Date(item.fechaEmision).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })
+      : '—');
   const tipoLabel = {
     pago_cliente: '💰 Pago de cliente',
     estimacion_subcontratista: '🔧 Estim. subcontratista',
     gasto_caja_chica: '🧾 Gasto caja chica',
-    deposito_caja_chica: '🏦 Depósito caja chica'
+    deposito_caja_chica: '🏦 Depósito caja chica',
+    oc_materiales: '📦 Orden de compra (materiales)'
   }[item.tipo] || item.tipo;
   const desfase   = _calcularDesfase(item);
 
@@ -292,13 +298,13 @@ function _buzonCard(item) {
     <span style="background:${ecfg.color};color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;text-transform:uppercase;letter-spacing:.4px;font-weight:600;flex-shrink:0">${ecfg.label}</span>
     ${item.folio ? `<code style="font-size:11px;color:var(--text-muted);background:var(--surface);padding:1px 5px;border-radius:4px;flex-shrink:0">${item.folio}</code>` : ''}
     <div style="flex:1;min-width:0;overflow:hidden">
-      <div style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${item.descripcion || '—'}</div>
+      <div style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${item.descripcion || (esOC ? `OC para ${item.proveedor?.nombre || '(sin proveedor)'}` : '—')}</div>
       <div style="font-size:11px;color:var(--text-muted)">${tipoLabel} · ${item.obraNombre || item.obraId || '—'} · ${fechaPago}</div>
     </div>
     ${desfase ? `<span title="${desfase.tooltip}" style="font-size:11px;color:#e0a04c;background:rgba(224,160,76,.12);padding:2px 7px;border-radius:8px;flex-shrink:0">⚠ Δ$${Math.abs(desfase.delta).toLocaleString('es-MX', {minimumFractionDigits:2})}</span>` : ''}
     <div style="text-align:right;flex-shrink:0">
-      <div style="font-family:ui-monospace,monospace;font-size:17px;font-weight:700;color:${(esSub || item.tipo === 'gasto_caja_chica') ? '#e15555' : 'var(--accent)'}">
-        ${(esSub || item.tipo === 'gasto_caja_chica') ? '−' : '+'}$${monto.toLocaleString('es-MX', {minimumFractionDigits:2, maximumFractionDigits:2})}
+      <div style="font-family:ui-monospace,monospace;font-size:17px;font-weight:700;color:${(esSub || esOC || item.tipo === 'gasto_caja_chica') ? '#e15555' : 'var(--accent)'}">
+        ${(esSub || esOC || item.tipo === 'gasto_caja_chica') ? '−' : '+'}$${monto.toLocaleString('es-MX', {minimumFractionDigits:2, maximumFractionDigits:2})}
       </div>
     </div>
     <span style="color:var(--text-muted);font-size:14px;flex-shrink:0">${expanded ? '▲' : '▼'}</span>`;
@@ -335,13 +341,18 @@ function _cardBodyHTML(item) {
   const esSub     = item.tipo === 'estimacion_subcontratista';
   const esGastoCC = item.tipo === 'gasto_caja_chica';
   const esDepCC   = item.tipo === 'deposito_caja_chica';
+  const esOC      = item.tipo === 'oc_materiales';
   const esCajaChica = esGastoCC || esDepCC;
   const fechaPago = item.fecha
     ? new Date(item.fecha).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })
-    : '—';
+    : (esOC && item.fechaEmision
+      ? new Date(item.fechaEmision).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })
+      : '—');
   const fechaCreado = item.creadoAt ? new Date(item.creadoAt).toLocaleString('es-MX') : '';
   const montoNum = esCajaChica ? Number(item.monto) || 0 : 0;
-  const montoInfo = esCajaChica
+  const montoInfo = esOC
+    ? `Subtotal $${(item.subtotal || 0).toLocaleString('es-MX',{minimumFractionDigits:2})} · IVA $${(item.ivaImporte || 0).toLocaleString('es-MX',{minimumFractionDigits:2})}${item.retencionesTotal ? ' · Retenciones $' + (item.retencionesTotal).toLocaleString('es-MX',{minimumFractionDigits:2}) : ''} · Total <b>$${(item.total || 0).toLocaleString('es-MX',{minimumFractionDigits:2})}</b>`
+    : esCajaChica
     ? `Importe: <b>$${montoNum.toLocaleString('es-MX',{minimumFractionDigits:2})}</b> <span style="color:var(--text-muted);font-size:11px">(monto plano · sin desglose IVA del lado almacén)</span>`
     : (item?.monto?.conIva === false
         ? '<span style="color:#e0a04c">Sin IVA</span> — importe = subtotal'
@@ -365,6 +376,11 @@ function _cardBodyHTML(item) {
     ? `Método: <b>${item.metodoDeposito === 'transferencia' ? '🏦 Transferencia bancaria' : item.metodoDeposito || '—'}</b><br>
        Comentario: <b>${item.comentario || '—'}</b><br>
        Fecha depósito: <b>${fechaPago}</b>`
+    : esOC
+    ? `Proveedor: <b>${item.proveedor?.nombre || '—'}</b>${item.proveedor?.rfc ? ' <code style="font-size:11px">' + item.proveedor.rfc + '</code>' : ''}<br>
+       Items: <b>${(item.items || []).length}</b>${item.reqIds?.length ? ` · Requisiciones cubiertas: <b>${item.reqIds.length}</b>` : ''}<br>
+       Condiciones: <b>${item.condicionesPago || '—'}</b><br>
+       Fecha emisión: <b>${fechaPago}</b>`
     : `Estimación: <b>#${item.estimNumero ?? '—'}</b><br>
        Fecha pago: <b>${fechaPago}</b>`;
 
@@ -395,7 +411,7 @@ function _cardBodyHTML(item) {
 
   // Desglose OPUS — caja chica usa shape distinta {conceptoKey, conceptoClave, conceptoDescripcion, monto}
   let desgloseHTML = '';
-  if (esGastoCC && Array.isArray(item.desglose) && item.desglose.length > 0) {
+  if ((esGastoCC || esOC) && Array.isArray(item.desglose) && item.desglose.length > 0) {
     const totalCC = item.desglose.reduce((s, d) => s + (Number(d.monto) || 0), 0);
     desgloseHTML = `
       <details open style="margin-top:10px;font-size:11px">
@@ -710,7 +726,7 @@ function _accionesHTML(item) {
         <button class="bz-btn-aprobar" ${dis} style="background:#5dd39e;color:#0e3a25;border:none;border-radius:6px;padding:8px 14px;font-weight:600">${lbl}</button>
         <button class="bz-btn-rechazar" style="background:transparent;color:#e15555;border:1px solid #e15555;border-radius:6px;padding:8px 14px;cursor:pointer">✕ Rechazar</button>`;
     }
-    const labelPagoRapido = item.tipo === 'estimacion_subcontratista' ? 'Aprobar + Pagar' : 'Aprobar + Cobrar';
+    const labelPagoRapido = (item.tipo === 'estimacion_subcontratista' || item.tipo === 'oc_materiales') ? 'Aprobar + Pagar' : 'Aprobar + Cobrar';
     return `
       <button class="bz-btn-aprobar" ${dis} style="background:#5dd39e;color:#0e3a25;border:none;border-radius:6px;padding:8px 14px;font-weight:600">✓ Aprobar</button>
       <button class="bz-btn-aprobar-pagar" ${dis} style="background:#3ab87a;color:#0e3a25;border:none;border-radius:6px;padding:8px 14px;font-weight:600">${labelPagoRapido}</button>
@@ -729,7 +745,7 @@ function _accionesHTML(item) {
         <button class="bz-btn-reabrir" style="background:transparent;color:#5dd39e;border:1px solid #5dd39e;border-radius:6px;padding:8px 14px;cursor:pointer">↺ Reabrir</button>
         <button class="bz-btn-cerrar" style="background:transparent;color:var(--text-muted);border:1px solid var(--border);border-radius:6px;padding:8px 14px;cursor:pointer">Cerrar</button>`;
     }
-    const labelMrk = item.tipo === 'estimacion_subcontratista' ? 'Marcar Pagado' : 'Marcar Cobrado';
+    const labelMrk = (item.tipo === 'estimacion_subcontratista' || item.tipo === 'oc_materiales') ? 'Marcar Pagado' : 'Marcar Cobrado';
     return `
       <button class="bz-btn-marcar-pagado" style="background:#5dd39e;color:#0e3a25;border:none;border-radius:6px;padding:8px 14px;font-weight:600;cursor:pointer">✓ ${labelMrk}</button>
       <button class="bz-btn-cerrar" style="background:transparent;color:var(--text-muted);border:1px solid var(--border);border-radius:6px;padding:8px 14px;cursor:pointer">Cerrar</button>
@@ -813,8 +829,10 @@ async function _marcarEnRevision(item) {
 // aprobarYPagar=true  → modal de pago, movimiento status 'Pagado', estado cobrado/pagado
 async function _aprobarItem(item, aprobarYPagar = false) {
   // Caja chica: rutas especializadas (ver _aprobarGastoCajaChica / _aprobarDepositoCajaChica)
-  if (item.tipo === 'gasto_caja_chica')   return _aprobarGastoCajaChica(item);
+  if (item.tipo === 'gasto_caja_chica')    return _aprobarGastoCajaChica(item);
   if (item.tipo === 'deposito_caja_chica') return _aprobarDepositoCajaChica(item);
+  // OC de compras: trata como gasto categoria='Material' con desglose listo.
+  if (item.tipo === 'oc_materiales')       return _aprobarOCMateriales(item, aprobarYPagar);
 
   if (!item.proyectoId) { _toast('Falta vincular la obra al proyecto contable.', 'error'); return; }
 
@@ -885,7 +903,7 @@ async function _aprobarItem(item, aprobarYPagar = false) {
   // Si es aprobar+pagar, pedir datos de pago antes de crear el movimiento
   let pagoData = null;
   if (aprobarYPagar) {
-    pagoData = await _modalDatosPago(item.tipo === 'estimacion_subcontratista' ? 'pago' : 'cobro');
+    pagoData = await _modalDatosPago((item.tipo === 'estimacion_subcontratista' || item.tipo === 'oc_materiales') ? 'pago' : 'cobro');
     if (!pagoData) return; // cancelado
   }
 
@@ -937,7 +955,8 @@ async function _aprobarItem(item, aprobarYPagar = false) {
 async function _marcarPagadoCobrado(item) {
   if (!item.movId) { _toast('No hay movimiento vinculado.', 'error'); return; }
   const esSub  = item.tipo === 'estimacion_subcontratista';
-  const pagoData = await _modalDatosPago(esSub ? 'pago' : 'cobro');
+  const esOC   = item.tipo === 'oc_materiales';
+  const pagoData = await _modalDatosPago((esSub || esOC) ? 'pago' : 'cobro');
   if (!pagoData) return;
 
   try {
@@ -946,10 +965,10 @@ async function _marcarPagadoCobrado(item) {
       fecha:  pagoData.fechaISO,
     });
 
-    const nuevoEstado = esSub ? 'pagado' : 'cobrado';
+    const nuevoEstado = (esSub || esOC) ? 'pagado' : 'cobrado';
     const tsField     = nuevoEstado === 'cobrado' ? 'cobradoAt' : 'pagadoAt';
     const histKey     = `${Date.now()}_pago`;
-    await _dbRef(`/shared/buzon/${item.id}`).update({
+    const buzonPatch = {
       estado:       nuevoEstado,
       [tsField]:    pagoData.fecha,
       metodoPago:   pagoData.metodo,
@@ -958,7 +977,18 @@ async function _marcarPagadoCobrado(item) {
         estado: nuevoEstado, at: pagoData.fecha, por: _currentUser?.uid || '',
         nota: `${pagoData.metodo}${pagoData.referencia ? ' ref:' + pagoData.referencia : ''}`
       }
-    });
+    };
+    const updates = { [`/shared/buzon/${item.id}`]: buzonPatch };
+    if (esOC && item.obraId && item.ocId) {
+      updates[`/shared/compras/obras/${item.obraId}/oc/${item.ocId}`] = {
+        estado: 'pagada',
+        pagadaAt: pagoData.fecha,
+        metodoPago: pagoData.metodo,
+        referenciaPago: pagoData.referencia || null,
+        actualizadoAt: Date.now()
+      };
+    }
+    await _multiPathUpdate(updates);
     _buzon.expanded.delete(item.id);
     _toast(`Marcado como ${nuevoEstado}.`, 'success');
   } catch (err) {
@@ -1429,6 +1459,144 @@ async function _aprobarDepositoCajaChica(item) {
 
 // ─── Recepción de almacén — modal de validación ────────────────────────────
 //
+// === OC de materiales (origen: app-compras) ===
+//
+// El item del buzón llega ya armado con items, proveedor, totales calculados
+// y desglose por concepto OPUS. Compras es la fuente autoritativa del IVA y
+// el total — bitácora respeta `incluyeIva`, `subtotal`, `ivaImporte`,
+// `retencionesTotal`, `total` (decisión 6 del 2026-05-06).
+//
+// El movimiento contable se crea con tipo='gasto', categoria='Material',
+// status='Pendiente' (CxP) o 'Pagado' si aprobarYPagar. Folio CP-YYYY-NNN.
+// El espejo `/shared/compras/obras/{obraId}/oc/{ocId}` se actualiza con el
+// estado y folio para que compras refleje el avance.
+
+async function _aprobarOCMateriales(item, aprobarYPagar = false) {
+  const proyectoId = item.proyectoId || await _resolverProyectoIdPorObra(item.obraId);
+  if (!proyectoId) {
+    _toast('No hay proyecto vinculado a esta obra. Crea el link en /shared/obraLinks primero.', 'error');
+    return;
+  }
+
+  const total = Number(item.total) || 0;
+  if (total <= 0) { _toast('Total inválido.', 'error'); return; }
+
+  const proveedorNombre = (item.proveedor?.nombre || '').trim();
+  if (!proveedorNombre) { _toast('La OC no tiene proveedor.', 'error'); return; }
+
+  const provDef = _findOrCreateProveedor(proveedorNombre, {
+    rfc: item.proveedor?.rfc || '',
+    email: item.proveedor?.email || '',
+    telefono: item.proveedor?.telefono || ''
+  });
+
+  // Mapear desglose OPUS — el shape coincide con caja chica: [{conceptoKey, monto}]
+  const { mapped, faltantes } = await _mapearDesgloseCajaChica(item.obraId, item.desglose);
+  if (faltantes > 0) {
+    if (!confirm(`⚠ ${faltantes} de ${item.desglose.length} líneas no encontraron concepto OPUS. ¿Aprobar de todas formas? (esas líneas no se cargarán al desglose contable)`)) {
+      return;
+    }
+  }
+
+  let folio;
+  try { folio = await _generarFolio('CP'); }
+  catch (err) { _toast('Error al generar folio: ' + err.message, 'error'); return; }
+
+  let pagoData = null;
+  if (aprobarYPagar) {
+    pagoData = await _modalDatosPago('pago');
+    if (!pagoData) return;
+  }
+
+  const fechaISO = pagoData?.fechaISO
+    || (item.fechaEmision ? new Date(item.fechaEmision).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10));
+
+  const subtotal = Number(item.subtotal) || (item.incluyeIva ? total / (1 + (item.ivaPct || 0.16)) : total);
+  const ivaImporte = Number(item.ivaImporte) || (total - subtotal);
+
+  const reqsLabel = (item.reqIds || []).length > 0
+    ? ` · cubre ${item.reqIds.length} req${item.reqIds.length === 1 ? '' : 's'}`
+    : '';
+
+  const movimiento = {
+    proyecto_id:    proyectoId,
+    obraId:         item.obraId,
+    fecha:          fechaISO,
+    monto:          -Math.abs(total),
+    concepto:       `[${folio}] OC ${proveedorNombre}${reqsLabel}${item.comentariosCompras ? ' · ' + item.comentariosCompras.slice(0, 60) : ''}`,
+    subcontratista: proveedorNombre,
+    status:         aprobarYPagar ? 'Pagado' : 'Pendiente',
+    tipo:           'gasto',
+    categoria:      'Material',
+    origen_buzon_id: item.id,
+    origen_oc_id:   item.ocId || null,
+    monto_subtotal: Math.abs(subtotal),
+    monto_iva:      Math.abs(ivaImporte),
+    incluye_iva:    !!item.incluyeIva,
+    proveedor_id:   provDef?.id || null,
+    desglose_presupuesto: mapped.length ? mapped : undefined
+  };
+
+  try {
+    const created = addItem('sogrub_proy_movimientos', movimiento);
+    const nuevoEstado = aprobarYPagar ? 'pagado' : 'aprobado';
+    const histKey = `${Date.now()}_apr_oc`;
+    const buzonPatch = {
+      estado:       nuevoEstado,
+      folio,
+      aprobadoAt:   Date.now(),
+      aprobadoPor:  _currentUser?.uid || '',
+      movId:        created.id,
+      destinoRefPath: `sogrub_proy_movimientos[id=${created.id}]`,
+      huerfanoAt:   null,
+      huerfanoPor:  null,
+      descripcionHuerfano: null,
+      [`estadoHistorial/${histKey}`]: { estado: nuevoEstado, at: Date.now(), por: _currentUser?.uid || '' }
+    };
+    if (pagoData) {
+      const histKeyPago = `${Date.now() + 1}_pago`;
+      buzonPatch.pagadoAt        = pagoData.fecha;
+      buzonPatch.metodoPago      = pagoData.metodo;
+      buzonPatch.referenciaPago  = pagoData.referencia || null;
+      buzonPatch[`estadoHistorial/${histKeyPago}`] = {
+        estado: 'pagado', at: pagoData.fecha, por: _currentUser?.uid || '',
+        nota: `${pagoData.metodo}${pagoData.referencia ? ' ref:' + pagoData.referencia : ''}`
+      };
+      if (pagoData.fechaISO !== fechaISO) {
+        updateItem('sogrub_proy_movimientos', created.id, { fecha: pagoData.fechaISO });
+      }
+    }
+
+    const updates = { [`/shared/buzon/${item.id}`]: buzonPatch };
+    // Espejo en /shared/compras/obras/{obraId}/oc/{ocId} para que compras vea
+    // el folio asignado y el estado contable.
+    if (item.obraId && item.ocId) {
+      updates[`/shared/compras/obras/${item.obraId}/oc/${item.ocId}`] = {
+        estado: aprobarYPagar ? 'pagada' : 'aprobada',
+        folioContable: folio,
+        movId: created.id,
+        aprobadaAt: Date.now(),
+        aprobadaPor: { uid: _currentUser?.uid || '', email: _currentUser?.email || '' },
+        ...(pagoData && {
+          pagadaAt: pagoData.fecha,
+          metodoPago: pagoData.metodo,
+          referenciaPago: pagoData.referencia || null
+        }),
+        actualizadoAt: Date.now()
+      };
+    }
+    await _multiPathUpdate(updates);
+    _buzon.expanded.delete(item.id);
+    const desgloseExtra = mapped.length
+      ? ` · ${mapped.length} concepto${mapped.length === 1 ? '' : 's'} OPUS${faltantes > 0 ? ' · ⚠ ' + faltantes + ' faltante(s)' : ''}`
+      : (faltantes > 0 ? ' · ⚠ sin desglose OPUS' : '');
+    _toast(`${folio} · OC $${total.toLocaleString('es-MX', {minimumFractionDigits:2})} a ${proveedorNombre}${provDef?._creado ? ' (nuevo proveedor)' : ''}${desgloseExtra}`, 'success');
+  } catch (err) {
+    console.error('[Buzón aprobar OC]', err);
+    _toast('Error al aprobar: ' + err.message, 'error');
+  }
+}
+
 // Antes de aprobar un `gasto_caja_chica` el contador necesita ver la recepción
 // que el almacenista cargó en materiales: ticket, items, proveedor, factura
 // folio, etc. Este modal abre el detalle, permite solicitar la factura al
