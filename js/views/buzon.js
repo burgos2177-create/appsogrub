@@ -506,13 +506,18 @@ function _calcularResumenFinanciero(items) {
 
   for (const it of Object.values(items || {})) {
     if (!it) continue;
-    const monto = Number(it?.monto?.importe) || 0;
+    // OC de compras usa monto plano (item.total). CxC/CxP normales tienen
+    // {subtotal, iva, importe}. Caja chica también usa monto plano pero NO
+    // entra al análisis CxC/CxP (es flujo paralelo).
+    const monto = it.tipo === 'oc_materiales'
+      ? (Number(it.total) || 0)
+      : (Number(it?.monto?.importe) || 0);
     if (!monto) continue;
     if (it.estado === 'rechazado') { excluidos.rechazados++; continue; }
     if (it.estado === 'huerfano')  { excluidos.huerfanos++; excluidos.montoHuerfano += monto; continue; }
 
     const target = it.tipo === 'pago_cliente' ? cxc
-                 : it.tipo === 'estimacion_subcontratista' ? cxp
+                 : (it.tipo === 'estimacion_subcontratista' || it.tipo === 'oc_materiales') ? cxp
                  : null;
     if (!target) continue;
 
@@ -627,7 +632,7 @@ function _resumenFinancieroHTML(stats) {
 // Stepper visual de los 3 momentos contables. La etapa actual queda resaltada,
 // las anteriores marcadas con ✓, las futuras grises. Rechazado/huerfano muestran ✕.
 function _stepperHTML(item) {
-  const esCxP     = item.tipo === 'estimacion_subcontratista';
+  const esCxP     = item.tipo === 'estimacion_subcontratista' || item.tipo === 'oc_materiales';
   const esGastoCC = item.tipo === 'gasto_caja_chica';
   const esDepCC   = item.tipo === 'deposito_caja_chica';
   let labels, sublabels;
