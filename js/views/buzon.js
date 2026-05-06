@@ -1010,7 +1010,7 @@ async function _reabrirItem(item) {
   try {
     if (item.movId) updateItem('sogrub_proy_movimientos', item.movId, { status: 'Pendiente' });
     const histKey = `${Date.now()}_reabrir`;
-    await _dbRef(`/shared/buzon/${item.id}`).update({
+    const buzonPatch = {
       estado:       'aprobado',
       cobradoAt:    null,
       pagadoAt:     null,
@@ -1020,7 +1020,14 @@ async function _reabrirItem(item) {
         estado: 'aprobado', at: Date.now(), por: _currentUser?.uid || '',
         nota: 'Reabierto desde ' + item.estado
       }
+    };
+    const updates = { [`/shared/buzon/${item.id}`]: buzonPatch };
+    const ocMirror = _ocComprasMirrorPatch(item, 'aprobado', {
+      pagadaAt: null, metodoPago: null, referenciaPago: null,
+      reabiertaPorContador: true
     });
+    if (ocMirror) Object.assign(updates, ocMirror);
+    await _multiPathUpdate(updates);
     _buzon.expanded.delete(item.id);
     _toast('Item reabierto como Aprobado.', 'success');
   } catch (err) {
@@ -1103,6 +1110,13 @@ async function _rechazarItem(item) {
         actualizadoAt: Date.now()
       };
     }
+    // Espejo OC compras
+    const ocMirror = _ocComprasMirrorPatch(item, 'rechazado', {
+      rechazadaAt: Date.now(),
+      motivoRechazo: motivo || '',
+      rechazadaPor: { uid: _currentUser?.uid || '', email: _currentUser?.email || '' }
+    });
+    if (ocMirror) Object.assign(updates, ocMirror);
     await _multiPathUpdate(updates);
     _buzon.expanded.delete(item.id);
     _toast('Item rechazado.', 'success');
@@ -1120,16 +1134,45 @@ async function _multiPathUpdate(updates) {
   ));
 }
 
+// Helper: para items del buzón con tipo='oc_materiales', construye el patch
+// del espejo en /shared/compras/obras/{obraId}/oc/{ocId} con el estado
+// equivalente. La OC espejo usa nombres de estado distintos al buzón
+// (aprobada/pagada/cerrada/rechazada/cancelada) — esta función los traduce.
+function _ocComprasMirrorPatch(item, estadoBuzon, extra = {}) {
+  if (item.tipo !== 'oc_materiales' || !item.obraId || !item.ocId) return null;
+  const estadoOC = ({
+    aprobado: 'aprobada',
+    pagado:   'pagada',
+    cobrado:  'pagada',     // n/a para OC pero por simetría
+    cerrado:  'cerrada',
+    rechazado:'rechazada',
+    huerfano: 'huerfana',
+    en_revision: 'enviada_buzon',
+    recibido:    'enviada_buzon'
+  })[estadoBuzon] || estadoBuzon;
+  return {
+    [`/shared/compras/obras/${item.obraId}/oc/${item.ocId}`]: {
+      estado: estadoOC,
+      actualizadoAt: Date.now(),
+      ...extra
+    }
+  };
+}
+
 async function _cerrarItem(item) {
   if (!confirm('¿Cerrar este item? Quedará archivado.')) return;
   try {
     const histKey = `${Date.now()}_cerr`;
-    await _dbRef(`/shared/buzon/${item.id}`).update({
+    const buzonPatch = {
       estado:    'cerrado',
       cerradoAt: Date.now(),
       cerradoPor: _currentUser?.uid || '',
       [`estadoHistorial/${histKey}`]: { estado: 'cerrado', at: Date.now(), por: _currentUser?.uid || '' }
-    });
+    };
+    const updates = { [`/shared/buzon/${item.id}`]: buzonPatch };
+    const ocMirror = _ocComprasMirrorPatch(item, 'cerrado', { cerradaAt: Date.now() });
+    if (ocMirror) Object.assign(updates, ocMirror);
+    await _multiPathUpdate(updates);
     _buzon.expanded.delete(item.id);
     _toast('Item cerrado.', 'success');
   } catch (err) {
