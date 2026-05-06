@@ -165,6 +165,9 @@ async function _syncBuzonOnMovimientoUpdate(previo, nuevo) {
   // Si el movimiento es de caja chica, además sincronizar el espejo en
   // /shared/cajaChica/{obraId}/movimientos/{movId} para que materiales lo vea.
   await _syncCajaChicaMirrorOnUpdate(previo, nuevo);
+  // Si el movimiento vino de una OC de compras, sincronizar el espejo en
+  // /shared/compras/obras/{obraId}/oc/{ocId}.
+  await _syncOCComprasMirrorOnUpdate(previo, nuevo);
 }
 
 async function _syncBuzonOnMovimientoDelete(item) {
@@ -179,6 +182,8 @@ async function _syncBuzonOnMovimientoDelete(item) {
   // Si era de caja chica, además reabrir el movimiento espejo a 'reportado'
   // para que el saldo en materiales recupere el monto.
   await _syncCajaChicaMirrorOnDelete(item);
+  // Si era de una OC de compras, marcar la OC espejo como huérfana.
+  await _syncOCComprasMirrorOnDelete(item);
 }
 
 // Espejo en /shared/cajaChica: cuando el contador edita un movimiento de
@@ -238,6 +243,48 @@ async function _syncCajaChicaMirrorOnDelete(item) {
       });
     }
   } catch (e) { console.warn('[CajaChica sync delete]', e); }
+}
+
+// Espejo en /shared/compras/obras/{obraId}/oc/{ocId}: cuando el contador
+// edita un movimiento que vino de una OC de compras, propaga monto/fecha
+// al detalle de la OC. El estado (aprobada/pagada) se sigue manejando desde
+// las funciones de buzón al transicionar; aquí solo tocamos campos numéricos.
+async function _syncOCComprasMirrorOnUpdate(previo, nuevo) {
+  const ocId = nuevo.origen_oc_id || previo.origen_oc_id;
+  const obraId = nuevo.obraId || previo.obraId;
+  if (!ocId || !obraId) return;
+  if (nuevo.tipo !== 'gasto') return;
+  const patch = { actualizadoPorContador: true, actualizadoAt: Date.now() };
+  if (nuevo.monto !== previo.monto) {
+    patch.totalContable = Math.abs(Number(nuevo.monto) || 0);
+  }
+  if (nuevo.fecha !== previo.fecha) {
+    const [yy, mm, dd] = (nuevo.fecha || '').split('-').map(Number);
+    if (yy && mm && dd) patch.fechaContable = new Date(yy, mm - 1, dd).getTime();
+  }
+  if (Object.keys(patch).length > 2) {
+    try {
+      await _dbRef(`/shared/compras/obras/${obraId}/oc/${ocId}`).update(patch);
+    } catch (e) { console.warn('[OC compras sync update]', e); }
+  }
+}
+
+// Cuando el contador borra un movimiento que vino de OC, marcar la OC
+// espejo como huérfana (el item del buzón ya quedó huerfano por _syncBuzon...).
+// Compras puede decidir reemitir o cancelar la OC.
+async function _syncOCComprasMirrorOnDelete(item) {
+  const ocId = item.origen_oc_id;
+  const obraId = item.obraId;
+  if (!ocId || !obraId) return;
+  if (item.tipo !== 'gasto') return;
+  try {
+    await _dbRef(`/shared/compras/obras/${obraId}/oc/${ocId}`).update({
+      estado: 'huerfana',
+      huerfanaAt: Date.now(),
+      notaContador: 'El contador eliminó el movimiento contable de esta OC. Compras puede reemitir o cancelar.',
+      actualizadoAt: Date.now()
+    });
+  } catch (e) { console.warn('[OC compras sync delete]', e); }
 }
 
 /** Busca un item por id en el cache */
