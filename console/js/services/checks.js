@@ -165,8 +165,10 @@ function checkFolios(ctx) {
     if (rec.nums.has(p.n)) rec.dupes.add(p.n); else rec.nums.add(p.n);
     if (p.n > rec.max) rec.max = p.n;
   };
+  // Los folios se emiten y sellan en el item del buzón (el esquema de
+  // sogrub_proy_movimientos no tiene folio). Contar sólo el buzón evita
+  // falsos positivos de "duplicado" al ver dos veces el mismo folio.
   ctx.buzonList.forEach(i => bump(i.folio));
-  ctx.movimientos.forEach(m => bump(m.folio));
 
   const counterKey = { CC: 'cuentas_cobrar', CP: 'cuentas_pagar' };
   for (const rec of seen.values()) {
