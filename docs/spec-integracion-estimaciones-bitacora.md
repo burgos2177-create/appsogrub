@@ -36,9 +36,19 @@ Costo directo (CD)                             856,070.78   ← subtotal del pre
 + Financiamiento          (% sobre subtotal)  +      0.00   (0%)
 = Subtotal                                     967,359.98
 + Utilidad                (% sobre subtotal)  + 96,736.00   (10%)
++ Cargos adicionales      (% sobre acumulado) +      0.00   (0%)
++ Otro porcentaje         (% sobre acumulado) +      0.00   (0%)
 = PRECIO DE VENTA (sin IVA)                  1,064,095.98   ← "Importe total del presupuesto" en OPUS
 + IVA 16%                 (sobre precio venta)+170,255.36
 = MONTO C/IVA (contrato)                     1,234,351.34   ← campo "Monto C/IVA" de Nueva obra
+```
+
+Orden completo de la cascada (como OPUS): Costo directo → indirectos oficina + campo
+(ambos sobre CD) → financiamiento → utilidad → cargos adicionales → otro porcentaje
+(estos cuatro últimos cascadean sobre el acumulado) → precio de venta sin IVA → + IVA.
+
+```text
+(fin de la cascada)
 ```
 
 **Puntos críticos que deben quedar bien:**
@@ -120,9 +130,20 @@ El cliente da un anticipo al inicio. **La base varía por obra**, por eso el swi
   (ej. 1,234,351.34 × 30% = **370,305.40**).
 
 El anticipo es **dinero real que entra** → en bitácora es un `abono_cliente` (ingreso a caja
-del proyecto / Mifel). Se **amortiza** proporcionalmente en cada estimación (cada estimación
-descuenta su parte del anticipo). Sugerencia: guardar `anticipo_monto` y `anticipo_amortizado`
-para saber cuánto queda por amortizar.
+del proyecto / Mifel). Se **amortiza** proporcionalmente en cada estimación. Sugerencia:
+guardar `anticipo_monto` y `anticipo_amortizado` para saber cuánto queda por amortizar.
+
+**Fórmula de amortización por estimación (validada con bitácora):** debe recuperar exacto el
+anticipo y mantener `Σ(cobrado) + anticipo = monto_con_iva`.
+
+- `anticipo_base = "subtotal"`   → `amortización = importe_ejecutado_sin_iva × anticipo_pct`
+  (SIN factor IVA). El anticipo no llevó IVA; todo el IVA se cobra en las estimaciones.
+- `anticipo_base = "total_c_iva"` → `amortización = importe_ejecutado_sin_iva × anticipo_pct × (1 + IVA)`.
+  Σ amortización = `subtotal × pct × 1.16 = monto_con_iva × pct` = anticipo. ✓
+
+Verificado numéricamente en ambos casos: la amortización total = anticipo, y la **bolsita de
+IVA cierra** en `subtotal × 16% = 170,255.36` sin residuo (en base `total_c_iva`, el anticipo
+aporta su IVA `subtotal × pct × 0.16`; en base `subtotal`, todo el IVA sale de las estimaciones).
 
 ---
 
@@ -144,6 +165,11 @@ en bitácora (folio CC). Sumadas todas las estimaciones = contrato. El KPI
 
 **Clave:** cada estimación trae **su propio IVA**. Ese IVA es lo que alimenta la bolsita de
 IVA (§6). El importe sin IVA es lo que va consumiendo el contrato.
+
+**Requisito de datos:** todo `pago_cliente` que se mande al buzón —**incluido el anticipo**—
+debe traer su split `{ importe_sin_iva, iva, amortizacion_anticipo }`. Así bitácora arma la
+bolsita de IVA como `Σ iva` sin recalcular nada. Para el anticipo con base `total_c_iva`:
+`importe_sin_iva = subtotal × pct`, `iva = subtotal × pct × 0.16`.
 
 ---
 
