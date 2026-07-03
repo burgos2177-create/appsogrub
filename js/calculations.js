@@ -316,10 +316,12 @@ function calcDesgloseContrato(proyecto) {
   const fin = (Number(proyecto?.sobrecosto_financiamiento) || 0) / 100;
   const uti = (Number(proyecto?.sobrecosto_utilidad) || 0) / 100;
 
+  // Indirectos oficina y campo: ambos son % del costo directo (como OPUS),
+  // se suman al CD para formar el subtotal de indirectos.
   const indOficina = cd * io;
-  let acum = cd + indOficina;
-  const indCampo = acum * ic;
-  acum += indCampo;
+  const indCampo   = cd * ic;
+  let acum = cd + indOficina + indCampo;
+  // Financiamiento y utilidad sí cascadean sobre el acumulado.
   const financiamiento = acum * fin;
   acum += financiamiento;
   const utilidad = acum * uti;

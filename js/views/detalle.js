@@ -1769,10 +1769,12 @@ function _generarEstadoDeCuentaImpl(proyectoId) {
   const pctFin = proyecto.sobrecosto_financiamiento ?? 0;
   const pctUti = proyecto.sobrecosto_utilidad       ?? 0;
 
-  let acum = costoDirecto;
-  // Restar gastos indirectos ya registrados (por ámbito) para no cobrar doble
-  const montoOfi = Math.max(0, acum * (pctOfi / 100) - gastoIndOficinaReal); acum += montoOfi;
-  const montoCam = Math.max(0, acum * (pctCam / 100) - gastoIndCampoReal);   acum += montoCam;
+  // Indirectos oficina y campo: ambos % del costo directo (como OPUS), restando
+  // lo ya gastado en cada ámbito para no cobrar doble.
+  const montoOfi = Math.max(0, costoDirecto * (pctOfi / 100) - gastoIndOficinaReal);
+  const montoCam = Math.max(0, costoDirecto * (pctCam / 100) - gastoIndCampoReal);
+  let acum = costoDirecto + montoOfi + montoCam;
+  // Financiamiento y utilidad sí cascadean sobre el acumulado.
   const montoFin = acum * (pctFin / 100); acum += montoFin;
   const montoUti = acum * (pctUti / 100); acum += montoUti;
   const subtotal = acum;
