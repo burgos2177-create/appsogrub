@@ -299,6 +299,89 @@ function calcIVADesglose(proyectoId) {
 // =====================================================
 const CATEGORIAS = ['Material', 'Mano de Obra', 'Subcontratista', 'Indirecto'];
 
+// Ámbitos de un gasto indirecto (para separar oficina vs campo)
+const INDIRECTO_AMBITOS = ['oficina', 'campo'];
+
+// =====================================================
+// PRESUPUESTO EN CASCADA
+// costo directo → indirectos oficina → indirectos campo → financiamiento → utilidad
+// Cada nivel se calcula sobre el acumulado del anterior (cascada multiplicativa,
+// estándar OPUS). El monto del contrato es el acumulado final.
+// =====================================================
+function calcDesgloseContrato(proyecto) {
+  const cd  = Number(proyecto?.costo_directo_base) || 0;
+  // Compat: si un proyecto viejo solo tiene `sobrecosto_indirectos`, se toma como oficina.
+  const io  = (Number(proyecto?.sobrecosto_ind_oficina ?? proyecto?.sobrecosto_indirectos) || 0) / 100;
+  const ic  = (Number(proyecto?.sobrecosto_ind_campo) || 0) / 100;
+  const fin = (Number(proyecto?.sobrecosto_financiamiento) || 0) / 100;
+  const uti = (Number(proyecto?.sobrecosto_utilidad) || 0) / 100;
+
+  const indOficina = cd * io;
+  let acum = cd + indOficina;
+  const indCampo = acum * ic;
+  acum += indCampo;
+  const financiamiento = acum * fin;
+  acum += financiamiento;
+  const utilidad = acum * uti;
+  acum += utilidad;
+
+  return { costoDirecto: cd, indOficina, indCampo, financiamiento, utilidad, contrato: acum };
+}
+
+// Monto del contrato derivado del costo directo + cascada de sobrecostos.
+function calcContratoDesdeCosto(proyecto) {
+  return calcDesgloseContrato(proyecto).contrato;
+}
+
+// A qué bolsita pertenece un gasto:
+//   - categoría 'Indirecto' → ind_oficina / ind_campo según su ámbito (default oficina)
+//   - cualquier otra categoría (Material, Mano de Obra, Subcontratista) → costo_directo
+function _bolsaDeGasto(m) {
+  if ((m.categoria ?? '').toLowerCase() === 'indirecto') {
+    return m.indirecto_ambito === 'campo' ? 'ind_campo' : 'ind_oficina';
+  }
+  return 'costo_directo';
+}
+
+// =====================================================
+// BOLSITAS — presupuesto por rubro vs. lo gastado (pagado)
+// El sobregiro de las bolsitas de gasto (directo + indirectos) se come la
+// utilidad: utilidadDisponible = utilidadPlaneada − Σ sobregiros.
+// =====================================================
+function calcBolsitasProyecto(proyectoId) {
+  const proyecto = getItem(KEYS.PROYECTOS, proyectoId) ?? {};
+  const d = calcDesgloseContrato(proyecto);
+
+  const gastos = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
+    .filter(m => m.proyecto_id === proyectoId && m.tipo === 'gasto' && m.status === 'Pagado');
+
+  const gastado = { costo_directo: 0, ind_oficina: 0, ind_campo: 0 };
+  gastos.forEach(m => { gastado[_bolsaDeGasto(m)] += Math.abs(m.monto); });
+
+  const bolsas = [
+    { key: 'costo_directo', label: 'Costo directo',      icon: '🧱', budget: d.costoDirecto, gastado: gastado.costo_directo },
+    { key: 'ind_oficina',   label: 'Indirectos oficina', icon: '🏢', budget: d.indOficina,   gastado: gastado.ind_oficina },
+    { key: 'ind_campo',     label: 'Indirectos campo',   icon: '🚧', budget: d.indCampo,     gastado: gastado.ind_campo },
+  ].map(b => {
+    const overflow  = Math.max(0, b.gastado - b.budget);
+    const restante  = b.budget - b.gastado;
+    const pct       = b.budget > 0 ? (b.gastado / b.budget) * 100 : (b.gastado > 0 ? 100 : 0);
+    return { ...b, overflow, restante, pct };
+  });
+
+  const overflowTotal      = bolsas.reduce((a, b) => a + b.overflow, 0);
+  const utilidadDisponible = d.utilidad - overflowTotal;
+
+  return {
+    bolsas,
+    financiamiento:   d.financiamiento,
+    utilidadPlaneada: d.utilidad,
+    overflowTotal,
+    utilidadDisponible,
+    contrato:         d.contrato,
+  };
+}
+
 function calcGastoPorCategoria(proyectoId) {
   const movs = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
     .filter(m => m.proyecto_id === proyectoId && m.tipo === 'gasto' && m.status === 'Pagado');

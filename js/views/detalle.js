@@ -39,6 +39,9 @@ function renderDetalle(proyectoId) {
   // ---- KPI 6-grid ----
   root.appendChild(renderDetalleKPIs(proyectoId, proyecto));
 
+  // ---- Bolsitas de presupuesto por rubro ----
+  root.appendChild(renderBolsitasProyecto(proyectoId));
+
   // ---- Toolbar acciones ----
   root.appendChild(renderDetalleToolbar(proyectoId, proyecto));
 
@@ -291,6 +294,97 @@ function refreshDetalleKPIs(proyectoId) {
 }
 
 // =====================================================
+// BOLSITAS — presupuesto por rubro (costo directo, indirectos, utilidad)
+// =====================================================
+function renderBolsitasProyecto(proyectoId) {
+  const b = calcBolsitasProyecto(proyectoId);
+  const card = document.createElement('div');
+  card.className = 'card mb-24';
+  card.id = 'bolsitas-card';
+
+  // Proyecto sin costo directo configurado (p. ej. creado con el modelo viejo):
+  // invitar a configurarlo en vez de mostrar bolsitas vacías.
+  if (b.contrato <= 0) {
+    card.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+        <div>
+          <h3 class="section-title" style="margin:0 0 4px">🎒 Presupuesto por rubro</h3>
+          <span class="text-sm text-muted">Captura el costo directo y los sobrecostos para activar las bolsitas.</span>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="btn-config-bolsitas">⚙️ Configurar presupuesto</button>
+      </div>`;
+    setTimeout(() => {
+      card.querySelector('#btn-config-bolsitas')
+        ?.addEventListener('click', () => abrirModalEditarProyecto(proyectoId));
+    }, 0);
+    return card;
+  }
+
+  // Cada bolsita de gasto: barra presupuesto vs. gastado
+  const _bolsaRow = (bag) => {
+    const pctFill = Math.min(bag.pct, 100);
+    const cls = bag.pct > 100 ? 'high' : bag.pct >= 85 ? 'medium' : 'low';
+    const sobregiro = bag.overflow > 0;
+    return `
+      <div class="bolsa-row">
+        <div class="bolsa-head">
+          <span class="bolsa-label">${bag.icon} ${bag.label}</span>
+          <span class="bolsa-nums">
+            <strong class="${sobregiro ? 'text-danger' : ''}">${formatMXN(bag.gastado)}</strong>
+            <span class="text-dim"> / ${formatMXN(bag.budget)}</span>
+          </span>
+        </div>
+        <div class="progress-bar" style="height:8px">
+          <div class="progress-fill ${cls}" style="width:${pctFill}%"></div>
+        </div>
+        <div class="bolsa-foot">
+          <span class="text-dim">${bag.pct.toFixed(0)}% usado</span>
+          ${sobregiro
+            ? `<span class="text-danger">⚠ Sobregiro ${formatMXN(bag.overflow)} → utilidad</span>`
+            : `<span class="text-muted">Disponible ${formatMXN(bag.restante)}</span>`}
+        </div>
+      </div>`;
+  };
+
+  const utilNeg = b.utilidadDisponible < 0;
+  card.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+      <h3 class="section-title" style="margin:0">🎒 Presupuesto por rubro</h3>
+      <span class="text-sm text-muted">Contrato ${formatMXN(b.contrato)}</span>
+    </div>
+    <div class="bolsas-grid">
+      ${b.bolsas.map(_bolsaRow).join('')}
+    </div>
+    <div class="bolsa-margenes">
+      ${b.financiamiento > 0 ? `
+        <div class="bolsa-margen-item">
+          <span class="text-muted">💵 Financiamiento (reservado)</span>
+          <strong>${formatMXN(b.financiamiento)}</strong>
+        </div>` : ''}
+      <div class="bolsa-margen-item">
+        <span class="text-muted">📈 Utilidad planeada</span>
+        <strong>${formatMXN(b.utilidadPlaneada)}</strong>
+      </div>
+      ${b.overflowTotal > 0 ? `
+        <div class="bolsa-margen-item">
+          <span class="text-danger">− Sobregiros de otras bolsitas</span>
+          <strong class="text-danger">${formatMXN(b.overflowTotal)}</strong>
+        </div>` : ''}
+      <div class="bolsa-margen-item bolsa-margen-total">
+        <span style="font-weight:600">Utilidad disponible</span>
+        <strong class="${utilNeg ? 'text-danger' : 'text-success'}" style="font-size:16px">${formatMXN(b.utilidadDisponible)}</strong>
+      </div>
+    </div>
+  `;
+  return card;
+}
+
+function refreshBolsitas(proyectoId) {
+  const old = document.getElementById('bolsitas-card');
+  if (old) old.replaceWith(renderBolsitasProyecto(proyectoId));
+}
+
+// =====================================================
 // CHARTS — Gasto por categoría y por proveedor
 // =====================================================
 function refreshDetalleCharts(proyectoId) {
@@ -487,7 +581,7 @@ function renderDetalleTableOnly(proyectoId, wrap) {
               <tr>
                 <td class="text-muted">${formatDate(m.fecha)}</td>
                 <td>${m.concepto || '—'}</td>
-                <td>${m.tipo === 'gasto' ? categoriaBadge(m.categoria) + (m.paga_de_caja_chica ? ' <span class="badge badge-warning" style="font-size:10px" title="Pagado con caja chica · no descuenta saldo del proyecto (ya bajó al depositar)">💰 caja chica</span>' : '') : '—'}</td>
+                <td>${m.tipo === 'gasto' ? categoriaBadge(m.categoria) + (m.categoria === 'Indirecto' && m.indirecto_ambito ? ` <span class="badge badge-muted badge-no-dot" style="font-size:10px">${m.indirecto_ambito === 'campo' ? '🚧 Campo' : '🏢 Oficina'}</span>` : '') + (m.paga_de_caja_chica ? ' <span class="badge badge-warning" style="font-size:10px" title="Pagado con caja chica · no descuenta saldo del proyecto (ya bajó al depositar)">💰 caja chica</span>' : '') : '—'}</td>
                 <td class="text-muted">${m.subcontratista || '—'}</td>
                 <td>${tipoBadge(m.tipo)}</td>
                 <td class="${colorMonto} font-mono">${formatMXN(m.monto)}</td>
@@ -564,6 +658,17 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
         <option value="">Selecciona categoría</option>
         ${CATEGORIAS.map(c => `<option value="${c}" ${mov?.categoria === c ? 'selected' : ''}>${c}</option>`).join('')}
       </select>
+    </div>
+    <div class="form-group${mov?.categoria === 'Indirecto' ? '' : ' hidden'}" id="pm-ambito-group">
+      <label class="form-label">Ámbito del indirecto</label>
+      <div class="toggle-group" style="max-width:280px">
+        <input type="radio" name="pm-ambito" id="pm-ambito-oficina" value="oficina" class="toggle-option"
+          ${(mov?.indirecto_ambito ?? 'oficina') === 'oficina' ? 'checked' : ''}>
+        <label for="pm-ambito-oficina" class="toggle-label">🏢 Oficina</label>
+        <input type="radio" name="pm-ambito" id="pm-ambito-campo" value="campo" class="toggle-option"
+          ${mov?.indirecto_ambito === 'campo' ? 'checked' : ''}>
+        <label for="pm-ambito-campo" class="toggle-label">🚧 Campo</label>
+      </div>
     </div>
     <div class="form-group">
       <label class="form-label" for="pm-proveedor">Proveedor <span class="text-dim">(opcional)</span></label>
@@ -691,6 +796,15 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
         r.addEventListener('change', toggleIVA));
       toggleIVA();
 
+      // Ámbito del indirecto: solo visible cuando la categoría es "Indirecto"
+      const catSelect  = body.querySelector('#pm-categoria');
+      const ambitoGrp  = body.querySelector('#pm-ambito-group');
+      const toggleAmbito = () => {
+        if (ambitoGrp) ambitoGrp.classList.toggle('hidden', catSelect?.value !== 'Indirecto');
+      };
+      catSelect?.addEventListener('change', toggleAmbito);
+      toggleAmbito();
+
       // OCR: leer monto desde XML (preferido) o PDF
       const pdfInput   = body.querySelector('#pm-factura-pdf');
       const xmlInput   = body.querySelector('#pm-factura-xml');
@@ -786,6 +900,9 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
       const categoria = esGasto
         ? (body.querySelector('#pm-categoria')?.value ?? '')
         : '';
+      const indirecto_ambito = (esGasto && categoria === 'Indirecto')
+        ? (body.querySelector('input[name="pm-ambito"]:checked')?.value ?? 'oficina')
+        : '';
       const incluye_iva = esGasto
         ? body.querySelector('#pm-coniva')?.checked ?? false
         : body.querySelector('#pm-coniva-abono')?.checked ?? false;
@@ -853,6 +970,7 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
         subcontratista: subcon,
         status, tipo, proyecto_id: proyectoId,
         categoria,
+        indirecto_ambito,
         incluye_iva,
         factura_nombre,
         factura_monto_ocr,
@@ -880,6 +998,7 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
       refreshDetalleKPIs(proyectoId);
       refreshDetalleTable(proyectoId);
       refreshDetalleCharts(proyectoId);
+      refreshBolsitas(proyectoId);
 
       // Sugerir agregar proveedor si es nuevo
       if (subcon) {
@@ -1267,6 +1386,7 @@ function confirmarEliminarMovProy(id, proyectoId) {
       refreshDetalleKPIs(proyectoId);
       refreshDetalleTable(proyectoId);
       refreshDetalleCharts(proyectoId);
+      refreshBolsitas(proyectoId);
     },
   });
 }
@@ -1626,11 +1746,15 @@ function _generarEstadoDeCuentaImpl(proyectoId) {
 
   // ---------- Cálculos ----------
   let costoDirecto = 0;
-  let gastoIndirectoReal = 0;  // gastos categoría "Indirecto" ya pagados
+  let gastoIndOficinaReal = 0;  // gastos indirectos de oficina ya pagados
+  let gastoIndCampoReal   = 0;  // gastos indirectos de campo ya pagados
   const filas = gastos.map(g => {
     const abs = Math.abs(g.monto);
     costoDirecto += abs;
-    if ((g.categoria ?? '').toLowerCase() === 'indirecto') gastoIndirectoReal += abs;
+    if ((g.categoria ?? '').toLowerCase() === 'indirecto') {
+      if (g.indirecto_ambito === 'campo') gastoIndCampoReal += abs;
+      else                                gastoIndOficinaReal += abs;
+    }
     const ivaTag = g.incluye_iva ? 'C/IVA' : 'S/IVA';
     return [
       (g.fecha ?? '').replace(/^(\d{4})-(\d{2})-(\d{2})$/, '$3/$2/$1'),
@@ -1639,16 +1763,16 @@ function _generarEstadoDeCuentaImpl(proyectoId) {
     ];
   });
 
-  // Sobrecostos acumulativos
-  const pctInd = proyecto.sobrecosto_indirectos     ?? 0;
+  // Sobrecostos acumulativos en cascada (compat: viejo `sobrecosto_indirectos` → oficina)
+  const pctOfi = proyecto.sobrecosto_ind_oficina ?? proyecto.sobrecosto_indirectos ?? 0;
+  const pctCam = proyecto.sobrecosto_ind_campo   ?? 0;
   const pctFin = proyecto.sobrecosto_financiamiento ?? 0;
   const pctUti = proyecto.sobrecosto_utilidad       ?? 0;
 
   let acum = costoDirecto;
-  // Restar gastos indirectos ya registrados para no cobrar doble
-  const montoIndCalc = acum * (pctInd / 100);
-  const montoInd = Math.max(0, montoIndCalc - gastoIndirectoReal);
-  acum += montoInd;
+  // Restar gastos indirectos ya registrados (por ámbito) para no cobrar doble
+  const montoOfi = Math.max(0, acum * (pctOfi / 100) - gastoIndOficinaReal); acum += montoOfi;
+  const montoCam = Math.max(0, acum * (pctCam / 100) - gastoIndCampoReal);   acum += montoCam;
   const montoFin = acum * (pctFin / 100); acum += montoFin;
   const montoUti = acum * (pctUti / 100); acum += montoUti;
   const subtotal = acum;
@@ -1701,7 +1825,7 @@ function _generarEstadoDeCuentaImpl(proyectoId) {
   y = doc.lastAutoTable.finalY + 10;
 
   // ---------- SOBRECOSTOS ----------
-  if (pctInd > 0 || pctFin > 0 || pctUti > 0) {
+  if (pctOfi > 0 || pctCam > 0 || pctFin > 0 || pctUti > 0) {
     doc.setFontSize(12);
     doc.setTextColor(180, 30, 30);
     doc.text('SOBRECOSTOS', marginL, y);
@@ -1710,12 +1834,19 @@ function _generarEstadoDeCuentaImpl(proyectoId) {
 
     const sobrecostosBody = [];
     let runningTotal = costoDirecto;
-    if (pctInd > 0) {
-      const indLabel = gastoIndirectoReal > 0
-        ? `Indirectos ${pctInd}% (- ${_fmtMXN(gastoIndirectoReal)} ya gastados)`
-        : `Indirectos ${pctInd}%`;
-      runningTotal += montoInd;
-      sobrecostosBody.push([indLabel, _fmtMXN(montoInd), _fmtMXN(runningTotal)]);
+    if (pctOfi > 0) {
+      const ofiLabel = gastoIndOficinaReal > 0
+        ? `Indirectos oficina ${pctOfi}% (- ${_fmtMXN(gastoIndOficinaReal)} ya gastados)`
+        : `Indirectos oficina ${pctOfi}%`;
+      runningTotal += montoOfi;
+      sobrecostosBody.push([ofiLabel, _fmtMXN(montoOfi), _fmtMXN(runningTotal)]);
+    }
+    if (pctCam > 0) {
+      const camLabel = gastoIndCampoReal > 0
+        ? `Indirectos campo ${pctCam}% (- ${_fmtMXN(gastoIndCampoReal)} ya gastados)`
+        : `Indirectos campo ${pctCam}%`;
+      runningTotal += montoCam;
+      sobrecostosBody.push([camLabel, _fmtMXN(montoCam), _fmtMXN(runningTotal)]);
     }
     if (pctFin > 0) {
       const m = runningTotal * (pctFin / 100); runningTotal += m;

@@ -652,6 +652,50 @@ img, svg { display: block; }
 .progress-label strong { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
 
 /* =====================================================
+   BOLSITAS — presupuesto por rubro
+   ===================================================== */
+.bolsas-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 18px 24px;
+}
+.bolsa-row { display: flex; flex-direction: column; gap: 6px; }
+.bolsa-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.bolsa-label { font-size: 13px; font-weight: 600; }
+.bolsa-nums { font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bolsa-foot {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  gap: 8px;
+}
+.bolsa-margenes {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.bolsa-margen-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.bolsa-margen-total {
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+/* =====================================================
    MODALS
    ===================================================== */
 .modal-overlay {

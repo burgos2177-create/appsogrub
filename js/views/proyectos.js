@@ -175,20 +175,26 @@ function abrirModalProyecto(id = null) {
       </div>
     </div>
     <div class="form-group">
-      <label class="form-label" for="proy-presupuesto">Presupuesto del contrato ($)</label>
-      <input type="number" id="proy-presupuesto" class="form-input" placeholder="0.00" min="0" step="0.01"
-        value="${proy?.presupuesto_contrato ?? ''}">
+      <label class="form-label" for="proy-costo-directo">Costo directo estimado ($)</label>
+      <input type="number" id="proy-costo-directo" class="form-input" placeholder="0.00" min="0" step="0.01"
+        value="${proy?.costo_directo_base ?? ''}">
+      <span class="text-dim" style="font-size:11px">Presupuesto de obra (material + mano de obra + subcontratos). El monto del contrato se calcula solo.</span>
     </div>
     <div class="form-group">
-      <label class="form-label">Sobrecostos (%)</label>
+      <label class="form-label">Sobrecostos en cascada (%)</label>
       <div class="form-row" style="gap:8px">
         <div class="form-group" style="flex:1">
-          <label class="form-label" for="proy-indirectos" style="font-size:11px;color:var(--text-muted)">Indirectos</label>
-          <input type="number" id="proy-indirectos" class="form-input" placeholder="0" min="0" max="100" step="0.1"
-            value="${proy?.sobrecosto_indirectos ?? ''}">
+          <label class="form-label" for="proy-ind-oficina" style="font-size:11px;color:var(--text-muted)">Ind. oficina</label>
+          <input type="number" id="proy-ind-oficina" class="form-input" placeholder="0" min="0" max="100" step="0.1"
+            value="${proy?.sobrecosto_ind_oficina ?? proy?.sobrecosto_indirectos ?? ''}">
         </div>
         <div class="form-group" style="flex:1">
-          <label class="form-label" for="proy-financiamiento" style="font-size:11px;color:var(--text-muted)">Financiamiento</label>
+          <label class="form-label" for="proy-ind-campo" style="font-size:11px;color:var(--text-muted)">Ind. campo</label>
+          <input type="number" id="proy-ind-campo" class="form-input" placeholder="0" min="0" max="100" step="0.1"
+            value="${proy?.sobrecosto_ind_campo ?? ''}">
+        </div>
+        <div class="form-group" style="flex:1">
+          <label class="form-label" for="proy-financiamiento" style="font-size:11px;color:var(--text-muted)">Financiam.</label>
           <input type="number" id="proy-financiamiento" class="form-input" placeholder="0" min="0" max="100" step="0.1"
             value="${proy?.sobrecosto_financiamiento ?? ''}">
         </div>
@@ -199,6 +205,7 @@ function abrirModalProyecto(id = null) {
         </div>
       </div>
     </div>
+    <div id="proy-contrato-preview" style="background:var(--surface2);border-radius:var(--radius-md);padding:12px 14px"></div>
     <div class="form-group">
       <label class="form-label" for="proy-estado">Estado</label>
       <select id="proy-estado" class="form-select">
@@ -209,6 +216,37 @@ function abrirModalProyecto(id = null) {
     </div>
   `;
 
+  // ---- Preview del contrato en cascada (en vivo) ----
+  setTimeout(() => {
+    const preview = body.querySelector('#proy-contrato-preview');
+    const ids = ['proy-costo-directo', 'proy-ind-oficina', 'proy-ind-campo', 'proy-financiamiento', 'proy-utilidad'];
+    const linea = (label, val, extra = '') => `
+      <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-muted)${extra}">
+        <span>${label}</span><strong style="color:var(--text);font-variant-numeric:tabular-nums">${formatMXN(val)}</strong>
+      </div>`;
+    const upd = () => {
+      const d = calcDesgloseContrato({
+        costo_directo_base:        parseFloat(body.querySelector('#proy-costo-directo').value) || 0,
+        sobrecosto_ind_oficina:    parseFloat(body.querySelector('#proy-ind-oficina').value) || 0,
+        sobrecosto_ind_campo:      parseFloat(body.querySelector('#proy-ind-campo').value) || 0,
+        sobrecosto_financiamiento: parseFloat(body.querySelector('#proy-financiamiento').value) || 0,
+        sobrecosto_utilidad:       parseFloat(body.querySelector('#proy-utilidad').value) || 0,
+      });
+      preview.innerHTML = `
+        ${linea('Costo directo', d.costoDirecto)}
+        ${d.indOficina     > 0 ? linea('+ Indirectos oficina', d.indOficina)     : ''}
+        ${d.indCampo       > 0 ? linea('+ Indirectos campo',   d.indCampo)       : ''}
+        ${d.financiamiento > 0 ? linea('+ Financiamiento',     d.financiamiento) : ''}
+        ${d.utilidad       > 0 ? linea('+ Utilidad',           d.utilidad)       : ''}
+        <div style="display:flex;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid var(--border)">
+          <span style="font-weight:600">Monto del contrato</span>
+          <strong style="color:var(--accent);font-size:15px;font-variant-numeric:tabular-nums">${formatMXN(d.contrato)}</strong>
+        </div>`;
+    };
+    ids.forEach(id => body.querySelector('#' + id)?.addEventListener('input', upd));
+    upd();
+  }, 0);
+
   openModal({
     title:       titulo,
     body,
@@ -217,22 +255,31 @@ function abrirModalProyecto(id = null) {
       const nombre       = body.querySelector('#proy-nombre').value.trim();
       const cliente      = body.querySelector('#proy-cliente').value.trim();
       const fecha_inicio = body.querySelector('#proy-fecha').value;
-      const presupuesto  = parseFloat(body.querySelector('#proy-presupuesto').value);
+      const costo_directo_base = parseFloat(body.querySelector('#proy-costo-directo').value) || 0;
       const estado       = body.querySelector('#proy-estado').value;
-      const sobrecosto_indirectos     = parseFloat(body.querySelector('#proy-indirectos').value) || 0;
+      const sobrecosto_ind_oficina    = parseFloat(body.querySelector('#proy-ind-oficina').value) || 0;
+      const sobrecosto_ind_campo      = parseFloat(body.querySelector('#proy-ind-campo').value) || 0;
       const sobrecosto_financiamiento = parseFloat(body.querySelector('#proy-financiamiento').value) || 0;
       const sobrecosto_utilidad       = parseFloat(body.querySelector('#proy-utilidad').value) || 0;
 
       const valid = validateFields([
-        { el: body.querySelector('#proy-nombre'),       msg: 'Escribe el nombre del proyecto' },
-        { el: body.querySelector('#proy-cliente'),      msg: 'Escribe el nombre del cliente' },
-        { el: body.querySelector('#proy-fecha'),        msg: 'Selecciona la fecha de inicio' },
-        { el: body.querySelector('#proy-presupuesto'),  msg: 'Ingresa un presupuesto mayor a 0' },
+        { el: body.querySelector('#proy-nombre'),        msg: 'Escribe el nombre del proyecto' },
+        { el: body.querySelector('#proy-cliente'),       msg: 'Escribe el nombre del cliente' },
+        { el: body.querySelector('#proy-fecha'),         msg: 'Selecciona la fecha de inicio' },
+        { el: body.querySelector('#proy-costo-directo'), msg: 'Ingresa un costo directo mayor a 0' },
       ]);
       if (!valid) return;
 
-      const data = { nombre, cliente, fecha_inicio, presupuesto_contrato: presupuesto, estado,
-                     sobrecosto_indirectos, sobrecosto_financiamiento, sobrecosto_utilidad };
+      // El monto del contrato es derivado de la cascada.
+      const presupuesto_contrato = calcContratoDesdeCosto({
+        costo_directo_base, sobrecosto_ind_oficina, sobrecosto_ind_campo,
+        sobrecosto_financiamiento, sobrecosto_utilidad,
+      });
+
+      const data = { nombre, cliente, fecha_inicio, estado,
+                     costo_directo_base, presupuesto_contrato,
+                     sobrecosto_ind_oficina, sobrecosto_ind_campo,
+                     sobrecosto_financiamiento, sobrecosto_utilidad };
 
       if (proy) {
         updateItem(KEYS.PROYECTOS, id, data);
@@ -244,6 +291,12 @@ function abrirModalProyecto(id = null) {
 
       closeModal();
       refreshProyectosGrid();
+
+      // Si se editó desde la vista de detalle, refrescar sus KPIs y bolsitas.
+      if (proy && document.getElementById('bolsitas-card')) {
+        if (typeof refreshDetalleKPIs === 'function') refreshDetalleKPIs(id);
+        if (typeof refreshBolsitas    === 'function') refreshBolsitas(id);
+      }
     },
   });
 }
