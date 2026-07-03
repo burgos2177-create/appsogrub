@@ -140,6 +140,16 @@ js/
     buzon.js             # bus de aprobación + funciones de aprobación caja chica
 ```
 
+## Consola central de la suite (`console/`)
+
+Sub-app **independiente** de administración del ecosistema (no del uso operativo del contador). Vive en `console/` con su propio stack: **Firebase v10 modular + ES-modules** (a diferencia del appsogrub raíz, que usa compat 9.x no-modular). Es una página aparte — no comparte código con la app raíz — y se sirve como su propia ruta de GitHub Pages (`…/appsogrub/console/`). Gate duro a `role='admin'`.
+
+Para qué sirve: ver las 5 apps desde un solo lugar, verificar interconexión sana, y reparar cosas estructurales sin entrar al directorio de cada app.
+
+Módulos: **Mapa del ecosistema** · **Diagnóstico de salud** (11 invariantes cross-app en `console/js/services/checks.js`) · **Editor de obraLinks** · **Obras activas** (togglea `sogrub_proyectos[].estado`, que controla la visibilidad en dashboards). Alcance de escritura: diagnóstico + arreglos guiados con confirmación (`console/js/services/fixes.js`) — nada destructivo ni masivo.
+
+La lógica de invariantes es pura y testeable (`console/js/services/checks.js` + `data-pure.js`, sin Firebase). Cache-busting propio: `bump-cache.sh` **no** aplica a `console/`. Detalle completo en `console/README.md`.
+
 ## Cómo arrancar
 
 1. `python -m http.server 3001` (o `npx serve .`)
