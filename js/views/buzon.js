@@ -342,6 +342,18 @@ function _buzonCard(item) {
   return card;
 }
 
+// RFC del proveedor de un item del buzón. Primero intenta del propio item;
+// si no lo trae, lo busca por nombre en el catálogo de proveedores.
+// Devuelve '' si no se encuentra.
+function _rfcProveedorBuzon(nombre, item) {
+  const directo = item?.proveedorRfc || item?.proveedor?.rfc || item?.rfc;
+  if (directo) return String(directo).trim();
+  const n = (nombre || '').trim().toLowerCase();
+  if (!n) return '';
+  const prov = (getCollection(KEYS.PROVEEDORES) || []).find(p => (p?.nombre || '').trim().toLowerCase() === n);
+  return (prov?.rfc || '').trim();
+}
+
 function _cardBodyHTML(item) {
   const esSub     = item.tipo === 'estimacion_subcontratista';
   const esGastoCC = item.tipo === 'gasto_caja_chica';
@@ -377,7 +389,7 @@ function _cardBodyHTML(item) {
        Subcontratista: <b>${item.proveedorNombre || '—'}</b><br>
        Fecha pago: <b>${fechaPago}</b>`
     : esGastoCC
-    ? `Proveedor: <b>${item.proveedor || '—'}</b><br>
+    ? `Proveedor: <b>${item.proveedor || '—'}</b> <code style="font-size:11px" title="RFC del proveedor">${_rfcProveedorBuzon(item.proveedor, item) || '—'}</code><br>
        Factura: <b>${item.factura || '<span style=\'color:#e0a04c\'>sin factura</span>'}</b><br>
        Recepción: <b>${item.refRecepcionId ? '<code style=\'font-size:11px\'>' + item.refRecepcionId.slice(-8) + '</code>' : '—'}</b><br>
        Fecha: <b>${fechaPago}</b>`
@@ -393,7 +405,7 @@ function _cardBodyHTML(item) {
     : esIndirecto
     ? `Concepto: <b>${item.concepto || '—'}</b><br>
        Categoría: <b>${item.categoriaNombre || item.categoria || '—'}</b>${item.empresa ? ' <span style="color:#e0a04c">· empresa</span>' : ''}<br>
-       ${item.proveedorNombre ? `Proveedor: <b>${item.proveedorNombre}</b><br>` : ''}Fecha: <b>${fechaPago}</b>`
+       ${item.proveedorNombre ? `Proveedor: <b>${item.proveedorNombre}</b> <code style="font-size:11px" title="RFC del proveedor">${_rfcProveedorBuzon(item.proveedorNombre, item) || '—'}</code><br>` : ''}Fecha: <b>${fechaPago}</b>`
     : esNomina
     ? `Personal: <b>${item.tipoPersonal || '—'}</b>${item.periodicidad ? ' · ' + item.periodicidad : ''}<br>
        Período: <b>${item.label || item.periodoId || '—'}</b><br>
