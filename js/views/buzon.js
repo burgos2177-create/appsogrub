@@ -303,7 +303,7 @@ function _buzonCard(item) {
     <span style="background:${ecfg.color};color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;text-transform:uppercase;letter-spacing:.4px;font-weight:600;flex-shrink:0">${ecfg.label}</span>
     ${item.folio ? `<code style="font-size:11px;color:var(--text-muted);background:var(--surface);padding:1px 5px;border-radius:4px;flex-shrink:0">${item.folio}</code>` : ''}
     <div style="flex:1;min-width:0;overflow:hidden">
-      <div style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${item.descripcion || (esOC ? `OC para ${item.proveedor?.nombre || '(sin proveedor)'}` : '—')}</div>
+      <div style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${item.descripcion || item.concepto || (esOC ? `OC para ${item.proveedor?.nombre || '(sin proveedor)'}` : '—')}</div>
       <div style="font-size:11px;color:var(--text-muted)">${tipoLabel} · ${item.obraNombre || item.obraId || '—'} · ${fechaPago}</div>
     </div>
     ${desfase ? `<span title="${desfase.tooltip}" style="font-size:11px;color:#e0a04c;background:rgba(224,160,76,.12);padding:2px 7px;border-radius:8px;flex-shrink:0">⚠ Δ$${Math.abs(desfase.delta).toLocaleString('es-MX', {minimumFractionDigits:2})}</span>` : ''}
@@ -347,6 +347,8 @@ function _cardBodyHTML(item) {
   const esGastoCC = item.tipo === 'gasto_caja_chica';
   const esDepCC   = item.tipo === 'deposito_caja_chica';
   const esOC      = item.tipo === 'oc_materiales';
+  const esIndirecto = item.tipo === 'gasto_indirecto';
+  const esNomina  = typeof item.tipo === 'string' && item.tipo.startsWith('nomina_');
   const esCajaChica = esGastoCC || esDepCC;
   const fechaPago = item.fecha
     ? new Date(item.fecha).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })
@@ -363,7 +365,9 @@ function _cardBodyHTML(item) {
         ? '<span style="color:#e0a04c">Sin IVA</span> — importe = subtotal'
         : `Subtotal $${(item?.monto?.subtotal || 0).toLocaleString('es-MX',{minimumFractionDigits:2})} · IVA $${(item?.monto?.iva || 0).toLocaleString('es-MX',{minimumFractionDigits:2})}`);
   const proyectoIdResuelto = _resolverProyectoIdItem(item);
-  const proyNombre  = proyectoIdResuelto
+  const proyNombre  = ((esIndirecto || esNomina) && (item.empresa || !item.obraId))
+    ? `<b style="color:#5dd39e">🏢 Empresa SOGRUB</b> <span class="text-muted" style="font-size:11px">(sin obra${esNomina ? ' · prorrateo por obra abajo' : ''})</span>`
+    : proyectoIdResuelto
     ? `<b style="color:#5dd39e">${_obtenerNombreProyecto(proyectoIdResuelto)}</b>${(!item.proyectoId && proyectoIdResuelto) ? '<span class="text-muted" style="font-size:11px"> (vía obraLinks)</span>' : ''}`
     : `<span style="color:#e15555">⚠ Obra sin vincular${item.obraId ? ` <code style='font-size:10px'>${item.obraId}</code>` : ''}</span>`;
 
@@ -386,6 +390,15 @@ function _cardBodyHTML(item) {
        Items: <b>${(item.items || []).length}</b>${item.reqIds?.length ? ` · Requisiciones cubiertas: <b>${item.reqIds.length}</b>` : ''}<br>
        Condiciones: <b>${item.condicionesPago || '—'}</b><br>
        Fecha emisión: <b>${fechaPago}</b>`
+    : esIndirecto
+    ? `Concepto: <b>${item.concepto || '—'}</b><br>
+       Categoría: <b>${item.categoriaNombre || item.categoria || '—'}</b>${item.empresa ? ' <span style="color:#e0a04c">· empresa</span>' : ''}<br>
+       ${item.proveedorNombre ? `Proveedor: <b>${item.proveedorNombre}</b><br>` : ''}Fecha: <b>${fechaPago}</b>`
+    : esNomina
+    ? `Personal: <b>${item.tipoPersonal || '—'}</b>${item.periodicidad ? ' · ' + item.periodicidad : ''}<br>
+       Período: <b>${item.label || item.periodoId || '—'}</b><br>
+       Empleados: <b>${item.numEmpleados ?? '—'}</b> · Neto: <b>$${(Number(item.totalNeto ?? item?.monto?.importe) || 0).toLocaleString('es-MX',{minimumFractionDigits:2})}</b><br>
+       Obras prorrateadas: <b>${Object.keys(item.prorrateoPorObra || {}).length}</b>${Number(item.netoSinObra) ? ' + empresa' : ''}`
     : `Estimación: <b>#${item.estimNumero ?? '—'}</b><br>
        Fecha pago: <b>${fechaPago}</b>`;
 
