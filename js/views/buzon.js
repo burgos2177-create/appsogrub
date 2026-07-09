@@ -286,7 +286,11 @@ function _buzonCard(item) {
     gasto_caja_chica: '🧾 Gasto caja chica',
     deposito_caja_chica: '🏦 Depósito caja chica',
     oc_materiales: '📦 Orden de compra (materiales)',
-    gasto_indirecto: '🏗️ Gasto indirecto'
+    gasto_indirecto: item.empresa || !item.obraId ? '🏗️ Indirecto (empresa)' : '🏗️ Gasto indirecto',
+    nomina_operativo_semana: '👷 Nómina operativo (semanal)',
+    nomina_tecnico_campo_quincena: '👷 Nómina técnico campo (quincenal)',
+    nomina_tecnico_oficina_quincena: '🧑‍💼 Nómina técnico oficina (quincenal)',
+    nomina_directivo_quincena: '🧑‍💼 Nómina directivo (quincenal)'
   }[item.tipo] || item.tipo;
   const desfase   = _calcularDesfase(item);
 
@@ -304,8 +308,8 @@ function _buzonCard(item) {
     </div>
     ${desfase ? `<span title="${desfase.tooltip}" style="font-size:11px;color:#e0a04c;background:rgba(224,160,76,.12);padding:2px 7px;border-radius:8px;flex-shrink:0">⚠ Δ$${Math.abs(desfase.delta).toLocaleString('es-MX', {minimumFractionDigits:2})}</span>` : ''}
     <div style="text-align:right;flex-shrink:0">
-      <div style="font-family:ui-monospace,monospace;font-size:17px;font-weight:700;color:${(esSub || esOC || item.tipo === 'gasto_caja_chica' || item.tipo === 'gasto_indirecto') ? '#e15555' : 'var(--accent)'}">
-        ${(esSub || esOC || item.tipo === 'gasto_caja_chica' || item.tipo === 'gasto_indirecto') ? '−' : '+'}$${monto.toLocaleString('es-MX', {minimumFractionDigits:2, maximumFractionDigits:2})}
+      <div style="font-family:ui-monospace,monospace;font-size:17px;font-weight:700;color:${(esSub || esOC || item.tipo === 'gasto_caja_chica' || item.tipo === 'gasto_indirecto' || (item.tipo && item.tipo.startsWith('nomina_'))) ? '#e15555' : 'var(--accent)'}">
+        ${(esSub || esOC || item.tipo === 'gasto_caja_chica' || item.tipo === 'gasto_indirecto' || (item.tipo && item.tipo.startsWith('nomina_'))) ? '−' : '+'}$${monto.toLocaleString('es-MX', {minimumFractionDigits:2, maximumFractionDigits:2})}
       </div>
     </div>
     <span style="color:var(--text-muted);font-size:14px;flex-shrink:0">${expanded ? '▲' : '▼'}</span>`;
@@ -836,7 +840,8 @@ async function _marcarEnRevision(item) {
 // Cuentas por pagar (gastos): folio CP, monto negativo, se "paga" (no se "cobra").
 // Incluye subcontratista, OC de materiales e indirectos.
 function _tipoEsCxP(tipo) {
-  return tipo === 'estimacion_subcontratista' || tipo === 'oc_materiales' || tipo === 'gasto_indirecto';
+  return tipo === 'estimacion_subcontratista' || tipo === 'oc_materiales' || tipo === 'gasto_indirecto'
+      || (typeof tipo === 'string' && tipo.startsWith('nomina_'));
 }
 
 async function _aprobarItem(item, aprobarYPagar = false) {
@@ -845,6 +850,9 @@ async function _aprobarItem(item, aprobarYPagar = false) {
   if (item.tipo === 'deposito_caja_chica') return _aprobarDepositoCajaChica(item);
   // OC de compras: trata como gasto categoria='Material' con desglose listo.
   if (item.tipo === 'oc_materiales')       return _aprobarOCMateriales(item, aprobarYPagar);
+  // Indirectos (app-indirectos): gasto por obra / empresa, y nómina por período.
+  if (item.tipo === 'gasto_indirecto')     return _aprobarGastoIndirecto(item, aprobarYPagar);
+  if (typeof item.tipo === 'string' && item.tipo.startsWith('nomina_')) return _aprobarNomina(item);
 
   // Resolvemos el proyecto contable (directo o vía obraLinks) para soportar items
   // que sólo traen obraId (p.ej. indirectos originados en materiales).
@@ -904,36 +912,6 @@ async function _aprobarItem(item, aprobarYPagar = false) {
         ? ` · ${desglose.length} conceptos OPUS`
         : (item.desglose?.length ? ' · ⚠ sin mapa OPUS' : '');
       nombrePill = `${folio} · Gasto $${Math.abs(movimiento.monto).toLocaleString('es-MX',{minimumFractionDigits:2})} a ${provNombre}${provDef?._creado ? ' (nuevo proveedor)' : ''}.${desgloseExtra}`;
-
-    } else if (item.tipo === 'gasto_indirecto') {
-      // Indirecto (originado en app-indirectos): gasto categoria='Indirecto', folio CP.
-      // Proveedor y desglose OPUS son opcionales; monto = { subtotal, iva, importe }.
-      folio = await _generarFolio('CP');
-      const importe  = Number(item?.monto?.importe) || 0;
-      const conIva   = item?.monto?.conIva !== false && (Number(item?.monto?.iva) || 0) > 0;
-      const provNombre = (item.proveedorNombre || '').trim();
-      const provDef  = provNombre
-        ? _findOrCreateProveedor(provNombre, { email: item.proveedorEmail || '', telefono: item.proveedorTelefono || '' })
-        : null;
-      const desglose = item.desglose ? await _mapearDesgloseAOpusBitacora(proyectoIdResuelto, item.desglose) : [];
-      const conceptoTxt = item.concepto || item.descripcion || 'gasto indirecto';
-      movimiento = {
-        proyecto_id:    proyectoIdResuelto,
-        fecha:          fechaISO,
-        monto:          -Math.abs(importe),
-        concepto:       `[${folio}] Indirecto — ${conceptoTxt} (${item.obraNombre || item.obraId || ''})${conIva ? '' : ' (sin IVA)'}`,
-        subcontratista: provNombre,
-        status:         aprobarYPagar ? 'Pagado' : 'Pendiente',
-        tipo:           'gasto',
-        categoria:      'Indirecto',
-        origen_buzon_id: item.id,
-        monto_subtotal: Number(item?.monto?.subtotal) || 0,
-        monto_iva:      Number(item?.monto?.iva) || 0,
-        incluye_iva:    conIva,
-        proveedor_id:   provDef?.id || null,
-        desglose_presupuesto: desglose.length ? desglose : undefined,
-      };
-      nombrePill = `${folio} · Indirecto $${Math.abs(movimiento.monto).toLocaleString('es-MX',{minimumFractionDigits:2})} registrado.`;
 
     } else {
       _toast('Tipo de buzón no soportado: ' + item.tipo, 'error');
@@ -1219,6 +1197,180 @@ async function _cerrarItem(item) {
   } catch (err) {
     _toast('Error al cerrar: ' + err.message, 'error');
   }
+}
+
+// ─── Indirectos: gasto por obra / empresa + nómina ─────────────────────────
+
+// Patch estándar de un item de buzón que pasa a 'aprobado', apuntando al
+// movimiento creado. Reutilizado por los aprobadores de indirectos/nómina.
+function _buzonPatchAprobado(folio, movId, coleccion) {
+  const now = Date.now();
+  const histKey = `${now}_apr`;
+  return {
+    estado:       'aprobado',
+    folio,
+    aprobadoAt:   now,
+    aprobadoPor:  _currentUser?.uid || '',
+    movId,
+    destinoRefPath: `${coleccion}[id=${movId}]`,
+    huerfanoAt:   null, huerfanoPor: null, descripcionHuerfano: null,
+    [`estadoHistorial/${histKey}`]: { estado: 'aprobado', at: now, por: _currentUser?.uid || '' }
+  };
+}
+
+// Gasto indirecto (app-indirectos). Dos casos:
+//  · obra   → sogrub_proy_movimientos { tipo:'gasto', categoria:'Indirecto' } (folio CP).
+//  · empresa (empresa:true o sin obraId) → egreso directo de Mifel (sogrub_movimientos).
+async function _aprobarGastoIndirecto(item, aprobarYPagar = false) {
+  const importe = Number(item?.monto?.importe) || 0;
+  if (importe <= 0) { _toast('Monto inválido en el gasto indirecto.', 'error'); return; }
+  const conIva      = item?.monto?.conIva !== false && (Number(item?.monto?.iva) || 0) > 0;
+  const fechaISO    = item.fecha ? new Date(item.fecha).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
+  const conceptoTxt = item.concepto || item.descripcion || 'gasto indirecto';
+  const provNombre  = (item.proveedorNombre || '').trim();
+  const provDef     = provNombre ? _findOrCreateProveedor(provNombre, {}) : null;
+  const esEmpresa   = item.empresa === true || !item.obraId;
+
+  let folio;
+  try { folio = await _generarFolio('CP'); }
+  catch (err) { _toast('Error al generar folio: ' + err.message, 'error'); return; }
+
+  // ── Empresa / sin obra → egreso de Mifel, no toca ningún proyecto ──
+  if (esEmpresa) {
+    const movMifel = {
+      fecha:          fechaISO,
+      monto:          -Math.abs(importe),
+      concepto:       `[${folio}] Indirecto empresa — ${conceptoTxt}${conIva ? '' : ' (sin IVA)'}`,
+      status:         'Pagado',
+      tipo:           'gasto',
+      categoria:      'Indirecto',
+      empresa:        true,
+      subcontratista: provNombre,
+      proveedor_id:   provDef?.id || null,
+      monto_subtotal: Number(item?.monto?.subtotal) || 0,
+      monto_iva:      Number(item?.monto?.iva) || 0,
+      incluye_iva:    conIva,
+      gasto_indirecto_id: item.gastoId || null,
+      origen_buzon_id: item.id,
+    };
+    try {
+      const created = addItem('sogrub_movimientos', movMifel);
+      await _dbRef(`/shared/buzon/${item.id}`).update(_buzonPatchAprobado(folio, created.id, 'sogrub_movimientos'));
+      _buzon.expanded.delete(item.id);
+      _toast(`${folio} · Indirecto empresa $${importe.toLocaleString('es-MX',{minimumFractionDigits:2})} asentado en Mifel.`, 'success');
+    } catch (err) { console.error('[Buzón indirecto empresa]', err); _toast('Error al aprobar: ' + err.message, 'error'); }
+    return;
+  }
+
+  // ── Obra → gasto del proyecto (categoria Indirecto) ──
+  const proyectoId = item.proyectoId || await _resolverProyectoIdPorObra(item.obraId);
+  if (!proyectoId) { _toast('No hay proyecto vinculado a esta obra. Crea el link en /shared/obraLinks primero.', 'error'); return; }
+
+  // Desglose OPUS por conceptoKey (opcional, un solo concepto).
+  let desglose;
+  if (item.conceptoKey) {
+    try {
+      const snap = await _dbRef(`/shared/catalogos/${item.obraId}/conceptos`).get();
+      if (snap.val()?.[item.conceptoKey]) {
+        desglose = [{ concepto_id: item.conceptoKey, importe: Number(item?.monto?.subtotal) || importe }];
+      }
+    } catch (e) { console.warn('[Buzón indirecto] catálogo:', e); }
+  }
+
+  const movimiento = {
+    proyecto_id:    proyectoId,
+    obraId:         item.obraId,
+    fecha:          fechaISO,
+    monto:          -Math.abs(importe),
+    concepto:       `[${folio}] Indirecto — ${conceptoTxt} (${item.obraNombre || item.obraId || ''})${conIva ? '' : ' (sin IVA)'}`,
+    subcontratista: provNombre,
+    status:         aprobarYPagar ? 'Pagado' : 'Pendiente',
+    tipo:           'gasto',
+    categoria:      'Indirecto',
+    gasto_indirecto_id: item.gastoId || null,
+    origen_buzon_id: item.id,
+    monto_subtotal: Number(item?.monto?.subtotal) || 0,
+    monto_iva:      Number(item?.monto?.iva) || 0,
+    incluye_iva:    conIva,
+    proveedor_id:   provDef?.id || null,
+    desglose_presupuesto: desglose,
+  };
+  try {
+    const created = addItem('sogrub_proy_movimientos', movimiento);
+    await _dbRef(`/shared/buzon/${item.id}`).update(_buzonPatchAprobado(folio, created.id, 'sogrub_proy_movimientos'));
+    _buzon.expanded.delete(item.id);
+    _toast(`${folio} · Indirecto $${importe.toLocaleString('es-MX',{minimumFractionDigits:2})} en ${item.obraNombre || 'obra'}.`, 'success');
+  } catch (err) { console.error('[Buzón indirecto obra]', err); _toast('Error al aprobar: ' + err.message, 'error'); }
+}
+
+// Nómina de un período cerrado (tipo 'nomina_*'). Genera:
+//  · 1 egreso de Mifel (sogrub_movimientos) por el neto total — la salida real.
+//  · N sogrub_proy_movimientos por prorrateoPorObra — bajan la caja de cada
+//    proyecto, con no_afecta_mifel:true para no volver a bajar Mifel.
+//  · netoSinObra queda absorbido sólo en el egreso de empresa (Mifel).
+// Categoría por tipoPersonal: operativo/técnico-campo → 'Mano de Obra';
+// técnico-oficina/directivo → 'Indirecto'.
+async function _aprobarNomina(item) {
+  const neto = Number(item?.monto?.importe) || Number(item.totalNeto) || 0;
+  if (neto <= 0) { _toast('Nómina con neto total inválido.', 'error'); return; }
+  const fechaISO  = item.fechaCorteISO || item.fecha || new Date().toISOString().slice(0, 10);
+  const CAT_POR_PERSONAL = { operativo: 'Mano de Obra', tecnico_campo: 'Mano de Obra', tecnico_oficina: 'Indirecto', directivo: 'Indirecto' };
+  const categoria = CAT_POR_PERSONAL[item.tipoPersonal] || 'Indirecto';
+  const label     = item.label || item.concepto || 'nómina';
+
+  let folio;
+  try { folio = await _generarFolio('CP'); }
+  catch (err) { _toast('Error al generar folio: ' + err.message, 'error'); return; }
+
+  const movMifel = {
+    fecha:          fechaISO,
+    monto:          -Math.abs(neto),
+    concepto:       `[${folio}] ${item.concepto || ('Nómina · ' + label)}`,
+    status:         'Pagado',
+    tipo:           'nomina',
+    categoria,
+    empresa:        true,
+    nomina_periodo_id: item.periodoId || null,
+    tipo_personal:  item.tipoPersonal || null,
+    num_empleados:  item.numEmpleados || null,
+    total_percepciones: item.totalPercepciones || null,
+    total_deducciones:  item.totalDeducciones || null,
+    origen_buzon_id: item.id,
+  };
+
+  // Prorrateo por obra → gastos de proyecto (no_afecta_mifel).
+  const prorrateo = item.prorrateoPorObra || {};
+  const proyMovs = [];
+  const sinVincular = [];
+  for (const [obraId, netoObra] of Object.entries(prorrateo)) {
+    const monto = Number(netoObra) || 0;
+    if (monto <= 0) continue;
+    const proyectoId = await _resolverProyectoIdPorObra(obraId);
+    if (!proyectoId) { sinVincular.push(obraId); continue; }
+    proyMovs.push({
+      proyecto_id:  proyectoId,
+      obraId,
+      fecha:        fechaISO,
+      monto:        -Math.abs(monto),
+      concepto:     `[${folio}] Nómina ${item.tipoPersonal || ''} · ${label} (prorrateo)`,
+      status:       'Pagado',
+      tipo:         'gasto',
+      categoria,
+      no_afecta_mifel: true,   // el neto ya salió de Mifel en el egreso único
+      nomina_periodo_id: item.periodoId || null,
+      origen_buzon_id: item.id,
+    });
+  }
+  if (sinVincular.length && !confirm(`⚠ ${sinVincular.length} obra(s) del prorrateo no tienen proyecto vinculado y su parte no se cargará a un proyecto (sí queda en el egreso de Mifel). ¿Procesar de todas formas?`)) return;
+
+  try {
+    const createdMifel = addItem('sogrub_movimientos', movMifel);
+    for (const m of proyMovs) { m.sogrub_movimiento_id = createdMifel.id; addItem('sogrub_proy_movimientos', m); }
+    await _dbRef(`/shared/buzon/${item.id}`).update(_buzonPatchAprobado(folio, createdMifel.id, 'sogrub_movimientos'));
+    _buzon.expanded.delete(item.id);
+    const nSinObra = Number(item.netoSinObra) || 0;
+    _toast(`${folio} · Nómina $${neto.toLocaleString('es-MX',{minimumFractionDigits:2})} · ${proyMovs.length} obra(s)${nSinObra ? ' + empresa' : ''}.`, 'success');
+  } catch (err) { console.error('[Buzón nómina]', err); _toast('Error al procesar nómina: ' + err.message, 'error'); }
 }
 
 // ─── Folio atómico ─────────────────────────────────────────────────────────
