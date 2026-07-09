@@ -1115,8 +1115,33 @@ async function _reabrirItemCajaChica(item) {
 }
 
 async function _rechazarItem(item) {
-  const motivo = prompt('Motivo del rechazo (visible en la app de origen):');
-  if (motivo === null) return;
+  // Modal propio en vez de prompt(): los diálogos nativos se suprimen tras
+  // varios usos en la misma sesión y a veces no aparecen (era el bug de "no
+  // deja rechazar").
+  const wrap = document.createElement('div');
+  const lbl  = document.createElement('p');
+  lbl.textContent = 'Motivo del rechazo (visible en la app de origen):';
+  lbl.style.cssText = 'margin:0 0 8px;color:var(--text-muted);font-size:13px';
+  const ta = document.createElement('textarea');
+  ta.placeholder = 'Opcional…';
+  ta.style.cssText = 'width:100%;min-height:90px;padding:8px 10px;border-radius:6px;background:var(--surface,#1d222b);color:var(--text-0,#e6e9ef);border:1px solid var(--border,#2d3340);font-family:inherit;font-size:14px;resize:vertical';
+  wrap.appendChild(lbl); wrap.appendChild(ta);
+
+  openModal({
+    title: 'Rechazar solicitud',
+    body: wrap,
+    confirmText: 'Rechazar',
+    cancelText: 'Cancelar',
+    onConfirm: async () => {
+      const motivo = (ta.value || '').trim();
+      closeModal();
+      await _ejecutarRechazo(item, motivo);
+    }
+  });
+  setTimeout(() => ta.focus(), 50);
+}
+
+async function _ejecutarRechazo(item, motivo) {
   try {
     const histKey = `${Date.now()}_rech`;
     const buzonPatch = {
