@@ -79,8 +79,7 @@ function refreshProyectosGrid() {
 
   proyectos.forEach(p => {
     const r   = calcResumenProyecto(p.id);
-    const pct = r.avancePct;
-    const cls = pct < 60 ? 'low' : pct < 85 ? 'medium' : 'high';
+    const pct = r.avanceCobranza;
 
     const card = document.createElement('div');
     card.className = 'proyecto-card';
@@ -123,11 +122,11 @@ function refreshProyectosGrid() {
 
       <div>
         <div class="progress-label">
-          <span style="font-size:11px;color:var(--text-muted)">Avance financiero</span>
+          <span style="font-size:11px;color:var(--text-muted)">Avance de cobranza</span>
           <strong style="font-size:12px">${pct.toFixed(1)}%</strong>
         </div>
         <div class="progress-bar">
-          <div class="progress-fill ${cls}" style="width:${Math.min(pct,100)}%"></div>
+          <div class="progress-fill" style="width:${Math.min(pct,100)}%;background:var(--accent)"></div>
         </div>
       </div>
 

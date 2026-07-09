@@ -229,6 +229,18 @@ function calcAvanceFinanciero(proyectoId) {
 }
 
 // =====================================================
+// REGLA 7B — % Avance de cobranza
+// (total cobrado al cliente / presupuesto_contrato) × 100
+// Mide cuánto del contrato ya pagó el cliente (avance financiero de obra).
+// =====================================================
+function calcAvanceCobranza(proyectoId) {
+  const proyecto = getItem(KEYS.PROYECTOS, proyectoId);
+  if (!proyecto || !proyecto.presupuesto_contrato) return 0;
+  const cobrado = calcTotalCobradoCliente(proyectoId);
+  return (cobrado / proyecto.presupuesto_contrato) * 100;
+}
+
+// =====================================================
 // REGLA 8A — Utilidad real a la fecha
 // Total cobrado al cliente − total gastado (pagado)
 // =====================================================
@@ -304,6 +316,7 @@ function calcResumenProyecto(proyectoId) {
     saldoCaja:        calcSaldoCajaProyecto(proyectoId),
     deudaPendiente:   calcDeudaPendiente(proyectoId),
     avancePct:        calcAvanceFinanciero(proyectoId),
+    avanceCobranza:   calcAvanceCobranza(proyectoId),
     utilidadReal:     calcUtilidadReal(proyectoId),
     utilidadEstimada: calcUtilidadEstimada(proyectoId),
   };

@@ -113,6 +113,7 @@ function renderDetalleKPIs(proyectoId, proyecto) {
   const utilidadReal     = calcUtilidadReal(proyectoId);
   const utilidadEst      = calcUtilidadEstimada(proyectoId);
   const avance           = calcAvanceFinanciero(proyectoId);
+  const avanceCobranza   = calcAvanceCobranza(proyectoId);
   const deudaPend        = calcDeudaPendiente(proyectoId);
   const iva              = calcIVADesglose(proyectoId);
   const presupuesto      = proyecto?.presupuesto_contrato ?? 0;
@@ -189,11 +190,20 @@ function renderDetalleKPIs(proyectoId, proyecto) {
     </div>
     <div class="kpi-card">
       <div class="kpi-label">📊 Avance financiero</div>
-      <div class="kpi-value" style="font-size:20px">${avance.toFixed(1)}%</div>
+      <div class="kpi-value" style="font-size:20px">${avanceCobranza.toFixed(1)}%</div>
       <div class="progress-bar" style="margin-top:6px">
-        <div class="progress-fill ${cls}" style="width:${Math.min(avance,100)}%"></div>
+        <div class="progress-fill" style="width:${Math.min(avanceCobranza,100)}%;background:var(--accent)"></div>
       </div>
-      <div class="kpi-sub">de ${formatMXN(proyecto.presupuesto_contrato)} contratados</div>
+      <div class="kpi-sub">cobrado de ${formatMXN(proyecto.presupuesto_contrato)} contratados</div>
+      <div style="margin-top:8px;border-top:1px solid var(--border);padding-top:6px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline">
+          <span style="font-size:11px;color:var(--text-muted)">Gasto ejecutado</span>
+          <strong style="font-size:12px;font-variant-numeric:tabular-nums">${avance.toFixed(1)}%</strong>
+        </div>
+        <div class="progress-bar" style="margin-top:4px;height:4px">
+          <div class="progress-fill ${cls}" style="width:${Math.min(avance,100)}%"></div>
+        </div>
+      </div>
     </div>
     <div class="kpi-card" id="kpi-deuda-pendiente-${proyectoId}">
       <div class="kpi-label">⚠️ Deuda pendiente</div>
