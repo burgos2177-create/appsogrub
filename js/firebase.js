@@ -89,7 +89,11 @@ function generateId() {
 /** Agrega un item a una colección array */
 function addItem(key, item) {
   const col     = Array.isArray(_cache[key]) ? [..._cache[key]] : [];
-  const newItem = { id: generateId(), ...item };
+  // Firebase .set() rechaza propiedades undefined (lanza síncrono). Las
+  // descartamos: un campo opcional omitido debe quedar ausente, no undefined.
+  const clean   = {};
+  for (const k in item) if (item[k] !== undefined) clean[k] = item[k];
+  const newItem = { id: generateId(), ...clean };
   col.push(newItem);
   saveCollection(key, col);
   return newItem;
