@@ -36,9 +36,13 @@ function calcSaldoMifel() {
   // Excluye los pagados con caja chica: ese dinero ya bajó de Mifel cuando se
   // hizo el depósito a caja chica (vía sogrub_movimientos egreso). Si volvemos
   // a contarlo aquí, doble descuento.
-  // Excluye también los pagados en efectivo: salieron de la caja física, no de Mifel.
+  // Excluye también: (a) pagados en efectivo — salieron de la caja física, no de
+  // Mifel (van a calcSaldoEfectivo); (b) prorrateo de nómina (no_afecta_mifel) —
+  // el neto ya salió de Mifel en el egreso único de nómina, aunque estos SÍ bajan
+  // la caja del proyecto (calcSaldoCajaProyecto no los excluye).
   const gastosPagados = proyMov
     .filter(m => m.tipo === 'gasto' && m.status === 'Pagado' && !m.paga_de_caja_chica
+              && !m.no_afecta_mifel
               && (m.metodo_pago ?? 'transferencia') !== 'efectivo')
     .reduce((acc, m) => acc + m.monto, 0);
 

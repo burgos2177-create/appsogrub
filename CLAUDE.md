@@ -40,6 +40,9 @@ cualquier → rechazado
 | `estimacion_subcontratista` | estimaciones | `sogrub_proy_movimientos` (gasto, categoria=Subcontratista) | Folio CP. Mapea desglose OPUS por `clave`. |
 | `gasto_caja_chica` | materiales | `sogrub_proy_movimientos` (gasto, categoria='Caja chica') | Folio CP. Desglose OPUS por `conceptoKey` (ya viene resuelto). Status='Pagado' (la salida real ya pasó al pagar el ticket). |
 | `deposito_caja_chica` | materiales o bitácora | `sogrub_movimientos` (egreso de Mifel) | Folio CC. Solo se publica si `metodoDeposito='transferencia'`; efectivo no genera movimiento contable. |
+| `oc_materiales` | compras | `sogrub_proy_movimientos` (gasto, categoria='Material') | Folio CP. Desglose OPUS por `conceptoKey`. Espejo en `/shared/compras/oc`. |
+| `gasto_indirecto` | indirectos | obra → `sogrub_proy_movimientos` (gasto, categoria='Indirecto'); **empresa** (`empresa:true`/sin obra) → egreso directo de Mifel (`sogrub_movimientos`) | Folio CP. Proveedor y desglose OPUS **opcionales** (`conceptoKey`); `monto={subtotal,iva,importe}`. Resuelve obra→proyecto vía `obraLinks`. Prorrateo = N items (uno por obra). Ver `_aprobarGastoIndirecto`. |
+| `nomina_*` (`nomina_operativo_semana`, `nomina_tecnico_campo_quincena`, `nomina_tecnico_oficina_quincena`, `nomina_directivo_quincena`) | indirectos | 1 egreso Mifel (`sogrub_movimientos`, neto total) **+** N `sogrub_proy_movimientos` por `prorrateoPorObra` con `no_afecta_mifel:true` | Folio CP. `netoSinObra` queda sólo en el egreso de empresa. Categoría por `tipoPersonal`: operativo/técnico-campo→'Mano de Obra', oficina/directivo→'Indirecto'. Anti-doble-conteo: `calcSaldoMifel` excluye `no_afecta_mifel` (el neto ya bajó Mifel una vez), pero SÍ baja la caja de cada proyecto. Ver `_aprobarNomina`. |
 
 Ver `_aprobarItem`, `_aprobarGastoCajaChica`, `_aprobarDepositoCajaChica`, `_depositarCajaChicaDesdeBitacora` en `js/views/buzon.js`.
 
