@@ -455,7 +455,7 @@ function _onRemoteChange(changedKey) {
   }
 
   // Sincronizar saldo Mifel a fnz-psnal cuando cambian datos que lo afectan
-  const _MIFEL_KEYS = ['sogrub_movimientos', 'sogrub_proy_movimientos', 'sogrub_config'];
+  const _MIFEL_KEYS = ['sogrub_movimientos', 'sogrub_efectivo_movimientos', 'sogrub_proy_movimientos', 'sogrub_config'];
   if (_MIFEL_KEYS.includes(changedKey) && typeof scheduleSyncSaldoMifel === 'function') {
     scheduleSyncSaldoMifel();
   }

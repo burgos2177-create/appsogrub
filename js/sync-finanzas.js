@@ -69,7 +69,7 @@ async function syncSaldo() {
 
   let saldo;
   try {
-    // calcSaldoGlobal = Mifel + fondos_inversión (calculations.js)
+    // calcSaldoGlobal = Mifel + fondos_inversión + efectivo (calculations.js)
     saldo = calcSaldoGlobal();
   } catch (e) {
     console.warn('[SyncFinanzas] calcSaldoGlobal error:', e);

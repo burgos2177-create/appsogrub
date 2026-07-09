@@ -29,7 +29,7 @@ function renderAnalisis() {
     hdr.className = 'mb-24';
     hdr.innerHTML = `
       <h2 style="font-size:18px;font-weight:600;color:var(--text);margin:0 0 4px">&#x1F4CA; An&aacute;lisis Financiero</h2>
-      <p style="font-size:12px;color:var(--text-muted);margin:0">Consolidado de todos los movimientos &middot; Caja SOGRUB + Proyectos</p>
+      <p style="font-size:12px;color:var(--text-muted);margin:0">Consolidado de todos los movimientos &middot; Caja SOGRUB + Proyectos + Efectivo</p>
     `;
     root.appendChild(hdr);
     root.appendChild(_aControls());
@@ -95,6 +95,7 @@ function _aControls() {
         <select class="form-input form-input--sm" id="anal-proy-filter" style="min-width:200px">
           <option value="">Todos los movimientos</option>
           <option value="__sogrub__"${_analProyId === '__sogrub__' ? ' selected' : ''}>Solo Caja SOGRUB</option>
+          <option value="__efectivo__"${_analProyId === '__efectivo__' ? ' selected' : ''}>Solo Efectivo</option>
           ${proyectos.map(p => `<option value="${p.id}"${_analProyId === p.id ? ' selected' : ''}>${p.nombre}</option>`).join('')}
         </select>
       </div>
@@ -171,7 +172,9 @@ function _aAllMovs() {
     _srcLabel:     'Caja SOGRUB',
     _proyNombre:   m.proyecto_id ? (proyMap[m.proyecto_id]?.nombre ?? '') : '',
     _tieneFactura: !!(m.factura_drive_url || m.factura_xml_url || m.factura_nombre || m.factura_xml_nombre),
-    _interno:      m.tipo === 'transferencia_proyecto',
+    // Transferencias internas y retiros a efectivo son movimientos internos:
+    // mueven dinero entre cajas propias, no son ingreso/egreso real.
+    _interno:      m.tipo === 'transferencia_proyecto' || m.tipo === 'retiro_efectivo',
     _abs:          Math.abs(m.monto ?? 0),
   }));
 
@@ -185,7 +188,18 @@ function _aAllMovs() {
     _abs:          Math.abs(m.monto ?? 0),
   }));
 
-  return [...movSOGRUB, ...movProy]
+  // Caja de efectivo (movimientos propios). Los retiros son internos (Mifel→efectivo).
+  const movEfec = _fbArr(getCollection(KEYS.EFECTIVO_MOV)).map(m => ({
+    ...m,
+    _src:          'efectivo',
+    _srcLabel:     'Efectivo',
+    _proyNombre:   '',
+    _tieneFactura: false,
+    _interno:      m.tipo === 'retiro',
+    _abs:          Math.abs(m.monto ?? 0),
+  }));
+
+  return [...movSOGRUB, ...movProy, ...movEfec]
     .sort((a, b) => (b.fecha ?? '').localeCompare(a.fecha ?? ''));
 }
 
@@ -198,6 +212,7 @@ function _aFiltrar(movs, desde, hasta) {
     if (m.fecha < desde || m.fecha > hasta) return false;
     if (!_analProyId) return true;
     if (_analProyId === '__sogrub__') return m._src === 'sogrub';
+    if (_analProyId === '__efectivo__') return m._src === 'efectivo';
     return m.proyecto_id === _analProyId;
   });
 }
@@ -214,7 +229,7 @@ function _aCalcKPIs(movs) {
     if (m._interno) return;
     const abs = m._abs;
 
-    if (m._src === 'sogrub') {
+    if (m._src === 'sogrub' || m._src === 'efectivo') {
       if (m.monto > 0) ingresos += abs;
       else             egresos  += abs;
       return;
@@ -345,16 +360,22 @@ function _aFillContent(el, todos, periodo, kpis, desde, hasta) {
 // Helpers de clasificacion
 function _aEsIngreso(m) {
   if (m._interno) return false;
-  if (m._src === 'sogrub') return (m.monto ?? 0) > 0;
+  if (m._src === 'sogrub' || m._src === 'efectivo') return (m.monto ?? 0) > 0;
   return m.tipo === 'abono_cliente';
 }
 function _aEsEgreso(m) {
   if (m._interno) return false;
-  if (m._src === 'sogrub') return (m.monto ?? 0) < 0;
+  if (m._src === 'sogrub' || m._src === 'efectivo') return (m.monto ?? 0) < 0;
   return m.tipo === 'gasto' && m.status === 'Pagado';
 }
 function _aTipoLabel(m) {
   if (m._src === 'sogrub') return tipoBadge(m.tipo, m._proyNombre);
+  if (m._src === 'efectivo') {
+    if (m.tipo === 'retiro') return '<span class="badge badge-info">⇄ Retiro Mifel</span>';
+    return (m.monto ?? 0) >= 0
+      ? '<span class="badge badge-success">💵 Ingreso efectivo</span>'
+      : '<span class="badge badge-danger">💵 Egreso efectivo</span>';
+  }
   const map = {
     'gasto':                { cls: 'badge-danger',  label: 'Gasto' },
     'abono_cliente':        { cls: 'badge-success', label: 'Abono cliente' },
@@ -396,22 +417,34 @@ function _aCalcRunning(allMovs) {
     })
     .map(x => x.m);
 
-  let saldoMifel = saldoInicial;
+  let saldoMifel    = saldoInicial;
+  let saldoEfectivo = cfg.saldo_inicial_efectivo ?? 0;
   const projCash = {}; // project_id → saldo de caja
 
   chrono.forEach(m => {
-    // ── Saldo Mifel ──
+    const efectivoProy = m._src === 'proyecto' && m.metodo_pago === 'efectivo';
+
+    // ── Saldo Mifel ── (excluye los movimientos de proyecto liquidados en efectivo)
     if (m._src === 'sogrub' && m.status === 'Pagado') {
       saldoMifel += (m.monto ?? 0);
-    } else if (m.tipo === 'abono_cliente') {
+    } else if (m._src === 'proyecto' && !efectivoProy && m.tipo === 'abono_cliente') {
       saldoMifel += (m.monto ?? 0);          // entra al banco
-    } else if (m.tipo === 'gasto' && m.status === 'Pagado') {
+    } else if (m._src === 'proyecto' && !efectivoProy && m.tipo === 'gasto' && m.status === 'Pagado') {
       saldoMifel += (m.monto ?? 0);          // sale del banco (monto negativo)
     }
 
-    // ── Caja de proyecto ──
+    // ── Saldo Efectivo ── (caja física propia + movimientos de proyecto en efectivo)
+    if (m._src === 'efectivo') {
+      saldoEfectivo += (m.monto ?? 0);
+    } else if (efectivoProy && m.tipo === 'abono_cliente') {
+      saldoEfectivo += Math.abs(m.monto ?? 0);
+    } else if (efectivoProy && m.tipo === 'gasto' && m.status === 'Pagado') {
+      saldoEfectivo -= Math.abs(m.monto ?? 0);
+    }
+
+    // ── Caja de proyecto ── (método-agnóstico: un gasto/abono cuenta igual)
     const pid = m.proyecto_id;
-    if (pid) {
+    if (pid && m._src === 'proyecto') {
       if (!projCash[pid]) projCash[pid] = 0;
       if (m.tipo === 'abono_cliente') {
         projCash[pid] += (m.monto ?? 0);
@@ -428,9 +461,10 @@ function _aCalcRunning(allMovs) {
       if (activeSet.has(id) && bal > 0) comprometido += bal;
     }
 
-    m._runSaldoMifel   = saldoMifel;
-    m._runComprometido = comprometido;
-    m._runDisponible   = saldoMifel - comprometido;
+    m._runSaldoMifel    = saldoMifel;
+    m._runSaldoEfectivo = saldoEfectivo;
+    m._runComprometido  = comprometido;
+    m._runDisponible    = saldoMifel + saldoEfectivo - comprometido;
   });
 }
 
@@ -1095,9 +1129,11 @@ function _aPorProyecto(movs) {
   const byPid = {};
   movs.forEach(m => {
     if (m._interno) return;
-    const pid = m._src === 'sogrub' ? '__sogrub__' : (m.proyecto_id || '__sogrub__');
+    const pid = m._src === 'sogrub' ? '__sogrub__'
+              : m._src === 'efectivo' ? '__efectivo__'
+              : (m.proyecto_id || '__sogrub__');
     if (!byPid[pid]) byPid[pid] = {
-      nombre: m._src === 'sogrub' ? 'Caja SOGRUB' : m._srcLabel,
+      nombre: m._src === 'sogrub' ? 'Caja SOGRUB' : m._src === 'efectivo' ? 'Efectivo' : m._srcLabel,
       src: m._src, ingresos:0, egresos:0, pendiente:0, conFactura:0, sinFactura:0,
     };
     const d = byPid[pid];
@@ -1135,11 +1171,11 @@ function _aPorProyecto(movs) {
         const bal = d.ingresos-d.egresos;
         const tot = d.conFactura+d.sinFactura;
         const pct = tot>0?(d.conFactura/tot*100).toFixed(0):null;
-        const nav = pid!=='__sogrub__';
+        const nav = pid!=='__sogrub__' && pid!=='__efectivo__';
         return `<tr class="${nav?'row-clickable':''}" ${nav?`data-pid="${pid}"`:''}
           title="${nav?'Ver detalle del proyecto':''}">
           <td><div style="display:flex;align-items:center;gap:8px">
-            ${d.src==='sogrub'?'<span class="badge badge-info">SOGRUB</span>':'<span class="badge badge-muted">Proyecto</span>'}
+            ${d.src==='sogrub'?'<span class="badge badge-info">SOGRUB</span>':d.src==='efectivo'?'<span class="badge badge-warning">Efectivo</span>':'<span class="badge badge-muted">Proyecto</span>'}
             <strong>${d.nombre}</strong>
           </div></td>
           <td style="text-align:right" class="amount-positive">${d.ingresos>0?`+${formatMXN(d.ingresos)}`:'&mdash;'}</td>
