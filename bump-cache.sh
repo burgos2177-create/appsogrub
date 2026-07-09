@@ -13,9 +13,10 @@ else
   V=$(date +%Y%m%d-%H%M)
 fi
 
-# Reemplaza ?v=<lo-que-sea> en cualquier <script src="js/...">
+# Reemplaza ?v=<lo-que-sea> en <script src="js/..."> y <link href="css/...">.
 # Funciona con Git Bash en Windows y con bash en Linux/Mac.
 perl -i -pe "s|(<script src=\"js/[^\"]+?)\?v=[A-Za-z0-9-]+|\1?v=${V}|g" index.html
+perl -i -pe "s|(href=\"css/[^\"]+?)\?v=[A-Za-z0-9-]+|\1?v=${V}|g" index.html
 
-echo "Cache-buster bumpeado a ?v=${V}"
+echo "Cache-buster bumpeado a ?v=${V} (js + css)"
 git --no-pager diff --stat index.html || true
