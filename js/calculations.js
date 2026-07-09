@@ -26,17 +26,20 @@ function calcSaldoMifel() {
 
   const proyMov = getCollection(KEYS.PROY_MOVIMIENTOS) ?? [];
 
-  // Cobros del cliente → entran al banco de SOGRUB (monto positivo)
+  // Cobros del cliente → entran al banco de SOGRUB (monto positivo).
+  // Excluye los cobrados en efectivo: ese dinero entró a la caja física, no a Mifel.
   const abonosCliente = proyMov
-    .filter(m => m.tipo === 'abono_cliente')
+    .filter(m => m.tipo === 'abono_cliente' && (m.metodo_pago ?? 'transferencia') !== 'efectivo')
     .reduce((acc, m) => acc + m.monto, 0);
 
   // Gastos pagados → salen del banco de SOGRUB (monto ya es negativo en BD).
   // Excluye los pagados con caja chica: ese dinero ya bajó de Mifel cuando se
   // hizo el depósito a caja chica (vía sogrub_movimientos egreso). Si volvemos
   // a contarlo aquí, doble descuento.
+  // Excluye también los pagados en efectivo: salieron de la caja física, no de Mifel.
   const gastosPagados = proyMov
-    .filter(m => m.tipo === 'gasto' && m.status === 'Pagado' && !m.paga_de_caja_chica)
+    .filter(m => m.tipo === 'gasto' && m.status === 'Pagado' && !m.paga_de_caja_chica
+              && (m.metodo_pago ?? 'transferencia') !== 'efectivo')
     .reduce((acc, m) => acc + m.monto, 0);
 
   return saldo_inicial_mifel + movSOGRUB + abonosCliente + gastosPagados;
@@ -58,12 +61,24 @@ function calcSaldoGlobal() {
 // =====================================================
 const DENOMINACIONES = [1000, 500, 200, 100, 50, 20, 10, 5, 2, 1, 0.5];
 
-// Saldo teórico de efectivo = saldo inicial + Σ movimientos (monto con signo).
+// Saldo teórico de efectivo = saldo inicial + Σ movimientos (monto con signo)
+// + movimientos de PROYECTOS liquidados en efectivo (abonos entran, gastos salen).
 // La bitácora manda; el arqueo por denominación solo concilia.
 function calcSaldoEfectivo() {
   const { saldo_inicial_efectivo } = getConfig();
   const movs = getCollection(KEYS.EFECTIVO_MOV) ?? [];
-  return (Number(saldo_inicial_efectivo) || 0) + movs.reduce((acc, m) => acc + (Number(m.monto) || 0), 0);
+  const base = (Number(saldo_inicial_efectivo) || 0) +
+    movs.reduce((acc, m) => acc + (Number(m.monto) || 0), 0);
+
+  const proyEfectivo = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
+    .filter(m => m.metodo_pago === 'efectivo')
+    .reduce((acc, m) => {
+      if (m.tipo === 'abono_cliente') return acc + Math.abs(m.monto);                 // ingreso a caja
+      if (m.tipo === 'gasto' && m.status === 'Pagado') return acc - Math.abs(m.monto); // egreso de caja
+      return acc;
+    }, 0);
+
+  return base + proyEfectivo;
 }
 
 // Total del arqueo físico = Σ denominación × cantidad.

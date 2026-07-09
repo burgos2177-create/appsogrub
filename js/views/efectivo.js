@@ -210,7 +210,24 @@ function refreshEfectivoTable() {
   const container = document.getElementById('efectivo-table-container');
   if (!container) return;
 
-  let movs = getCollection(KEYS.EFECTIVO_MOV) ?? [];
+  // Movimientos propios de la caja de efectivo (editables)
+  const propios = (getCollection(KEYS.EFECTIVO_MOV) ?? []).map(m => ({ ...m, _source: 'efectivo' }));
+
+  // Movimientos de PROYECTOS liquidados en efectivo (solo lectura, se gestionan en el proyecto)
+  const deProyectos = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
+    .filter(m => m.metodo_pago === 'efectivo' &&
+      (m.tipo === 'abono_cliente' || (m.tipo === 'gasto' && m.status === 'Pagado')))
+    .map(m => ({
+      id:          m.id,
+      fecha:       m.fecha,
+      concepto:    m.concepto,
+      monto:       m.tipo === 'abono_cliente' ? Math.abs(m.monto) : -Math.abs(m.monto),
+      tipo:        m.tipo === 'abono_cliente' ? 'ingreso' : 'egreso',
+      _source:     'proyecto',
+      proyecto_id: m.proyecto_id,
+    }));
+
+  let movs = [...propios, ...deProyectos];
   if (_efectivoState.mes) movs = movs.filter(m => m.fecha && m.fecha.startsWith(_efectivoState.mes));
   if (_efectivoState.tipo !== 'todos') {
     movs = _efectivoState.tipo === 'retiro'
@@ -234,9 +251,14 @@ function refreshEfectivoTable() {
 
   const _efecTipoBadge = (m) => {
     if (m.tipo === 'retiro') return '<span class="badge badge-info badge-no-dot">⇄ Retiro Mifel</span>';
-    return m.monto >= 0
+    const base = m.monto >= 0
       ? '<span class="badge badge-success badge-no-dot">Ingreso</span>'
       : '<span class="badge badge-danger badge-no-dot">Egreso</span>';
+    if (m._source === 'proyecto') {
+      const proy = getItem(KEYS.PROYECTOS, m.proyecto_id);
+      return `${base} <span class="badge badge-info badge-no-dot" style="font-size:10px">🏗️ ${proy?.nombre ?? 'Proyecto'}</span>`;
+    }
+    return base;
   };
 
   const wrap = document.createElement('div');
@@ -255,10 +277,13 @@ function refreshEfectivoTable() {
               <td class="${m.monto >= 0 ? 'amount-positive' : 'amount-negative'} font-mono">${formatMXN(m.monto)}</td>
               <td>
                 <div class="td-actions">
-                  ${m.tipo === 'retiro'
-                    ? '<span class="text-dim" style="font-size:11px" title="Los retiros se gestionan borrando la fila (baja también de Mifel)">🔗 ligado</span>'
-                    : `<button class="btn btn-ghost btn-icon btn-edit-efec" data-id="${m.id}" title="Editar">✏️</button>`}
-                  <button class="btn btn-ghost btn-icon btn-del-efec" data-id="${m.id}" title="Eliminar">🗑️</button>
+                  ${m._source === 'proyecto'
+                    ? `<button class="btn btn-ghost btn-icon btn-ver-proy-efec" data-proy="${m.proyecto_id}" title="Ver en el proyecto (se gestiona ahí)">🏗️→</button>`
+                    : m.tipo === 'retiro'
+                      ? `<span class="text-dim" style="font-size:11px" title="Los retiros se gestionan borrando la fila (baja también de Mifel)">🔗 ligado</span>
+                         <button class="btn btn-ghost btn-icon btn-del-efec" data-id="${m.id}" title="Eliminar">🗑️</button>`
+                      : `<button class="btn btn-ghost btn-icon btn-edit-efec" data-id="${m.id}" title="Editar">✏️</button>
+                         <button class="btn btn-ghost btn-icon btn-del-efec" data-id="${m.id}" title="Eliminar">🗑️</button>`}
                 </div>
               </td>
             </tr>
@@ -275,6 +300,8 @@ function refreshEfectivoTable() {
     btn.addEventListener('click', () => abrirModalEfectivo(btn.dataset.id)));
   wrap.querySelectorAll('.btn-del-efec').forEach(btn =>
     btn.addEventListener('click', () => confirmarEliminarEfectivo(btn.dataset.id)));
+  wrap.querySelectorAll('.btn-ver-proy-efec').forEach(btn =>
+    btn.addEventListener('click', () => navigateTo('detalle', btn.dataset.proy)));
 
   container.appendChild(wrap);
 }

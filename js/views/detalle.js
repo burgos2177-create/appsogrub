@@ -583,7 +583,7 @@ function renderDetalleTableOnly(proyectoId, wrap) {
                 <td>${m.concepto || '—'}</td>
                 <td>${m.tipo === 'gasto' ? categoriaBadge(m.categoria) + (m.categoria === 'Indirecto' && m.indirecto_ambito ? ` <span class="badge badge-muted badge-no-dot" style="font-size:10px">${m.indirecto_ambito === 'campo' ? '🚧 Campo' : '🏢 Oficina'}</span>` : '') + (m.paga_de_caja_chica ? ' <span class="badge badge-warning" style="font-size:10px" title="Pagado con caja chica · no descuenta saldo del proyecto (ya bajó al depositar)">💰 caja chica</span>' : '') : '—'}</td>
                 <td class="text-muted">${m.subcontratista || '—'}</td>
-                <td>${tipoBadge(m.tipo)}</td>
+                <td>${tipoBadge(m.tipo)}${(m.tipo === 'gasto' || m.tipo === 'abono_cliente') ? ` <span class="badge badge-muted badge-no-dot" style="font-size:10px" title="Forma de pago">${m.metodo_pago === 'efectivo' ? '💵 Efectivo' : '🏦 Transf.'}</span>` : ''}</td>
                 <td class="${colorMonto} font-mono">${formatMXN(m.monto)}</td>
                 <td>${ivaLabel}${facturaIcon}</td>
                 <td>${statusBadge(m.status)}</td>
@@ -650,6 +650,18 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
       <input type="text" id="pm-concepto" class="form-input"
         placeholder="${esGasto ? 'Ej: Materiales, mano de obra…' : 'Ej: Anticipo, pago parcial…'}"
         value="${mov?.concepto ?? ''}">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Forma de pago</label>
+      <div class="toggle-group" style="max-width:320px">
+        <input type="radio" name="pm-metodo" id="pm-metodo-transf" value="transferencia" class="toggle-option"
+          ${(mov?.metodo_pago ?? 'transferencia') === 'transferencia' ? 'checked' : ''}>
+        <label for="pm-metodo-transf" class="toggle-label">🏦 Transferencia</label>
+        <input type="radio" name="pm-metodo" id="pm-metodo-efec" value="efectivo" class="toggle-option"
+          ${mov?.metodo_pago === 'efectivo' ? 'checked' : ''}>
+        <label for="pm-metodo-efec" class="toggle-label">💵 Efectivo</label>
+      </div>
+      <span class="text-dim" style="font-size:11px">${esGasto ? 'De qué caja SOGRUB sale el pago (Mifel o efectivo).' : 'A qué caja SOGRUB entra el cobro (Mifel o efectivo).'}</span>
     </div>
     ${esGasto ? `
     <div class="form-group">
@@ -906,6 +918,7 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
       const incluye_iva = esGasto
         ? body.querySelector('#pm-coniva')?.checked ?? false
         : body.querySelector('#pm-coniva-abono')?.checked ?? false;
+      const metodo_pago = body.querySelector('input[name="pm-metodo"]:checked')?.value ?? 'transferencia';
 
       const valid = validateFields([
         { el: body.querySelector('#pm-fecha'),   msg: 'Selecciona una fecha' },
@@ -971,6 +984,7 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
         status, tipo, proyecto_id: proyectoId,
         categoria,
         indirecto_ambito,
+        metodo_pago,
         incluye_iva,
         factura_nombre,
         factura_monto_ocr,
