@@ -7,7 +7,8 @@ const NAV = [
   { to: '/',          label: 'Mapa' },
   { to: '/salud',     label: 'Salud' },
   { to: '/obralinks', label: 'obraLinks' },
-  { to: '/obras',     label: 'Obras' }
+  { to: '/obras',     label: 'Obras' },
+  { to: '/usuarios',  label: 'Usuarios' }
 ];
 
 export function renderShell(body) {
