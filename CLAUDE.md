@@ -40,6 +40,8 @@ cualquier → rechazado
 | `estimacion_subcontratista` | estimaciones | `sogrub_proy_movimientos` (gasto, categoria=Subcontratista) | Folio CP. Mapea desglose OPUS por `clave`. |
 | `gasto_caja_chica` | materiales | `sogrub_proy_movimientos` (gasto, categoria='Caja chica') | Folio CP. Desglose OPUS por `conceptoKey` (ya viene resuelto). Status='Pagado' (la salida real ya pasó al pagar el ticket). |
 | `deposito_caja_chica` | materiales o bitácora | `sogrub_movimientos` (egreso de Mifel) | Folio CC. Solo se publica si `metodoDeposito='transferencia'`; efectivo no genera movimiento contable. |
+| `oc_materiales` | compras | `sogrub_proy_movimientos` (gasto, categoria='Material') | Folio CP. Desglose OPUS por `conceptoKey`. Espejo en `/shared/compras/oc`. |
+| `gasto_indirecto` | indirectos | `sogrub_proy_movimientos` (gasto, categoria='Indirecto') | Folio CP. Proveedor y desglose OPUS **opcionales**; `monto={subtotal,iva,importe}`. Resuelve obra→proyecto vía `obraLinks`. **Lado bitácora listo (`_aprobarItem` rama `gasto_indirecto`); pendiente que app-indirectos publique al buzón con este `tipo`.** |
 
 Ver `_aprobarItem`, `_aprobarGastoCajaChica`, `_aprobarDepositoCajaChica`, `_depositarCajaChicaDesdeBitacora` en `js/views/buzon.js`.
 

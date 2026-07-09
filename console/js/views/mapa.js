@@ -45,7 +45,7 @@ export async function renderMapa() {
       appCard('📒 Bitácora', 'contador', lastWrite(ctx.movimientos), true),
       appCard('🛒 Compras', 'órdenes de compra', lastWrite(ctx.oc), true),
       appCard('📦 Materiales', 'almacén · caja chica', lastWrite(Object.values(ctx.cajaChica)), true),
-      appCard('🧾 Indirectos', 'pendiente de integrar', null, false)
+      appCard('🏗️ Indirectos', 'gastos indirectos', lastWrite(ctx.buzonList.filter(i => i.tipo === 'gasto_indirecto')), true)
     ]),
 
     // Nodos compartidos
