@@ -57,6 +57,7 @@ function navigateTo(viewName, proyectoId = null) {
   const renders = {
     dashboard:   () => renderDashboard(),
     caja:        () => renderCaja(),
+    efectivo:    () => renderEfectivo(),
     proyectos:   () => renderProyectos(),
     detalle:     () => renderDetalle(_activeProyecto),
     proveedores: () => renderProveedores(),

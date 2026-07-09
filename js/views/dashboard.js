@@ -33,7 +33,7 @@ function renderDashboard() {
   kpiGrid.className = 'kpi-grid';
   kpiGrid.innerHTML = `
     ${kpiCard('💳', 'Saldo Mifel',               saldoMifel,     'Cuenta principal SOGRUB')}
-    ${kpiCard('🌐', 'Saldo Global',               saldoGlobal,    'Mifel + fondos de inversión')}
+    ${kpiCard('🌐', 'Saldo Global',               saldoGlobal,    'Mifel + fondos + efectivo')}
     <div class="kpi-card">
       <div class="kpi-label">🔒 Comprometido en proyectos</div>
       <div class="kpi-value text-warning">${formatMXN(comprometido)}</div>

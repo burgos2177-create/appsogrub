@@ -49,7 +49,66 @@ function calcSaldoMifel() {
 function calcSaldoGlobal() {
   const { fondos_inversion } = getConfig();
   const totalFondos = (fondos_inversion ?? []).reduce((acc, f) => acc + (f.monto ?? 0), 0);
-  return calcSaldoMifel() + totalFondos;
+  return calcSaldoMifel() + totalFondos + calcSaldoEfectivo();
+}
+
+// =====================================================
+// EFECTIVO — caja física de SOGRUB
+// Denominaciones MXN (billetes y monedas) de mayor a menor.
+// =====================================================
+const DENOMINACIONES = [1000, 500, 200, 100, 50, 20, 10, 5, 2, 1, 0.5];
+
+// Saldo teórico de efectivo = saldo inicial + Σ movimientos (monto con signo).
+// La bitácora manda; el arqueo por denominación solo concilia.
+function calcSaldoEfectivo() {
+  const { saldo_inicial_efectivo } = getConfig();
+  const movs = getCollection(KEYS.EFECTIVO_MOV) ?? [];
+  return (Number(saldo_inicial_efectivo) || 0) + movs.reduce((acc, m) => acc + (Number(m.monto) || 0), 0);
+}
+
+// Total del arqueo físico = Σ denominación × cantidad.
+function calcTotalArqueo() {
+  const { efectivo_arqueo } = getConfig();
+  const conteo = efectivo_arqueo ?? {};
+  return DENOMINACIONES.reduce((acc, d) => acc + d * (Number(conteo[d]) || 0), 0);
+}
+
+// Diferencia de conciliación: arqueo físico − saldo teórico.
+//   > 0 sobrante · < 0 faltante · 0 cuadrado.
+function calcDiferenciaArqueo() {
+  return calcTotalArqueo() - calcSaldoEfectivo();
+}
+
+// =====================================================
+// Retiro de Mifel a efectivo (doble registro)
+//   Mifel: egreso (sogrub_movimientos, tipo='retiro_efectivo')
+//   Efectivo: ingreso (sogrub_efectivo_movimientos, tipo='retiro')
+// Ligados por retiro_ref para poder borrarlos juntos.
+// =====================================================
+function ejecutarRetiroEfectivo(monto, concepto, fecha) {
+  const ref = generateId();
+  const conceptoFinal = concepto || 'Retiro de Mifel a efectivo';
+
+  const movMifel = addItem(KEYS.MOVIMIENTOS, {
+    fecha,
+    monto:       -Math.abs(monto),
+    concepto:    conceptoFinal,
+    status:      'Pagado',
+    tipo:        'retiro_efectivo',
+    proyecto_id: null,
+    retiro_ref:  ref,
+  });
+
+  const movEfectivo = addItem(KEYS.EFECTIVO_MOV, {
+    fecha,
+    monto:      Math.abs(monto),
+    concepto:   conceptoFinal,
+    tipo:       'retiro',
+    origen:     'mifel',
+    retiro_ref: ref,
+  });
+
+  return { movMifel, movEfectivo };
 }
 
 // =====================================================

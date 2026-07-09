@@ -1,0 +1,495 @@
+/* =====================================================
+   SOGRUB Bitácora — Vista: Efectivo (caja física)
+   Bitácora de movimientos manda el saldo; el arqueo por
+   denominación concilia (faltante / sobrante).
+   ===================================================== */
+'use strict';
+
+const _efectivoState = { mes: '', tipo: 'todos' };
+
+// Etiqueta corta de denominación: $1,000 · $0.50
+function _denomLabel(d) {
+  return d < 1
+    ? `$${d.toFixed(2)}`
+    : `$${d.toLocaleString('es-MX')}`;
+}
+
+function renderEfectivo() {
+  const root = document.getElementById('efectivo-root');
+  root.innerHTML = '';
+
+  // ---- KPIs ----
+  root.appendChild(renderEfectivoKPIs());
+
+  // ---- Toolbar ----
+  const toolbar = document.createElement('div');
+  toolbar.className = 'toolbar mb-20';
+  toolbar.style.flexWrap = 'wrap';
+  toolbar.innerHTML = `
+    <button class="btn btn-primary"   id="btn-efec-mov">＋ Movimiento en efectivo</button>
+    <button class="btn btn-secondary" id="btn-efec-retiro">⇄ Retiro de Mifel</button>
+    <div class="toolbar-spacer"></div>
+    <div class="toolbar-filters">
+      <select class="filter-select" id="efec-filter-mes">
+        <option value="">Todos los meses</option>
+        ${_efectivoMeses()}
+      </select>
+      <select class="filter-select" id="efec-filter-tipo">
+        <option value="todos">Todos</option>
+        <option value="ingreso">Ingresos</option>
+        <option value="egreso">Egresos</option>
+        <option value="retiro">Retiros de Mifel</option>
+      </select>
+    </div>
+  `;
+  root.appendChild(toolbar);
+
+  toolbar.querySelector('#efec-filter-mes').value  = _efectivoState.mes;
+  toolbar.querySelector('#efec-filter-tipo').value = _efectivoState.tipo;
+  toolbar.querySelector('#btn-efec-mov').addEventListener('click', () => abrirModalEfectivo());
+  toolbar.querySelector('#btn-efec-retiro').addEventListener('click', () => abrirModalRetiroEfectivo());
+  toolbar.querySelector('#efec-filter-mes').addEventListener('change', e => {
+    _efectivoState.mes = e.target.value; refreshEfectivoTable();
+  });
+  toolbar.querySelector('#efec-filter-tipo').addEventListener('change', e => {
+    _efectivoState.tipo = e.target.value; refreshEfectivoTable();
+  });
+
+  // ---- Arqueo por denominación ----
+  root.appendChild(renderArqueoCard());
+
+  // ---- Tabla de movimientos ----
+  const tableContainer = document.createElement('div');
+  tableContainer.id = 'efectivo-table-container';
+  root.appendChild(tableContainer);
+  refreshEfectivoTable();
+
+  // ---- Config saldo inicial efectivo ----
+  root.appendChild(renderConfigSaldoEfectivo());
+}
+
+// =====================================================
+// KPIs
+// =====================================================
+function renderEfectivoKPIs() {
+  const saldo = calcSaldoEfectivo();
+  const arqueo = calcTotalArqueo();
+  const dif = calcDiferenciaArqueo();
+
+  const difLabel = Math.abs(dif) < 0.005 ? 'Caja cuadrada' : dif > 0 ? 'Sobrante' : 'Faltante';
+  const difClass = Math.abs(dif) < 0.005 ? 'text-success' : dif > 0 ? 'text-warning' : 'text-danger';
+  const difIcon  = Math.abs(dif) < 0.005 ? '✅' : '⚠️';
+
+  const grid = document.createElement('div');
+  grid.className = 'kpi-grid mb-24';
+  grid.id = 'efectivo-kpi-grid';
+  grid.innerHTML = `
+    <div class="kpi-card">
+      <div class="kpi-label">💵 Saldo en efectivo</div>
+      <div class="kpi-value ${saldo >= 0 ? 'text-success' : 'text-danger'}">${formatMXN(saldo)}</div>
+      <div class="kpi-sub">Según la bitácora (teórico)</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">🧮 Arqueo físico</div>
+      <div class="kpi-value">${formatMXN(arqueo)}</div>
+      <div class="kpi-sub">Conteo de billetes y monedas</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">${difIcon} Conciliación</div>
+      <div class="kpi-value ${difClass}">${dif >= 0 ? '+' : ''}${formatMXN(dif)}</div>
+      <div class="kpi-sub">${difLabel} (arqueo − bitácora)</div>
+    </div>
+  `;
+  return grid;
+}
+
+function refreshEfectivoKPIs() {
+  const old = document.getElementById('efectivo-kpi-grid');
+  if (old) old.replaceWith(renderEfectivoKPIs());
+}
+
+// =====================================================
+// ARQUEO POR DENOMINACIÓN
+// =====================================================
+function renderArqueoCard() {
+  const cfg = getConfig();
+  const conteo = { ...(cfg.efectivo_arqueo ?? {}) };
+
+  const card = document.createElement('div');
+  card.className = 'card mb-24';
+  card.id = 'arqueo-card';
+
+  const billetes = DENOMINACIONES.filter(d => d >= 20);
+  const monedas  = DENOMINACIONES.filter(d => d < 20);
+
+  const _fila = (d) => `
+    <div class="arqueo-fila">
+      <span class="arqueo-denom">${_denomLabel(d)}</span>
+      <span class="arqueo-x">×</span>
+      <input type="number" class="form-input arqueo-input" data-denom="${d}"
+        min="0" step="1" inputmode="numeric" placeholder="0"
+        value="${conteo[d] != null && conteo[d] !== 0 ? conteo[d] : ''}">
+      <span class="arqueo-sub" data-sub="${d}">${formatMXN(d * (Number(conteo[d]) || 0))}</span>
+    </div>`;
+
+  card.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+      <h3 class="section-title" style="margin:0">🧮 Arqueo de caja</h3>
+      <button class="btn btn-primary btn-sm" id="btn-guardar-arqueo">Guardar arqueo</button>
+    </div>
+    <div class="arqueo-grid">
+      <div>
+        <div class="arqueo-subtitle">Billetes</div>
+        ${billetes.map(_fila).join('')}
+      </div>
+      <div>
+        <div class="arqueo-subtitle">Monedas</div>
+        ${monedas.map(_fila).join('')}
+      </div>
+    </div>
+    <div class="arqueo-totales">
+      <div class="arqueo-total-row">
+        <span>Total contado</span>
+        <strong id="arqueo-total">${formatMXN(calcTotalArqueo())}</strong>
+      </div>
+      <div class="arqueo-total-row">
+        <span class="text-muted">Saldo en bitácora</span>
+        <strong class="text-muted" id="arqueo-teorico">${formatMXN(calcSaldoEfectivo())}</strong>
+      </div>
+      <div class="arqueo-total-row arqueo-dif-row">
+        <span>Diferencia</span>
+        <strong id="arqueo-dif">—</strong>
+      </div>
+    </div>
+  `;
+
+  // Recalcular en vivo mientras se cuenta
+  const _recalc = () => {
+    let total = 0;
+    card.querySelectorAll('.arqueo-input').forEach(inp => {
+      const d = parseFloat(inp.dataset.denom);
+      const n = Number(inp.value) || 0;
+      const sub = d * n;
+      total += sub;
+      const subEl = card.querySelector(`[data-sub="${inp.dataset.denom}"]`);
+      if (subEl) subEl.textContent = formatMXN(sub);
+    });
+    const teorico = calcSaldoEfectivo();
+    const dif = total - teorico;
+    card.querySelector('#arqueo-total').textContent = formatMXN(total);
+    const difEl = card.querySelector('#arqueo-dif');
+    difEl.textContent = `${dif >= 0 ? '+' : ''}${formatMXN(dif)}`;
+    difEl.className = Math.abs(dif) < 0.005 ? 'text-success' : dif > 0 ? 'text-warning' : 'text-danger';
+  };
+  card.querySelectorAll('.arqueo-input').forEach(inp => inp.addEventListener('input', _recalc));
+  _recalc();
+
+  card.querySelector('#btn-guardar-arqueo').addEventListener('click', () => {
+    const nuevoConteo = {};
+    card.querySelectorAll('.arqueo-input').forEach(inp => {
+      const n = Number(inp.value) || 0;
+      if (n > 0) nuevoConteo[inp.dataset.denom] = n;
+    });
+    updateConfig({ efectivo_arqueo: nuevoConteo });
+    showToast('Arqueo guardado', 'success');
+    refreshEfectivoKPIs();
+  });
+
+  return card;
+}
+
+function refreshArqueoCard() {
+  const old = document.getElementById('arqueo-card');
+  if (old) old.replaceWith(renderArqueoCard());
+}
+
+// =====================================================
+// TABLA DE MOVIMIENTOS
+// =====================================================
+function refreshEfectivoTable() {
+  const container = document.getElementById('efectivo-table-container');
+  if (!container) return;
+
+  let movs = getCollection(KEYS.EFECTIVO_MOV) ?? [];
+  if (_efectivoState.mes) movs = movs.filter(m => m.fecha && m.fecha.startsWith(_efectivoState.mes));
+  if (_efectivoState.tipo !== 'todos') {
+    movs = _efectivoState.tipo === 'retiro'
+      ? movs.filter(m => m.tipo === 'retiro')
+      : movs.filter(m => (m.monto >= 0 ? 'ingreso' : 'egreso') === _efectivoState.tipo && m.tipo !== 'retiro');
+  }
+  movs = [...movs].sort((a, b) => (b.fecha ?? '').localeCompare(a.fecha ?? ''));
+
+  container.innerHTML = '';
+
+  if (movs.length === 0) {
+    container.appendChild(emptyState({
+      icon:        svgEmptyEfectivo(),
+      title:       'Sin movimientos en efectivo',
+      desc:        'Registra entradas y salidas de efectivo, o haz un retiro de Mifel.',
+      actionLabel: '＋ Movimiento en efectivo',
+      onAction:    () => abrirModalEfectivo(),
+    }));
+    return;
+  }
+
+  const _efecTipoBadge = (m) => {
+    if (m.tipo === 'retiro') return '<span class="badge badge-info badge-no-dot">⇄ Retiro Mifel</span>';
+    return m.monto >= 0
+      ? '<span class="badge badge-success badge-no-dot">Ingreso</span>'
+      : '<span class="badge badge-danger badge-no-dot">Egreso</span>';
+  };
+
+  const wrap = document.createElement('div');
+  wrap.innerHTML = `
+    <div class="table-wrapper">
+      <table class="data-table">
+        <thead>
+          <tr><th>Fecha</th><th>Concepto</th><th>Tipo</th><th>Monto</th><th>Acciones</th></tr>
+        </thead>
+        <tbody>
+          ${movs.map(m => `
+            <tr>
+              <td class="text-muted">${formatDate(m.fecha)}</td>
+              <td>${m.concepto || '—'}</td>
+              <td>${_efecTipoBadge(m)}</td>
+              <td class="${m.monto >= 0 ? 'amount-positive' : 'amount-negative'} font-mono">${formatMXN(m.monto)}</td>
+              <td>
+                <div class="td-actions">
+                  ${m.tipo === 'retiro'
+                    ? '<span class="text-dim" style="font-size:11px" title="Los retiros se gestionan borrando la fila (baja también de Mifel)">🔗 ligado</span>'
+                    : `<button class="btn btn-ghost btn-icon btn-edit-efec" data-id="${m.id}" title="Editar">✏️</button>`}
+                  <button class="btn btn-ghost btn-icon btn-del-efec" data-id="${m.id}" title="Eliminar">🗑️</button>
+                </div>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+      <div class="table-footer">
+        <span style="margin-left:auto">Saldo en efectivo: <strong class="${calcSaldoEfectivo() >= 0 ? 'amount-positive' : 'amount-negative'}">${formatMXN(calcSaldoEfectivo())}</strong></span>
+      </div>
+    </div>
+  `;
+
+  wrap.querySelectorAll('.btn-edit-efec').forEach(btn =>
+    btn.addEventListener('click', () => abrirModalEfectivo(btn.dataset.id)));
+  wrap.querySelectorAll('.btn-del-efec').forEach(btn =>
+    btn.addEventListener('click', () => confirmarEliminarEfectivo(btn.dataset.id)));
+
+  container.appendChild(wrap);
+}
+
+function _refreshEfectivoTodo() {
+  refreshEfectivoKPIs();
+  refreshEfectivoTable();
+  refreshArqueoCard();
+}
+
+// =====================================================
+// MODAL: MOVIMIENTO EN EFECTIVO (ingreso / egreso)
+// =====================================================
+function abrirModalEfectivo(id = null) {
+  const mov = id ? getItem(KEYS.EFECTIVO_MOV, id) : null;
+  const titulo = mov ? 'Editar movimiento' : 'Movimiento en efectivo';
+  const tipoActual = mov ? (mov.monto >= 0 ? 'ingreso' : 'egreso') : 'egreso';
+
+  const body = document.createElement('div');
+  body.style.cssText = 'display:flex;flex-direction:column;gap:14px';
+  body.innerHTML = `
+    <div class="form-group">
+      <label class="form-label">Tipo</label>
+      <div class="toggle-group">
+        <input type="radio" name="ef-tipo" id="ef-egreso"  value="egreso"  class="toggle-option" ${tipoActual === 'egreso'  ? 'checked' : ''}>
+        <label for="ef-egreso"  class="toggle-label">Salida (egreso)</label>
+        <input type="radio" name="ef-tipo" id="ef-ingreso" value="ingreso" class="toggle-option" ${tipoActual === 'ingreso' ? 'checked' : ''}>
+        <label for="ef-ingreso" class="toggle-label">Entrada (ingreso)</label>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label" for="ef-fecha">Fecha</label>
+        <input type="date" id="ef-fecha" class="form-input" value="${mov?.fecha ?? todayISO()}">
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="ef-monto">Monto ($)</label>
+        <input type="number" id="ef-monto" class="form-input" placeholder="0.00" min="0.01" step="0.01"
+          value="${mov ? Math.abs(mov.monto) : ''}">
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="ef-concepto">Concepto</label>
+      <input type="text" id="ef-concepto" class="form-input" placeholder="Ej: pago a chofer, compra menor…"
+        value="${mov?.concepto ?? ''}">
+    </div>
+  `;
+
+  openModal({
+    title: titulo,
+    body,
+    confirmText: mov ? 'Guardar cambios' : 'Registrar',
+    onConfirm: () => {
+      const tipo     = body.querySelector('input[name="ef-tipo"]:checked')?.value ?? 'egreso';
+      const fecha    = body.querySelector('#ef-fecha').value;
+      const montoRaw = parseFloat(body.querySelector('#ef-monto').value);
+      const concepto = body.querySelector('#ef-concepto').value.trim();
+
+      const valid = validateFields([
+        { el: body.querySelector('#ef-fecha'),    msg: 'Selecciona una fecha' },
+        { el: body.querySelector('#ef-monto'),    msg: 'Ingresa un monto mayor a 0' },
+        { el: body.querySelector('#ef-concepto'), msg: 'Escribe un concepto' },
+      ]);
+      if (!valid) return;
+
+      const monto = tipo === 'egreso' ? -montoRaw : montoRaw;
+
+      if (mov) {
+        updateItem(KEYS.EFECTIVO_MOV, id, { fecha, monto, concepto });
+        showToast('Movimiento actualizado', 'success');
+      } else {
+        addItem(KEYS.EFECTIVO_MOV, { fecha, monto, concepto, tipo: tipo === 'egreso' ? 'egreso' : 'ingreso', origen: 'efectivo' });
+        showToast('Movimiento registrado', 'success');
+      }
+
+      closeModal();
+      _refreshEfectivoTodo();
+    },
+  });
+}
+
+// =====================================================
+// MODAL: RETIRO DE MIFEL A EFECTIVO (doble registro)
+// =====================================================
+function abrirModalRetiroEfectivo() {
+  const body = document.createElement('div');
+  body.style.cssText = 'display:flex;flex-direction:column;gap:14px';
+  body.innerHTML = `
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label" for="ret-fecha">Fecha</label>
+        <input type="date" id="ret-fecha" class="form-input" value="${todayISO()}">
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="ret-monto">Monto ($)</label>
+        <input type="number" id="ret-monto" class="form-input" placeholder="0.00" min="0.01" step="0.01">
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="ret-concepto">Concepto</label>
+      <input type="text" id="ret-concepto" class="form-input" value="Retiro de Mifel a efectivo">
+    </div>
+    <p class="text-muted text-sm">
+      Baja el saldo de Mifel (egreso) y sube el efectivo (ingreso) en un solo paso.
+    </p>
+  `;
+
+  openModal({
+    title: '⇄ Retiro de Mifel a efectivo',
+    body,
+    confirmText: 'Retirar',
+    onConfirm: () => {
+      const fecha    = body.querySelector('#ret-fecha').value;
+      const monto    = parseFloat(body.querySelector('#ret-monto').value);
+      const concepto = body.querySelector('#ret-concepto').value.trim();
+
+      const valid = validateFields([
+        { el: body.querySelector('#ret-fecha'), msg: 'Selecciona una fecha' },
+        { el: body.querySelector('#ret-monto'), msg: 'Ingresa un monto mayor a 0' },
+      ]);
+      if (!valid) return;
+
+      ejecutarRetiroEfectivo(monto, concepto, fecha);
+      showToast('Retiro registrado (Mifel → efectivo)', 'success');
+      closeModal();
+      _refreshEfectivoTodo();
+    },
+  });
+}
+
+// =====================================================
+// ELIMINAR MOVIMIENTO EN EFECTIVO
+// (si es un retiro ligado, borra también la contraparte en Mifel)
+// =====================================================
+function confirmarEliminarEfectivo(id) {
+  const mov = getItem(KEYS.EFECTIVO_MOV, id);
+  const esRetiro = mov?.tipo === 'retiro' && mov?.retiro_ref;
+  openConfirmModal({
+    title:   'Eliminar movimiento',
+    message: esRetiro
+      ? `¿Eliminar este retiro? Se borrará también el egreso correspondiente en Mifel.`
+      : `¿Eliminar "${mov?.concepto ?? 'este movimiento'}"? Esta acción no se puede deshacer.`,
+    confirmText: 'Eliminar',
+    onConfirm: () => {
+      if (esRetiro) {
+        // Borrar la contraparte en Mifel con el mismo retiro_ref
+        const mifelMov = (getCollection(KEYS.MOVIMIENTOS) ?? []).find(m => m.retiro_ref === mov.retiro_ref);
+        if (mifelMov) deleteItem(KEYS.MOVIMIENTOS, mifelMov.id);
+      }
+      deleteItem(KEYS.EFECTIVO_MOV, id);
+      closeModal();
+      showToast('Movimiento eliminado', 'success');
+      _refreshEfectivoTodo();
+    },
+  });
+}
+
+// =====================================================
+// CONFIG SALDO INICIAL EFECTIVO (colapsable)
+// =====================================================
+function renderConfigSaldoEfectivo() {
+  const wrap = document.createElement('div');
+  wrap.className = 'card mt-24';
+  wrap.innerHTML = `
+    <button class="collapsible-trigger" id="cfg-efec-trigger">
+      ⚙️ Configurar saldo inicial de efectivo <span class="caret">▼</span>
+    </button>
+    <div class="collapsible-content" id="cfg-efec-content">
+      <div style="padding-top:16px;display:flex;align-items:flex-end;gap:10px">
+        <div class="form-group" style="flex:1;max-width:260px">
+          <label class="form-label" for="saldo-efec-input">Saldo inicial de caja ($)</label>
+          <input type="number" id="saldo-efec-input" class="form-input" step="0.01"
+            value="${getConfig().saldo_inicial_efectivo ?? 0}" placeholder="0.00">
+        </div>
+        <button class="btn btn-primary btn-sm" id="btn-guardar-saldo-efec" style="margin-bottom:1px">Guardar</button>
+      </div>
+      <p class="text-muted text-sm mt-8">
+        Efectivo con el que abre la caja física. Los movimientos se aplican sobre este valor.
+      </p>
+    </div>
+  `;
+
+  wrap.querySelector('#cfg-efec-trigger').addEventListener('click', () => {
+    wrap.querySelector('#cfg-efec-trigger').classList.toggle('open');
+    wrap.querySelector('#cfg-efec-content').classList.toggle('open');
+  });
+  wrap.querySelector('#btn-guardar-saldo-efec').addEventListener('click', () => {
+    const val = parseFloat(wrap.querySelector('#saldo-efec-input').value);
+    if (isNaN(val)) { showToast('Ingresa un valor numérico', 'warning'); return; }
+    updateConfig({ saldo_inicial_efectivo: val });
+    showToast('Saldo inicial de efectivo actualizado', 'success');
+    _refreshEfectivoTodo();
+  });
+
+  return wrap;
+}
+
+// =====================================================
+// HELPERS
+// =====================================================
+function _efectivoMeses() {
+  const movs = getCollection(KEYS.EFECTIVO_MOV) ?? [];
+  const meses = [...new Set(movs.map(m => m.fecha?.slice(0, 7)).filter(Boolean))].sort().reverse();
+  const fmt = (ym) => {
+    const [y, m] = ym.split('-');
+    return new Date(+y, +m - 1, 1).toLocaleDateString('es-MX', { month: 'long', year: 'numeric' });
+  };
+  return meses.map(m => `<option value="${m}">${fmt(m)}</option>`).join('');
+}
+
+function svgEmptyEfectivo() {
+  return `<svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="6" y="18" width="52" height="28" rx="4" stroke="currentColor" stroke-width="2"/>
+    <circle cx="32" cy="32" r="7" stroke="currentColor" stroke-width="2"/>
+    <line x1="14" y1="26" x2="18" y2="26" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    <line x1="46" y1="38" x2="50" y2="38" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+  </svg>`;
+}

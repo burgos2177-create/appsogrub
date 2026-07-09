@@ -48,13 +48,14 @@ const _storage = firebase.storage();
 
 // Cache local en memoria (espejo de Firebase)
 const _cache = {
-  sogrub_config:           null,
-  sogrub_movimientos:      null,
-  sogrub_proyectos:        null,
-  sogrub_proy_movimientos: null,
-  sogrub_proveedores:      null,
-  sogrub_proy_proveedores: null,
-  sogrub_fiscal_config:    null,
+  sogrub_config:              null,
+  sogrub_movimientos:         null,
+  sogrub_efectivo_movimientos:null,
+  sogrub_proyectos:           null,
+  sogrub_proy_movimientos:    null,
+  sogrub_proveedores:         null,
+  sogrub_proy_proveedores:    null,
+  sogrub_fiscal_config:       null,
 };
 
 // Callbacks suscritos a cambios (vista actual los registra)
@@ -295,7 +296,7 @@ function getItem(key, id) {
 
 /** Lee config */
 function getConfig() {
-  return _cache['sogrub_config'] ?? { saldo_inicial_mifel: 0, fondos_inversion: [] };
+  return _cache['sogrub_config'] ?? { saldo_inicial_mifel: 0, fondos_inversion: [], saldo_inicial_efectivo: 0, efectivo_arqueo: {} };
 }
 
 /** Guarda config */
@@ -315,6 +316,7 @@ function updateConfig(updates) {
 const KEYS = Object.freeze({
   CONFIG:           'sogrub_config',
   MOVIMIENTOS:      'sogrub_movimientos',
+  EFECTIVO_MOV:     'sogrub_efectivo_movimientos',
   PROYECTOS:        'sogrub_proyectos',
   PROY_MOVIMIENTOS: 'sogrub_proy_movimientos',
   PROVEEDORES:      'sogrub_proveedores',
@@ -330,6 +332,7 @@ const KEYS = Object.freeze({
 const _COLECCIONES = [
   'sogrub_config',
   'sogrub_movimientos',
+  'sogrub_efectivo_movimientos',
   'sogrub_proyectos',
   'sogrub_proy_movimientos',
   'sogrub_proveedores',

@@ -696,6 +696,61 @@ img, svg { display: block; }
 }
 
 /* =====================================================
+   ARQUEO DE CAJA (efectivo)
+   ===================================================== */
+.arqueo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px 32px;
+}
+.arqueo-subtitle {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.arqueo-fila {
+  display: grid;
+  grid-template-columns: 64px 14px 1fr 96px;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.arqueo-denom { font-weight: 600; font-variant-numeric: tabular-nums; }
+.arqueo-x { color: var(--text-dim); text-align: center; }
+.arqueo-input { padding: 6px 10px; text-align: right; }
+.arqueo-sub {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.arqueo-totales {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.arqueo-total-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.arqueo-total-row strong { font-size: 15px; }
+.arqueo-dif-row {
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+  font-weight: 600;
+}
+
+/* =====================================================
    MODALS
    ===================================================== */
 .modal-overlay {
