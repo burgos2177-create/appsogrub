@@ -174,14 +174,17 @@ function calcDineroComprometido() {
 
 // =====================================================
 // REGLA 5 — Disponible real SOGRUB
-// Saldo Mifel (incluye cobros de clientes y gastos de proyectos)
+// Liquidez operativa (Mifel + efectivo, ambos reciben cobros y pagan gastos)
 // − Dinero comprometido (saldos positivos en proyectos activos)
 // → El "libre de compromisos" no cambia cuando un cliente paga o se paga
-//   un gasto de proyecto: el banco sube/baja y el comprometido sube/baja
-//   en igual medida, manteniéndose estable el disponible real.
+//   un gasto de proyecto: la caja (Mifel o efectivo) sube/baja y el
+//   comprometido sube/baja en igual medida, manteniéndose estable.
+//   Se incluye efectivo porque los cobros/gastos en efectivo mueven la caja
+//   del proyecto (comprometido) sin tocar Mifel; sin él, el disponible se
+//   distorsiona.
 // =====================================================
 function calcDisponibleReal() {
-  return calcSaldoMifel() - calcDineroComprometido();
+  return calcSaldoMifel() + calcSaldoEfectivo() - calcDineroComprometido();
 }
 
 // =====================================================

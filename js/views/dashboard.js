@@ -44,7 +44,7 @@ function renderDashboard() {
         </button>
       </div>
     </div>
-    ${kpiCard('✅', 'Disponible real',             disponibleReal, 'Mifel libre de compromisos')}
+    ${kpiCard('✅', 'Disponible real',             disponibleReal, 'Mifel + efectivo libre de compromisos')}
   `;
   root.appendChild(kpiGrid);
 
