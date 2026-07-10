@@ -1327,12 +1327,16 @@ async function _aprobarGastoIndirecto(item, aprobarYPagar = false) {
     } catch (e) { console.warn('[Buzón indirecto] catálogo:', e); }
   }
 
+  // Etiqueta de obra legible: nombre de la obra o del proyecto contable.
+  // Nunca el obraId crudo (clave Firebase tipo -OweAtheZ475fTLhZOEm).
+  const obraLabel = (item.obraNombre || _obtenerNombreProyecto(proyectoId) || '').trim();
+
   const movimiento = {
     proyecto_id:    proyectoId,
     obraId:         item.obraId,
     fecha:          fechaISO,
     monto:          -Math.abs(importe),
-    concepto:       `[${folio}] Indirecto — ${conceptoTxt} (${item.obraNombre || item.obraId || ''})${conIva ? '' : ' (sin IVA)'}`,
+    concepto:       `[${folio}] Indirecto — ${conceptoTxt}${obraLabel ? ` (${obraLabel})` : ''}${conIva ? '' : ' (sin IVA)'}`,
     subcontratista: provNombre,
     status:         aprobarYPagar ? 'Pagado' : 'Pendiente',
     tipo:           'gasto',
