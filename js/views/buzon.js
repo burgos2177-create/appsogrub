@@ -285,7 +285,7 @@ function _buzonCard(item) {
     estimacion_subcontratista: '🔧 Estim. subcontratista',
     gasto_caja_chica: '🧾 Gasto caja chica',
     deposito_caja_chica: '🏦 Depósito caja chica',
-    oc_materiales: '📦 Orden de compra (materiales)',
+    oc_materiales: item.claseCompra === 'servicio' ? '🧰 Orden de compra (servicio)' : '📦 Orden de compra (materiales)',
     gasto_indirecto: item.empresa || !item.obraId ? '🏗️ Indirecto (empresa)' : '🏗️ Gasto indirecto',
     nomina_operativo_semana: '👷 Nómina operativo (semanal)',
     nomina_tecnico_campo_quincena: '👷 Nómina técnico campo (quincenal)',
@@ -1809,21 +1809,35 @@ async function _aprobarOCMateriales(item, aprobarYPagar = false) {
     ? ` · cubre ${item.reqIds.length} req${item.reqIds.length === 1 ? '' : 's'}`
     : '';
 
+  // Categoría contable: compras la envía (Material/Mano de Obra/Subcontratista/
+  // Indirecto). Default 'Material' por compatibilidad con OCs de material viejas.
+  const CATS_VALIDAS = ['Material', 'Mano de Obra', 'Subcontratista', 'Indirecto'];
+  const categoria = CATS_VALIDAS.includes(item.categoria) ? item.categoria : 'Material';
+  const esServicio = item.claseCompra === 'servicio';
+
   const movimiento = {
     proyecto_id:    proyectoId,
     obraId:         item.obraId,
     fecha:          fechaISO,
     monto:          -Math.abs(total),
-    concepto:       `[${folio}] OC ${proveedorNombre}${reqsLabel}${item.comentariosCompras ? ' · ' + item.comentariosCompras.slice(0, 60) : ''}`,
+    concepto:       `[${folio}] OC${esServicio ? ' servicio' : ''} ${proveedorNombre}${reqsLabel}${item.comentariosCompras ? ' · ' + item.comentariosCompras.slice(0, 60) : ''}`,
     subcontratista: proveedorNombre,
     status:         aprobarYPagar ? 'Pagado' : 'Pendiente',
     tipo:           'gasto',
-    categoria:      'Material',
+    categoria,
+    // Servicio indirecto → ámbito oficina/campo para las bolsitas del proyecto.
+    indirecto_ambito: categoria === 'Indirecto' ? (item.indirectoAmbito === 'campo' ? 'campo' : 'oficina') : undefined,
+    clase_compra:   esServicio ? 'servicio' : 'material',
     origen_buzon_id: item.id,
     origen_oc_id:   item.ocId || null,
     monto_subtotal: Math.abs(subtotal),
     monto_iva:      Math.abs(ivaImporte),
     incluye_iva:    !!item.incluyeIva,
+    // Retenciones de servicios (ISR, IVA retenido, etc.). Se guardan para
+    // trazabilidad/fiscal; `total` ya viene neto (subtotal + IVA − retenciones).
+    retenciones:       Array.isArray(item.retenciones) && item.retenciones.length ? item.retenciones : undefined,
+    retenciones_total: Number(item.retencionesTotal) > 0 ? Number(item.retencionesTotal) : undefined,
+    cfdi_uuid:         item.cfdiUuid || undefined,
     proveedor_id:   provDef?.id || null,
     desglose_presupuesto: mapped.length ? mapped : undefined
   };

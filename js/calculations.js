@@ -375,10 +375,14 @@ function calcIVADesglose(proyectoId) {
     const abs = Math.abs(m.monto);
     const tieneFactura = !!(m.factura_drive_url || m.factura_xml_url || m.factura_nombre || m.factura_xml_nombre);
     if (m.incluye_iva) {
-      const neto = abs / 1.16;
+      // Preferir subtotal/IVA guardados (exactos aun con retenciones, donde el
+      // monto viene neto); si no existen, derivar del monto bruto (/1.16).
+      const tieneDesglose = Number(m.monto_subtotal) > 0 && m.monto_iva != null;
+      const neto = tieneDesglose ? Math.abs(m.monto_subtotal) : abs / 1.16;
+      const iva  = tieneDesglose ? Math.abs(m.monto_iva)      : abs - neto;
       gastoNeto += neto;
-      ivaPagado += abs - neto;
-      if (tieneFactura) ivaVerificado += abs - neto;
+      ivaPagado += iva;
+      if (tieneFactura) ivaVerificado += iva;
     } else {
       gastoNeto += abs;
       ivaPorCobrar += abs * 0.16;
