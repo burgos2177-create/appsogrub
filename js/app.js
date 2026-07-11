@@ -47,6 +47,11 @@ function navigateTo(viewName, proyectoId = null) {
     tab.classList.toggle('active', tab.dataset.view === tabTarget);
   });
 
+  // Móvil: centra la pestaña activa en la tira deslizable del nav.
+  // No-op en escritorio (el nav no tiene overflow ahí).
+  document.querySelector('.nav-tab.active')
+    ?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
 
   const section = document.getElementById(`view-${viewName}`);

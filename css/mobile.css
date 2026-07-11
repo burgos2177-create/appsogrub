@@ -1,0 +1,81 @@
+/* =====================================================
+   SOGRUB Bitácora — Vista móvil (ADITIVA)
+   Todo vive dentro de media queries de pantallas chicas, así que NO
+   modifica ninguna regla de escritorio. Se carga DESPUÉS de styles.css.
+   Para revertir: quita el <link> de este archivo en index.html.
+   ===================================================== */
+
+/* =====================================================
+   ≤ 768px — tablets y teléfonos grandes
+   ===================================================== */
+@media (max-width: 768px) {
+  /* Nunca permitir scroll horizontal de la página */
+  html, body { max-width: 100%; overflow-x: hidden; }
+
+  /* ---- NAV principal: tira deslizable (9 pestañas no caben en fila) ---- */
+  .main-nav {
+    flex: 1 1 auto;
+    min-width: 0;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    scroll-snap-type: x proximity;
+  }
+  .main-nav::-webkit-scrollbar { display: none; }
+  .nav-tab { flex-shrink: 0; scroll-snap-align: start; }
+  /* La barra animada bajo el tab activo estorba al deslizar → fuera en móvil */
+  .nav-tab.active::after { display: none; }
+
+  /* ---- Sub-nav del detalle (Movimientos · Presupuesto · Caja chica) ---- */
+  .detalle-sub-nav {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .detalle-sub-nav::-webkit-scrollbar { display: none; }
+  .detalle-sub-tab { flex-shrink: 0; padding: 10px 14px; }
+
+  /* ---- Objetivos táctiles más cómodos ---- */
+  .btn { padding: 10px 14px; }
+  .btn.btn-sm { padding: 7px 12px; }
+  .btn-icon { min-width: 34px; min-height: 34px; }
+
+  /* ---- Modales: que quepan y hagan scroll interno si son altos ---- */
+  .modal-card {
+    max-height: 92vh;
+    display: flex;
+    flex-direction: column;
+  }
+  .modal-body {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* =====================================================
+   ≤ 480px — teléfonos
+   ===================================================== */
+@media (max-width: 480px) {
+  /* Ocultar el nombre de marca para dar aire a la tira de pestañas */
+  .brand-text { display: none; }
+
+  /* KPIs del detalle a 1 columna (son tarjetas densas con desgloses) */
+  .detalle-kpi-grid { grid-template-columns: 1fr; }
+
+  /* Bolsitas de presupuesto y arqueo de efectivo: 1 columna garantizada */
+  .bolsas-grid,
+  .arqueo-grid { grid-template-columns: 1fr; }
+
+  /* Botones de acción de las toolbars: crecen y se acomodan de a 2 por fila */
+  .toolbar .btn { flex: 1 1 140px; }
+
+  /* Números grandes un poco más contenidos */
+  .kpi-value { font-size: 20px; }
+
+  /* Fila del arqueo: que la etiqueta no apriete al input en pantallas muy angostas */
+  .arqueo-fila { grid-template-columns: 58px 12px 1fr 84px; gap: 6px; }
+}
