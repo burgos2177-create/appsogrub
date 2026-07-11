@@ -1563,6 +1563,52 @@ async function _mapearDesgloseCajaChica(obraId, desglose) {
   return { mapped, faltantes };
 }
 
+// Modal de traspaso: el contador elige con qué CATEGORÍA contable entra el
+// gasto de caja chica a la bitácora (default Material). Si es Indirecto, pide
+// el ámbito (oficina/campo). Devuelve {categoria, indirectoAmbito} o null.
+function _modalCategoriaGastoCC(item) {
+  return new Promise(resolve => {
+    const cats = (typeof CATEGORIAS !== 'undefined' ? CATEGORIAS : ['Material', 'Mano de Obra', 'Subcontratista', 'Indirecto']);
+    const importe = Number(item.monto) || 0;
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:9999';
+    overlay.innerHTML = `
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:24px;width:min(460px,90%)">
+        <h3 style="margin:0 0 6px">Traspaso a bitácora</h3>
+        <p style="margin:0 0 16px;font-size:12px;color:var(--text-muted)">
+          ${(item.concepto || item.proveedor || 'Gasto de caja chica')} · $${importe.toLocaleString('es-MX', {minimumFractionDigits:2})}
+        </p>
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <label style="font-size:13px">Categoría contable
+            <select id="cc-cat" style="margin-top:4px;display:block;width:100%;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px">
+              ${cats.map(c => `<option value="${c}"${c === 'Material' ? ' selected' : ''}>${c}</option>`).join('')}
+            </select>
+          </label>
+          <label id="cc-amb-wrap" style="font-size:13px;display:none">Ámbito del indirecto
+            <select id="cc-amb" style="margin-top:4px;display:block;width:100%;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px">
+              <option value="oficina">🏢 Oficina</option>
+              <option value="campo">🚧 Campo</option>
+            </select>
+          </label>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:20px;justify-content:flex-end">
+          <button id="cc-cancel" style="background:transparent;border:1px solid var(--border);border-radius:6px;padding:8px 16px;color:var(--text);cursor:pointer">Cancelar</button>
+          <button id="cc-ok" style="background:#5dd39e;color:#0e3a25;border:none;border-radius:6px;padding:8px 16px;font-weight:600;cursor:pointer">Aprobar</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    const catSel = overlay.querySelector('#cc-cat');
+    const ambWrap = overlay.querySelector('#cc-amb-wrap');
+    catSel.addEventListener('change', () => { ambWrap.style.display = catSel.value === 'Indirecto' ? 'block' : 'none'; });
+    const cleanup = (r) => { document.body.removeChild(overlay); resolve(r); };
+    overlay.querySelector('#cc-cancel').addEventListener('click', () => cleanup(null));
+    overlay.addEventListener('click', e => { if (e.target === overlay) cleanup(null); });
+    overlay.querySelector('#cc-ok').addEventListener('click', () => {
+      cleanup({ categoria: catSel.value, indirectoAmbito: overlay.querySelector('#cc-amb').value });
+    });
+  });
+}
+
 async function _aprobarGastoCajaChica(item) {
   // Resolver proyectoId
   const proyectoId = item.proyectoId || await _resolverProyectoIdPorObra(item.obraId);
@@ -1582,6 +1628,11 @@ async function _aprobarGastoCajaChica(item) {
       return;
     }
   }
+
+  // El contador traduce el gasto al lenguaje de la bitácora: elige categoría
+  // (y ámbito si es Indirecto). Default Material.
+  const traspaso = await _modalCategoriaGastoCC(item);
+  if (!traspaso) return; // cancelado
 
   let folio;
   try { folio = await _generarFolio('CP'); }
@@ -1610,12 +1661,11 @@ async function _aprobarGastoCajaChica(item) {
     subcontratista: proveedorNombre,
     status:         'Pagado',
     tipo:           'gasto',
-    // Las recepciones de caja chica de materiales son siempre compras de
-    // material — vienen pre-categorizadas para evitar reclasificación. El
+    // Categoría elegida por el contador al aprobar (default Material). El
     // marcador de "vino de caja chica" es movimiento_caja_chica_id, no la
-    // categoria. Cuando se agregue el módulo de indirectos en materiales,
-    // ese flujo enviará un tipo distinto con categoria='Indirecto'.
-    categoria:      'Material',
+    // categoria — por eso puede ser cualquiera sin romper los hooks.
+    categoria:      traspaso.categoria,
+    indirecto_ambito: traspaso.categoria === 'Indirecto' ? traspaso.indirectoAmbito : undefined,
     // El gasto se pagó con caja chica → ya bajó saldo cuando se depositó.
     // calcSaldoCajaProyecto y calcSaldoMifel excluyen estos gastos para no
     // doble-contar. El monto sí cuenta para utilidad / total gastado / IVA.
