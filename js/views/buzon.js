@@ -1570,6 +1570,10 @@ function _modalCategoriaGastoCC(item) {
   return new Promise(resolve => {
     const cats = (typeof CATEGORIAS !== 'undefined' ? CATEGORIAS : ['Material', 'Mano de Obra', 'Subcontratista', 'Indirecto']);
     const importe = Number(item.monto) || 0;
+    // La app de origen puede sugerir la categoría/ámbito (p. ej. indirectos manda
+    // categoriaSugerida:'Indirecto'). Si no, default Material.
+    const catSug = cats.includes(item.categoriaSugerida) ? item.categoriaSugerida : 'Material';
+    const ambSug = item.ambitoSugerido === 'campo' ? 'campo' : 'oficina';
     const overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:9999';
     overlay.innerHTML = `
@@ -1581,13 +1585,13 @@ function _modalCategoriaGastoCC(item) {
         <div style="display:flex;flex-direction:column;gap:12px">
           <label style="font-size:13px">Categoría contable
             <select id="cc-cat" style="margin-top:4px;display:block;width:100%;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px">
-              ${cats.map(c => `<option value="${c}"${c === 'Material' ? ' selected' : ''}>${c}</option>`).join('')}
+              ${cats.map(c => `<option value="${c}"${c === catSug ? ' selected' : ''}>${c}</option>`).join('')}
             </select>
           </label>
-          <label id="cc-amb-wrap" style="font-size:13px;display:none">Ámbito del indirecto
+          <label id="cc-amb-wrap" style="font-size:13px;display:${catSug === 'Indirecto' ? 'block' : 'none'}">Ámbito del indirecto
             <select id="cc-amb" style="margin-top:4px;display:block;width:100%;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px">
-              <option value="oficina">🏢 Oficina</option>
-              <option value="campo">🚧 Campo</option>
+              <option value="oficina"${ambSug === 'oficina' ? ' selected' : ''}>🏢 Oficina</option>
+              <option value="campo"${ambSug === 'campo' ? ' selected' : ''}>🚧 Campo</option>
             </select>
           </label>
         </div>
@@ -1638,9 +1642,11 @@ async function _aprobarGastoCajaChica(item) {
   try { folio = await _generarFolio('CP'); }
   catch (err) { _toast('Error al generar folio: ' + err.message, 'error'); return; }
 
-  // Tickets de caja chica suelen traer IVA mexicano del 16% bruto
-  const subtotal = importe / 1.16;
-  const iva = importe - subtotal;
+  // Tickets de caja chica suelen traer IVA mexicano del 16% bruto. La app de
+  // origen puede marcar incluyeIva:false (viáticos, gastos sin comprobante…).
+  const conIva = item.incluyeIva !== false;
+  const subtotal = conIva ? importe / 1.16 : importe;
+  const iva = conIva ? importe - subtotal : 0;
 
   const proveedorNombre = (item.proveedor || '').trim();
   const provDef = proveedorNombre
@@ -1673,7 +1679,7 @@ async function _aprobarGastoCajaChica(item) {
     origen_buzon_id: item.id,
     monto_subtotal: subtotal,
     monto_iva:      iva,
-    incluye_iva:    true,
+    incluye_iva:    conIva,
     proveedor_id:   provDef?.id || null,
     desglose_presupuesto: mapped.length ? mapped : undefined,
     // Factura adjuntada antes de aprobar (subida desde el modal Ver recepción)
