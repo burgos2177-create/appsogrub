@@ -268,10 +268,12 @@ function _buzonCard(item) {
   const expanded  = _buzon.expanded.has(item.id);
   const esSub     = item.tipo === 'estimacion_subcontratista';
   const esOC      = item.tipo === 'oc_materiales';
+  const esGastoOC = item.tipo === 'gasto_oc';
   // Caja chica usa monto plano (number); CxC/CxP usan { subtotal, iva, importe }.
+  // OC y gasto_oc traen total plano.
   const esCajaChica = item.tipo === 'gasto_caja_chica' || item.tipo === 'deposito_caja_chica';
-  const monto     = esOC
-    ? Number(item.total) || 0
+  const monto     = (esOC || esGastoOC)
+    ? Number(item.total ?? item.monto) || 0
     : (esCajaChica
       ? Number(item.monto) || 0
       : (item?.monto?.importe || 0));
@@ -286,6 +288,7 @@ function _buzonCard(item) {
     gasto_caja_chica: '🧾 Gasto caja chica',
     deposito_caja_chica: '🏦 Depósito caja chica',
     oc_materiales: item.claseCompra === 'servicio' ? '🧰 Orden de compra (servicio)' : '📦 Orden de compra (materiales)',
+    gasto_oc: '📦 Gasto de OC (materiales)',
     gasto_indirecto: item.empresa || !item.obraId ? '🏗️ Indirecto (empresa)' : '🏗️ Gasto indirecto',
     nomina_operativo_semana: '👷 Nómina operativo (semanal)',
     nomina_tecnico_campo_quincena: '👷 Nómina técnico campo (quincenal)',
@@ -308,8 +311,8 @@ function _buzonCard(item) {
     </div>
     ${desfase ? `<span title="${desfase.tooltip}" style="font-size:11px;color:#e0a04c;background:rgba(224,160,76,.12);padding:2px 7px;border-radius:8px;flex-shrink:0">⚠ Δ$${Math.abs(desfase.delta).toLocaleString('es-MX', {minimumFractionDigits:2})}</span>` : ''}
     <div style="text-align:right;flex-shrink:0">
-      <div style="font-family:ui-monospace,monospace;font-size:17px;font-weight:700;color:${(esSub || esOC || item.tipo === 'gasto_caja_chica' || item.tipo === 'gasto_indirecto' || (item.tipo && item.tipo.startsWith('nomina_'))) ? '#e15555' : 'var(--accent)'}">
-        ${(esSub || esOC || item.tipo === 'gasto_caja_chica' || item.tipo === 'gasto_indirecto' || (item.tipo && item.tipo.startsWith('nomina_'))) ? '−' : '+'}$${monto.toLocaleString('es-MX', {minimumFractionDigits:2, maximumFractionDigits:2})}
+      <div style="font-family:ui-monospace,monospace;font-size:17px;font-weight:700;color:${(esSub || esOC || item.tipo === 'gasto_caja_chica' || item.tipo === 'gasto_indirecto' || item.tipo === 'gasto_oc' || (item.tipo && item.tipo.startsWith('nomina_'))) ? '#e15555' : 'var(--accent)'}">
+        ${(esSub || esOC || item.tipo === 'gasto_caja_chica' || item.tipo === 'gasto_indirecto' || item.tipo === 'gasto_oc' || (item.tipo && item.tipo.startsWith('nomina_'))) ? '−' : '+'}$${monto.toLocaleString('es-MX', {minimumFractionDigits:2, maximumFractionDigits:2})}
       </div>
     </div>
     <span style="color:var(--text-muted);font-size:14px;flex-shrink:0">${expanded ? '▲' : '▼'}</span>`;
@@ -359,9 +362,12 @@ function _cardBodyHTML(item) {
   const esGastoCC = item.tipo === 'gasto_caja_chica';
   const esDepCC   = item.tipo === 'deposito_caja_chica';
   const esOC      = item.tipo === 'oc_materiales';
+  const esGastoOC = item.tipo === 'gasto_oc';
   const esIndirecto = item.tipo === 'gasto_indirecto';
   const esNomina  = typeof item.tipo === 'string' && item.tipo.startsWith('nomina_');
   const esCajaChica = esGastoCC || esDepCC;
+  // Etiqueta legible de forma de pago (gasto_oc)
+  const _formaPagoLbl = { credito: '🧾 Crédito (por pagar)', efectivo: '💵 Efectivo', transferencia: '🏦 Transferencia', caja_chica: '💰 Caja chica' }[item.formaPago] || item.formaPago || '—';
   const fechaPago = item.fecha
     ? new Date(item.fecha).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })
     : (esOC && item.fechaEmision
@@ -371,6 +377,8 @@ function _cardBodyHTML(item) {
   const montoNum = esCajaChica ? Number(item.monto) || 0 : 0;
   const montoInfo = esOC
     ? `Subtotal $${(item.subtotal || 0).toLocaleString('es-MX',{minimumFractionDigits:2})} · IVA $${(item.ivaImporte || 0).toLocaleString('es-MX',{minimumFractionDigits:2})}${item.retencionesTotal ? ' · Retenciones $' + (item.retencionesTotal).toLocaleString('es-MX',{minimumFractionDigits:2}) : ''} · Total <b>$${(item.total || 0).toLocaleString('es-MX',{minimumFractionDigits:2})}</b>`
+    : esGastoOC
+    ? `Subtotal $${(Number(item.subtotal) || 0).toLocaleString('es-MX',{minimumFractionDigits:2})} · IVA $${(Number(item.iva) || 0).toLocaleString('es-MX',{minimumFractionDigits:2})} · Total <b>$${(Number(item.total ?? item.monto) || 0).toLocaleString('es-MX',{minimumFractionDigits:2})}</b>`
     : esCajaChica
     ? `Importe: <b>$${montoNum.toLocaleString('es-MX',{minimumFractionDigits:2})}</b> <span style="color:var(--text-muted);font-size:11px">(monto plano · sin desglose IVA del lado almacén)</span>`
     : (item?.monto?.conIva === false
@@ -402,6 +410,11 @@ function _cardBodyHTML(item) {
        Items: <b>${(item.items || []).length}</b>${item.reqIds?.length ? ` · Requisiciones cubiertas: <b>${item.reqIds.length}</b>` : ''}<br>
        Condiciones: <b>${item.condicionesPago || '—'}</b><br>
        Fecha emisión: <b>${fechaPago}</b>`
+    : esGastoOC
+    ? `Proveedor: <b>${item.proveedor || '—'}</b> <code style="font-size:11px" title="RFC del proveedor">${_rfcProveedorBuzon(item.proveedor, item) || '—'}</code><br>
+       Factura: <b>${item.factura || '<span style=\'color:#e0a04c\'>sin factura</span>'}</b> · Forma de pago: <b>${_formaPagoLbl}</b><br>
+       Items: <b>${(item.items || []).length}</b> · Recepción: <b>${item.refRecepcionId ? '<code style=\'font-size:11px\'>' + String(item.refRecepcionId).slice(-8) + '</code>' : '—'}</b><br>
+       Fecha: <b>${fechaPago}</b>`
     : esIndirecto
     ? `Concepto: <b>${item.concepto || '—'}</b><br>
        Categoría: <b>${item.categoriaNombre || item.categoria || '—'}</b>${item.empresa ? ' <span style="color:#e0a04c">· empresa</span>' : ''}<br>
@@ -441,7 +454,7 @@ function _cardBodyHTML(item) {
 
   // Desglose OPUS — caja chica usa shape distinta {conceptoKey, conceptoClave, conceptoDescripcion, monto}
   let desgloseHTML = '';
-  if ((esGastoCC || esOC) && Array.isArray(item.desglose) && item.desglose.length > 0) {
+  if ((esGastoCC || esOC || esGastoOC) && Array.isArray(item.desglose) && item.desglose.length > 0) {
     const totalCC = item.desglose.reduce((s, d) => s + (Number(d.monto) || 0), 0);
     desgloseHTML = `
       <details open style="margin-top:10px;font-size:11px">
@@ -539,7 +552,7 @@ function _calcularResumenFinanciero(items) {
     // OC de compras usa monto plano (item.total). CxC/CxP normales tienen
     // {subtotal, iva, importe}. Caja chica también usa monto plano pero NO
     // entra al análisis CxC/CxP (es flujo paralelo).
-    const monto = it.tipo === 'oc_materiales'
+    const monto = (it.tipo === 'oc_materiales' || it.tipo === 'gasto_oc')
       ? (Number(it.total) || 0)
       : (Number(it?.monto?.importe) || 0);
     if (!monto) continue;
@@ -547,7 +560,7 @@ function _calcularResumenFinanciero(items) {
     if (it.estado === 'huerfano')  { excluidos.huerfanos++; excluidos.montoHuerfano += monto; continue; }
 
     const target = it.tipo === 'pago_cliente' ? cxc
-                 : (it.tipo === 'estimacion_subcontratista' || it.tipo === 'oc_materiales' || it.tipo === 'gasto_indirecto') ? cxp
+                 : (it.tipo === 'estimacion_subcontratista' || it.tipo === 'oc_materiales' || it.tipo === 'gasto_indirecto' || it.tipo === 'gasto_oc') ? cxp
                  : null;
     if (!target) continue;
 
@@ -866,7 +879,138 @@ async function _marcarEnRevision(item) {
 // Incluye subcontratista, OC de materiales e indirectos.
 function _tipoEsCxP(tipo) {
   return tipo === 'estimacion_subcontratista' || tipo === 'oc_materiales' || tipo === 'gasto_indirecto'
+      || tipo === 'gasto_oc'
       || (typeof tipo === 'string' && tipo.startsWith('nomina_'));
+}
+
+function _formaPagoLblCorto(fp) {
+  return { credito: 'crédito', efectivo: 'efectivo', transferencia: 'transferencia', caja_chica: 'caja chica' }[fp] || fp || '';
+}
+
+// =====================================================
+// Gasto de recepción de OC (app-materiales, tipo='gasto_oc').
+// Self-contained: monto = total CON IVA, desglose por conceptoKey (SIN IVA).
+// La forma de pago define la liquidación:
+//   credito       → gasto POR PAGAR (status Pendiente).
+//   efectivo      → gasto PAGADO, sale de la caja de efectivo (metodo_pago='efectivo').
+//   transferencia → gasto PAGADO, sale de Mifel (metodo_pago='transferencia').
+//   caja_chica    → gasto PAGADO desde el fondo de caja chica (paga_de_caja_chica).
+// =====================================================
+async function _aprobarGastoOC(item, aprobarYPagar = false) {
+  const proyectoId = item.proyectoId || await _resolverProyectoIdPorObra(item.obraId);
+  if (!proyectoId) {
+    _toast('No hay proyecto vinculado a esta obra. Crea el link en /shared/obraLinks primero.', 'error');
+    return;
+  }
+
+  const total = Number(item.total ?? item.monto) || 0;
+  if (total <= 0) { _toast('Total inválido en el gasto de OC.', 'error'); return; }
+  const subtotal = Number(item.subtotal) || total;
+  const iva      = Number(item.iva) || Math.max(0, total - subtotal);
+  const conIva   = iva > 0.005;
+
+  const proveedorNombre = (item.proveedor || '').trim();
+  const provDef = proveedorNombre ? _findOrCreateProveedor(proveedorNombre, { rfc: item.proveedorRfc || '' }) : null;
+
+  // Desglose OPUS por conceptoKey (sin IVA; suma == subtotal).
+  const { mapped, faltantes } = await _mapearDesgloseCajaChica(item.obraId, item.desglose);
+  if (faltantes > 0) {
+    if (!confirm(`⚠ ${faltantes} de ${(item.desglose || []).length} líneas no encontraron concepto OPUS. ¿Aprobar de todas formas? (esas líneas no se cargarán al desglose contable)`)) return;
+  }
+
+  const formaPago   = item.formaPago || 'credito';
+  const esCredito   = formaPago === 'credito';
+  const esCajaChica = formaPago === 'caja_chica';
+
+  // Crédito nace 'Pendiente'; los demás nacen 'Pagado' (el dinero ya salió).
+  // "Aprobar + Pagar" sobre un crédito pide datos de pago y lo marca pagado.
+  let pagoData = null;
+  if (esCredito && aprobarYPagar) {
+    pagoData = await _modalDatosPago('pago');
+    if (!pagoData) return;
+  }
+  const pagado = !esCredito || !!pagoData;
+
+  let folio;
+  try { folio = await _generarFolio('CP'); }
+  catch (err) { _toast('Error al generar folio: ' + err.message, 'error'); return; }
+
+  const fechaISO = pagoData?.fechaISO
+    || (item.fecha ? new Date(item.fecha).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10));
+
+  // Forma de pago → de qué caja SOGRUB sale.
+  let metodo_pago;
+  if (esCajaChica)                        metodo_pago = undefined;       // sale del fondo de caja chica
+  else if (formaPago === 'efectivo')      metodo_pago = 'efectivo';
+  else if (formaPago === 'transferencia') metodo_pago = 'transferencia';
+  else if (pagoData)                      metodo_pago = (pagoData.metodo === 'Efectivo') ? 'efectivo' : 'transferencia';
+  else                                    metodo_pago = 'transferencia'; // crédito aún sin pagar
+
+  const movimiento = {
+    proyecto_id:    proyectoId,
+    obraId:         item.obraId,
+    fecha:          fechaISO,
+    monto:          -Math.abs(total),
+    concepto:       `[${folio}] Gasto OC ${item.folio ? item.folio + ' · ' : ''}${proveedorNombre || '(sin proveedor)'}${item.factura ? ' · F.' + item.factura : ''}`,
+    subcontratista: proveedorNombre,
+    status:         pagado ? 'Pagado' : 'Pendiente',
+    tipo:           'gasto',
+    categoria:      'Material',
+    metodo_pago,
+    paga_de_caja_chica: esCajaChica ? true : undefined,
+    forma_pago:     formaPago,
+    origen_buzon_id: item.id,
+    origen_recepcion_id: item.refRecepcionId || null,
+    monto_subtotal: Math.abs(subtotal),
+    monto_iva:      Math.abs(iva),
+    incluye_iva:    conIva,
+    proveedor_id:   provDef?.id || null,
+    desglose_presupuesto: mapped.length ? mapped : undefined,
+  };
+
+  try {
+    const created = addItem('sogrub_proy_movimientos', movimiento);
+    const nuevoEstado = pagado ? 'pagado' : 'aprobado';
+    const histKey = `${Date.now()}_apr_gasto_oc`;
+    const buzonPatch = {
+      estado:       nuevoEstado,
+      folio,
+      aprobadoAt:   Date.now(),
+      aprobadoPor:  _currentUser?.uid || '',
+      movId:        created.id,
+      destinoRefPath: `sogrub_proy_movimientos[id=${created.id}]`,
+      huerfanoAt:   null, huerfanoPor: null, descripcionHuerfano: null,
+      [`estadoHistorial/${histKey}`]: { estado: nuevoEstado, at: Date.now(), por: _currentUser?.uid || '' },
+    };
+    if (pagado) {
+      const metodoLbl = pagoData?.metodo
+        || ({ efectivo: 'Efectivo', transferencia: 'Transferencia', caja_chica: 'Caja chica' })[formaPago]
+        || 'Pagado';
+      buzonPatch.pagadoAt       = pagoData?.fecha || Date.now();
+      buzonPatch.metodoPago     = metodoLbl;
+      buzonPatch.referenciaPago = pagoData?.referencia || null;
+      const histKeyPago = `${Date.now() + 1}_pago`;
+      buzonPatch[`estadoHistorial/${histKeyPago}`] = { estado: 'pagado', at: buzonPatch.pagadoAt, por: _currentUser?.uid || '', nota: metodoLbl };
+    }
+
+    const updates = { [`/shared/buzon/${item.id}`]: buzonPatch };
+    // Espejo opcional en la recepción de materiales (merge de campos, no reemplaza).
+    if (item.obraId && item.refRecepcionId) {
+      const recBase = `/shared/materiales/${item.obraId}/recepciones/${item.refRecepcionId}`;
+      updates[`${recBase}/estadoContable`] = nuevoEstado;
+      updates[`${recBase}/folioContable`]  = folio;
+      updates[`${recBase}/movIdContable`]  = created.id;
+      updates[`${recBase}/actualizadoAt`]  = Date.now();
+    }
+    await _multiPathUpdate(updates);
+
+    _buzon.expanded.delete(item.id);
+    const desgloseExtra = mapped.length ? ` · ${mapped.length} conceptos OPUS` : (item.desglose?.length ? ' · ⚠ sin mapa OPUS' : '');
+    _toast(`${folio} · Gasto OC $${total.toLocaleString('es-MX',{minimumFractionDigits:2})} ${pagado ? 'pagado' : 'por pagar'} (${_formaPagoLblCorto(formaPago)})${desgloseExtra}.`, 'success');
+  } catch (err) {
+    console.error('[Buzón gasto_oc]', err);
+    _toast('Error al aprobar: ' + err.message, 'error');
+  }
 }
 
 async function _aprobarItem(item, aprobarYPagar = false) {
@@ -875,6 +1019,9 @@ async function _aprobarItem(item, aprobarYPagar = false) {
   if (item.tipo === 'deposito_caja_chica') return _aprobarDepositoCajaChica(item);
   // OC de compras: trata como gasto categoria='Material' con desglose listo.
   if (item.tipo === 'oc_materiales')       return _aprobarOCMateriales(item, aprobarYPagar);
+  // Gasto de recepción de OC (app-materiales): gasto categoria='Material',
+  // liquidación según formaPago (crédito=por pagar; efectivo/transfer/caja chica=pagado).
+  if (item.tipo === 'gasto_oc')            return _aprobarGastoOC(item, aprobarYPagar);
   // Indirectos (app-indirectos): gasto por obra / empresa, y nómina por período.
   if (item.tipo === 'gasto_indirecto')     return _aprobarGastoIndirecto(item, aprobarYPagar);
   if (typeof item.tipo === 'string' && item.tipo.startsWith('nomina_')) return _aprobarNomina(item);
@@ -1005,16 +1152,18 @@ async function _marcarPagadoCobrado(item) {
   const esSub  = item.tipo === 'estimacion_subcontratista';
   const esOC   = item.tipo === 'oc_materiales';
   const esInd  = item.tipo === 'gasto_indirecto';
-  const pagoData = await _modalDatosPago((esSub || esOC || esInd) ? 'pago' : 'cobro');
+  const esGastoOC = item.tipo === 'gasto_oc';
+  const esCxP  = esSub || esOC || esInd || esGastoOC;
+  const pagoData = await _modalDatosPago(esCxP ? 'pago' : 'cobro');
   if (!pagoData) return;
 
   try {
-    updateItem('sogrub_proy_movimientos', item.movId, {
-      status: 'Pagado',
-      fecha:  pagoData.fechaISO,
-    });
+    const movUpdates = { status: 'Pagado', fecha: pagoData.fechaISO };
+    // gasto_oc a crédito: al pagarlo, define de qué caja salió (efectivo/Mifel).
+    if (esGastoOC) movUpdates.metodo_pago = (pagoData.metodo === 'Efectivo') ? 'efectivo' : 'transferencia';
+    updateItem('sogrub_proy_movimientos', item.movId, movUpdates);
 
-    const nuevoEstado = (esSub || esOC || esInd) ? 'pagado' : 'cobrado';
+    const nuevoEstado = esCxP ? 'pagado' : 'cobrado';
     const tsField     = nuevoEstado === 'cobrado' ? 'cobradoAt' : 'pagadoAt';
     const histKey     = `${Date.now()}_pago`;
     const buzonPatch = {
@@ -1036,6 +1185,12 @@ async function _marcarPagadoCobrado(item) {
         referenciaPago: pagoData.referencia || null,
         actualizadoAt: Date.now()
       };
+    }
+    if (esGastoOC && item.obraId && item.refRecepcionId) {
+      const recBase = `/shared/materiales/${item.obraId}/recepciones/${item.refRecepcionId}`;
+      updates[`${recBase}/estadoContable`] = 'pagado';
+      updates[`${recBase}/pagadoAt`]       = pagoData.fecha;
+      updates[`${recBase}/actualizadoAt`]  = Date.now();
     }
     await _multiPathUpdate(updates);
     _buzon.expanded.delete(item.id);
