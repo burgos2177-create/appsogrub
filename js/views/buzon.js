@@ -289,6 +289,7 @@ function _buzonCard(item) {
     deposito_caja_chica: '🏦 Depósito caja chica',
     oc_materiales: item.claseCompra === 'servicio' ? '🧰 Orden de compra (servicio)' : '📦 Orden de compra (materiales)',
     gasto_oc: '📦 Gasto de OC (materiales)',
+    carga_social: '🏛️ Carga social (IMSS/Infonavit)',
     gasto_indirecto: item.empresa || !item.obraId ? '🏗️ Indirecto (empresa)' : '🏗️ Gasto indirecto',
     nomina_operativo_semana: '👷 Nómina operativo (semanal)',
     nomina_tecnico_campo_quincena: '👷 Nómina técnico campo (quincenal)',
@@ -311,8 +312,8 @@ function _buzonCard(item) {
     </div>
     ${desfase ? `<span title="${desfase.tooltip}" style="font-size:11px;color:#e0a04c;background:rgba(224,160,76,.12);padding:2px 7px;border-radius:8px;flex-shrink:0">⚠ Δ$${Math.abs(desfase.delta).toLocaleString('es-MX', {minimumFractionDigits:2})}</span>` : ''}
     <div style="text-align:right;flex-shrink:0">
-      <div style="font-family:ui-monospace,monospace;font-size:17px;font-weight:700;color:${(esSub || esOC || item.tipo === 'gasto_caja_chica' || item.tipo === 'gasto_indirecto' || item.tipo === 'gasto_oc' || (item.tipo && item.tipo.startsWith('nomina_'))) ? '#e15555' : 'var(--accent)'}">
-        ${(esSub || esOC || item.tipo === 'gasto_caja_chica' || item.tipo === 'gasto_indirecto' || item.tipo === 'gasto_oc' || (item.tipo && item.tipo.startsWith('nomina_'))) ? '−' : '+'}$${monto.toLocaleString('es-MX', {minimumFractionDigits:2, maximumFractionDigits:2})}
+      <div style="font-family:ui-monospace,monospace;font-size:17px;font-weight:700;color:${(esSub || esOC || item.tipo === 'gasto_caja_chica' || item.tipo === 'gasto_indirecto' || item.tipo === 'gasto_oc' || item.tipo === 'carga_social' || (item.tipo && item.tipo.startsWith('nomina_'))) ? '#e15555' : 'var(--accent)'}">
+        ${(esSub || esOC || item.tipo === 'gasto_caja_chica' || item.tipo === 'gasto_indirecto' || item.tipo === 'gasto_oc' || item.tipo === 'carga_social' || (item.tipo && item.tipo.startsWith('nomina_'))) ? '−' : '+'}$${monto.toLocaleString('es-MX', {minimumFractionDigits:2, maximumFractionDigits:2})}
       </div>
     </div>
     <span style="color:var(--text-muted);font-size:14px;flex-shrink:0">${expanded ? '▲' : '▼'}</span>`;
@@ -365,6 +366,7 @@ function _cardBodyHTML(item) {
   const esGastoOC = item.tipo === 'gasto_oc';
   const esIndirecto = item.tipo === 'gasto_indirecto';
   const esNomina  = typeof item.tipo === 'string' && item.tipo.startsWith('nomina_');
+  const esCargaSocial = item.tipo === 'carga_social';
   const esCajaChica = esGastoCC || esDepCC;
   // Etiqueta legible de forma de pago (gasto_oc)
   const _formaPagoLbl = { credito: '🧾 Crédito (por pagar)', efectivo: '💵 Efectivo', transferencia: '🏦 Transferencia', caja_chica: '💰 Caja chica' }[item.formaPago] || item.formaPago || '—';
@@ -385,8 +387,8 @@ function _cardBodyHTML(item) {
         ? '<span style="color:#e0a04c">Sin IVA</span> — importe = subtotal'
         : `Subtotal $${(item?.monto?.subtotal || 0).toLocaleString('es-MX',{minimumFractionDigits:2})} · IVA $${(item?.monto?.iva || 0).toLocaleString('es-MX',{minimumFractionDigits:2})}`);
   const proyectoIdResuelto = _resolverProyectoIdItem(item);
-  const proyNombre  = ((esIndirecto || esNomina) && (item.empresa || !item.obraId))
-    ? `<b style="color:#5dd39e">🏢 Empresa SOGRUB</b> <span class="text-muted" style="font-size:11px">(sin obra${esNomina ? ' · prorrateo por obra abajo' : ''})</span>`
+  const proyNombre  = ((esIndirecto || esNomina || esCargaSocial) && (item.empresa || !item.obraId))
+    ? `<b style="color:#5dd39e">🏢 Empresa SOGRUB</b> <span class="text-muted" style="font-size:11px">(sin obra${(esNomina || esCargaSocial) ? ' · prorrateo por obra abajo' : ''})</span>`
     : proyectoIdResuelto
     ? `<b style="color:#5dd39e">${_obtenerNombreProyecto(proyectoIdResuelto)}</b>${(!item.proyectoId && proyectoIdResuelto) ? '<span class="text-muted" style="font-size:11px"> (vía obraLinks)</span>' : ''}`
     : `<span style="color:#e15555">⚠ Obra sin vincular${item.obraId ? ` <code style='font-size:10px'>${item.obraId}</code>` : ''}</span>`;
@@ -424,6 +426,11 @@ function _cardBodyHTML(item) {
        Período: <b>${item.label || item.periodoId || '—'}</b><br>
        Empleados: <b>${item.numEmpleados ?? '—'}</b> · Neto: <b>$${(Number(item.totalNeto ?? item?.monto?.importe) || 0).toLocaleString('es-MX',{minimumFractionDigits:2})}</b><br>
        Obras prorrateadas: <b>${Object.keys(item.prorrateoPorObra || {}).length}</b>${Number(item.netoSinObra) ? ' + empresa' : ''}`
+    : esCargaSocial
+    ? `Clasificación: <b>${item.clasificacion || '—'}${item.ambito ? ' · ' + item.ambito : ''}</b><br>
+       Mes: <b>${item.mes || '—'}</b>${item.incluyeInfonavit ? ' · <span style="color:#5dd39e">incluye Infonavit</span>' : ''}<br>
+       Empleados: <b>${(item.empleados || []).length}</b> · Obras prorrateadas: <b>${Object.keys(item.prorrateoPorObra || {}).length}</b><br>
+       ${item.fechaVencimiento ? `Vence: <b>${new Date(item.fechaVencimiento).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })}</b>` : `Fecha: <b>${fechaPago}</b>`}`
     : `Estimación: <b>#${item.estimNumero ?? '—'}</b><br>
        Fecha pago: <b>${fechaPago}</b>`;
 
@@ -753,7 +760,13 @@ function _accionesHTML(item) {
   const esCajaChica = item.tipo === 'gasto_caja_chica' || item.tipo === 'deposito_caja_chica';
   // Resolvemos via obraLinks para items que sólo traen obraId (los de materiales).
   const proyectoResuelto = _resolverProyectoIdItem(item);
-  const noProj = !proyectoResuelto;
+  const obrasSinVinc = _obrasSinVincularDeItem(item);
+  // Solo bloqueamos items que requieren un proyecto ÚNICO. Nómina, carga social
+  // y gasto de empresa NO se bloquean (multi-obra / empresa).
+  const noProj = _itemRequiereProyectoUnico(item) && !proyectoResuelto;
+  const vincBtn = obrasSinVinc.length
+    ? `<button class="bz-btn-vincular" style="background:transparent;color:var(--accent);border:1px solid var(--accent);border-radius:6px;padding:8px 14px;cursor:pointer">🔗 Vincular obra${obrasSinVinc.length > 1 ? 's (' + obrasSinVinc.length + ')' : ''}</button>`
+    : '';
   const noVinc = noProj ? '<span style="font-size:11px;color:#e15555;align-self:center">Vincula la obra primero</span>' : '';
   const dis    = noProj ? 'disabled style="opacity:.5;cursor:not-allowed"' : 'style="cursor:pointer"';
   const e      = item.estado;
@@ -772,14 +785,15 @@ function _accionesHTML(item) {
       return `
         ${verRecepcion}
         <button class="bz-btn-aprobar" ${dis} style="background:#5dd39e;color:#0e3a25;border:none;border-radius:6px;padding:8px 14px;font-weight:600">${lbl}</button>
-        <button class="bz-btn-rechazar" style="background:transparent;color:#e15555;border:1px solid #e15555;border-radius:6px;padding:8px 14px;cursor:pointer">✕ Rechazar</button>`;
+        <button class="bz-btn-rechazar" style="background:transparent;color:#e15555;border:1px solid #e15555;border-radius:6px;padding:8px 14px;cursor:pointer">✕ Rechazar</button>
+        ${vincBtn}`;
     }
     const labelPagoRapido = (_tipoEsCxP(item.tipo)) ? 'Aprobar + Pagar' : 'Aprobar + Cobrar';
     return `
       <button class="bz-btn-aprobar" ${dis} style="background:#5dd39e;color:#0e3a25;border:none;border-radius:6px;padding:8px 14px;font-weight:600">✓ Aprobar</button>
       <button class="bz-btn-aprobar-pagar" ${dis} style="background:#3ab87a;color:#0e3a25;border:none;border-radius:6px;padding:8px 14px;font-weight:600">${labelPagoRapido}</button>
       <button class="bz-btn-rechazar" style="background:transparent;color:#e15555;border:1px solid #e15555;border-radius:6px;padding:8px 14px;cursor:pointer">✕ Rechazar</button>
-      ${noVinc}`;
+      ${noVinc}${vincBtn}`;
   }
   if (e === 'aprobado') {
     if (esCajaChica) {
@@ -823,6 +837,74 @@ function _attachAcciones(body, item) {
   on('.bz-btn-reaprobar',      () => _aprobarItem(item, false));
   on('.bz-btn-cerrar',         () => _cerrarItem(item));
   on('.bz-btn-ver-recepcion',  () => _modalVerRecepcion(item));
+  on('.bz-btn-vincular',       () => {
+    const obras = _obrasSinVincularDeItem(item);
+    if (obras.length) _modalVincularObras(obras, item);
+    else _toast('Todas las obras de este item ya están vinculadas.', 'info');
+  });
+}
+
+// Obras del item que aún NO tienen proyecto contable vinculado (obraLinks).
+function _obrasSinVincularDeItem(item) {
+  const ids = new Set();
+  if (item.obraId && !item.empresa) ids.add(item.obraId);
+  for (const oid of Object.keys(item.prorrateoPorObra || {})) ids.add(oid);
+  return [...ids].filter(oid => oid && !_buzon.obraLinks[oid]);
+}
+
+// ¿Requiere un proyecto ÚNICO para aprobarse? Nómina, carga social y gasto de
+// empresa son multi-obra o sin obra: se aprueban sin bloquear (advierten por obra).
+function _itemRequiereProyectoUnico(item) {
+  if (typeof item.tipo === 'string' && item.tipo.startsWith('nomina_')) return false;
+  if (item.tipo === 'carga_social') return false;
+  if (item.tipo === 'gasto_indirecto' && (item.empresa || !item.obraId)) return false;
+  return true;
+}
+
+// Modal: vincula 1..N obras → proyecto contable. Escribe (set) el proyectoId
+// (string) en /shared/obraLinks/{obraId}. Desbloquea las aprobaciones.
+function _modalVincularObras(obraIds, item) {
+  const proyectos = (getCollection('sogrub_proyectos') || [])
+    .filter(p => p && p.id).sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+  if (proyectos.length === 0) { _toast('No hay proyectos contables. Crea uno en Proyectos primero.', 'warning'); return; }
+  const nombreObra = (oid) => (item?.obraNombre && item.obraId === oid) ? item.obraNombre : (item?.nombreObraPorObra?.[oid] || '');
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:9999';
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:24px;width:min(520px,92%);max-height:88vh;overflow:auto">
+      <h3 style="margin:0 0 6px">🔗 Vincular obra → proyecto</h3>
+      <p style="margin:0 0 16px;font-size:12px;color:var(--text-muted)">Elige el proyecto de bitácora que corresponde a cada obra. Se guarda en <code>/shared/obraLinks</code> y desbloquea la aprobación.</p>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        ${obraIds.map(oid => `
+          <label style="font-size:13px">Obra <code style="font-size:11px">${oid}</code>${nombreObra(oid) ? ' · ' + nombreObra(oid) : ''}
+            <select data-obra="${oid}" style="margin-top:4px;display:block;width:100%;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px">
+              <option value="">— elegir proyecto —</option>
+              ${proyectos.map(p => `<option value="${p.id}">${p.nombre}${p.cliente ? ' · ' + p.cliente : ''}</option>`).join('')}
+            </select>
+          </label>`).join('')}
+      </div>
+      <div style="display:flex;gap:8px;margin-top:20px;justify-content:flex-end">
+        <button id="vo-cancel" style="background:transparent;border:1px solid var(--border);border-radius:6px;padding:8px 16px;color:var(--text);cursor:pointer">Cancelar</button>
+        <button id="vo-ok" style="background:#5dd39e;color:#0e3a25;border:none;border-radius:6px;padding:8px 16px;font-weight:600;cursor:pointer">Vincular</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const cleanup = () => document.body.removeChild(overlay);
+  overlay.querySelector('#vo-cancel').addEventListener('click', cleanup);
+  overlay.addEventListener('click', e => { if (e.target === overlay) cleanup(); });
+  overlay.querySelector('#vo-ok').addEventListener('click', async () => {
+    const pares = [];
+    overlay.querySelectorAll('select[data-obra]').forEach(sel => { if (sel.value) pares.push([sel.dataset.obra, sel.value]); });
+    if (!pares.length) { _toast('Elige al menos un proyecto.', 'warning'); return; }
+    try {
+      // obraLinks/{obraId} = proyectoId (string) → set, no update.
+      await Promise.all(pares.map(([oid, pid]) => _dbRef(`/shared/obraLinks/${oid}`).set(pid)));
+      pares.forEach(([oid, pid]) => { _buzon.obraLinks[oid] = pid; }); // cache local inmediato
+      cleanup();
+      _toast(`${pares.length} obra(s) vinculada(s).`, 'success');
+      renderBuzon();
+    } catch (err) { _toast('Error al vincular: ' + err.message, 'error'); }
+  });
 }
 
 // ─── Helpers de display ────────────────────────────────────────────────────
@@ -879,7 +961,7 @@ async function _marcarEnRevision(item) {
 // Incluye subcontratista, OC de materiales e indirectos.
 function _tipoEsCxP(tipo) {
   return tipo === 'estimacion_subcontratista' || tipo === 'oc_materiales' || tipo === 'gasto_indirecto'
-      || tipo === 'gasto_oc'
+      || tipo === 'gasto_oc' || tipo === 'carga_social'
       || (typeof tipo === 'string' && tipo.startsWith('nomina_'));
 }
 
@@ -1025,6 +1107,7 @@ async function _aprobarItem(item, aprobarYPagar = false) {
   // Indirectos (app-indirectos): gasto por obra / empresa, y nómina por período.
   if (item.tipo === 'gasto_indirecto')     return _aprobarGastoIndirecto(item, aprobarYPagar);
   if (typeof item.tipo === 'string' && item.tipo.startsWith('nomina_')) return _aprobarNomina(item);
+  if (item.tipo === 'carga_social')        return _aprobarCargaSocial(item);
 
   // Resolvemos el proyecto contable (directo o vía obraLinks) para soportar items
   // que sólo traen obraId (p.ej. indirectos originados en materiales).
@@ -1496,6 +1579,8 @@ async function _aprobarGastoIndirecto(item, aprobarYPagar = false) {
     status:         aprobarYPagar ? 'Pagado' : 'Pendiente',
     tipo:           'gasto',
     categoria:      'Indirecto',
+    // Ámbito enviado por indirectos → alimenta la bolsita oficina/campo.
+    indirecto_ambito: item.ambito === 'campo' ? 'campo' : 'oficina',
     gasto_indirecto_id: item.gastoId || null,
     origen_buzon_id: item.id,
     monto_subtotal: Number(item?.monto?.subtotal) || 0,
@@ -1554,7 +1639,8 @@ async function _aprobarNomina(item) {
   for (const [obraId, netoObra] of Object.entries(prorrateo)) {
     const monto = Number(netoObra) || 0;
     if (monto <= 0) continue;
-    const proyectoId = await _resolverProyectoIdPorObra(obraId);
+    // Prefiere el proyecto que indirectos ya resolvió; si no, obraLinks.
+    const proyectoId = (item.proyectoPorObra && item.proyectoPorObra[obraId]) || await _resolverProyectoIdPorObra(obraId);
     if (!proyectoId) { sinVincular.push(obraId); continue; }
     proyMovs.push({
       proyecto_id:  proyectoId,
@@ -1580,6 +1666,67 @@ async function _aprobarNomina(item) {
     const nSinObra = Number(item.netoSinObra) || 0;
     _toast(`${folio} · Nómina $${neto.toLocaleString('es-MX',{minimumFractionDigits:2})} · ${proyMovs.length} obra(s)${nSinObra ? ' + empresa' : ''}.`, 'success');
   } catch (err) { console.error('[Buzón nómina]', err); _toast('Error al procesar nómina: ' + err.message, 'error'); }
+}
+
+// Carga social (IMSS/Infonavit) — mismo patrón que nómina: 1 egreso de Mifel
+// (empresa) + N gastos de proyecto por prorrateo con no_afecta_mifel.
+// Categoría: clasificacion 'directo' → 'Mano de Obra'; si no → 'Indirecto'.
+async function _aprobarCargaSocial(item) {
+  const neto = Number(item?.monto?.importe) || 0;
+  if (neto <= 0) { _toast('Carga social con importe inválido.', 'error'); return; }
+  const fechaISO  = item.fecha || new Date().toISOString().slice(0, 10);
+  const categoria = item.clasificacion === 'directo' ? 'Mano de Obra' : 'Indirecto';
+  const ambito    = item.ambito === 'campo' ? 'campo' : 'oficina';
+
+  let folio;
+  try { folio = await _generarFolio('CP'); }
+  catch (err) { _toast('Error al generar folio: ' + err.message, 'error'); return; }
+
+  const movMifel = {
+    fecha:          fechaISO,
+    monto:          -Math.abs(neto),
+    concepto:       `[${folio}] ${item.concepto || 'Carga social'}${item.mes ? ' · ' + item.mes : ''}`,
+    status:         'Pagado',
+    tipo:           'carga_social',
+    categoria,
+    empresa:        true,
+    carga_social_mes:  item.mes || null,
+    incluye_infonavit: !!item.incluyeInfonavit,
+    origen_buzon_id: item.id,
+  };
+
+  const prorrateo = item.prorrateoPorObra || {};
+  const proyMovs = [];
+  const sinVincular = [];
+  for (const [obraId, montoObra] of Object.entries(prorrateo)) {
+    const m = Number(montoObra) || 0;
+    if (m <= 0) continue;
+    const proyectoId = (item.proyectoPorObra && item.proyectoPorObra[obraId]) || await _resolverProyectoIdPorObra(obraId);
+    if (!proyectoId) { sinVincular.push(obraId); continue; }
+    proyMovs.push({
+      proyecto_id:  proyectoId,
+      obraId,
+      fecha:        fechaISO,
+      monto:        -Math.abs(m),
+      concepto:     `[${folio}] Carga social${item.mes ? ' · ' + item.mes : ''} (prorrateo)`,
+      status:       'Pagado',
+      tipo:         'gasto',
+      categoria,
+      indirecto_ambito: categoria === 'Indirecto' ? ambito : undefined,
+      no_afecta_mifel: true,   // el neto ya salió de Mifel en el egreso único
+      carga_social_mes: item.mes || null,
+      origen_buzon_id: item.id,
+    });
+  }
+  if (sinVincular.length && !confirm(`⚠ ${sinVincular.length} obra(s) sin proyecto vinculado; su parte no se cargará a un proyecto (sí queda en el egreso de Mifel). ¿Procesar de todas formas?`)) return;
+
+  try {
+    const createdMifel = addItem('sogrub_movimientos', movMifel);
+    for (const m of proyMovs) { m.sogrub_movimiento_id = createdMifel.id; addItem('sogrub_proy_movimientos', m); }
+    await _dbRef(`/shared/buzon/${item.id}`).update(_buzonPatchAprobado(folio, createdMifel.id, 'sogrub_movimientos'));
+    _buzon.expanded.delete(item.id);
+    _toast(`${folio} · Carga social $${neto.toLocaleString('es-MX',{minimumFractionDigits:2})} · ${proyMovs.length} obra(s).`, 'success');
+  } catch (err) { console.error('[Buzón carga social]', err); _toast('Error al procesar carga social: ' + err.message, 'error'); }
 }
 
 // ─── Folio atómico ─────────────────────────────────────────────────────────
