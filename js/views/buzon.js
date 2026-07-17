@@ -1447,9 +1447,13 @@ async function _ejecutarRechazo(item, motivo) {
 // soporta multi-path update solo si comparten root; aquí los ejecuto en
 // paralelo, individualmente. Atomicidad relajada (best-effort).
 async function _multiPathUpdate(updates) {
-  await Promise.all(Object.entries(updates).map(([path, patch]) =>
-    _dbRef(path).update(patch)
-  ));
+  await Promise.all(Object.entries(updates).map(([path, patch]) => {
+    // .update() exige un OBJETO (merge de campos). Para valores primitivos
+    // (string/number/null) hay que usar .set() sobre la hoja, si no Firebase
+    // lanza "values argument must be an object".
+    const esObjeto = patch !== null && typeof patch === 'object' && !Array.isArray(patch);
+    return esObjeto ? _dbRef(path).update(patch) : _dbRef(path).set(patch);
+  }));
 }
 
 // Helper: para items del buzón con tipo='oc_materiales', construye el patch
