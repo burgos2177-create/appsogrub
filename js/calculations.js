@@ -20,8 +20,10 @@ function calcSaldoMifel() {
 
   // Movimientos generales de SOGRUB (incluye transferencias internas a proyectos
   // y egresos por depósitos a caja chica — ambos ya descuentan acá).
+  // Excluye los marcados metodo_pago='efectivo' (salieron de la caja de efectivo,
+  // no de Mifel — p. ej. un indirecto de empresa pagado en efectivo).
   const movSOGRUB = (getCollection(KEYS.MOVIMIENTOS) ?? [])
-    .filter(m => m.status === 'Pagado')
+    .filter(m => m.status === 'Pagado' && m.metodo_pago !== 'efectivo')
     .reduce((acc, m) => acc + m.monto, 0);
 
   const proyMov = getCollection(KEYS.PROY_MOVIMIENTOS) ?? [];
@@ -82,7 +84,12 @@ function calcSaldoEfectivo() {
       return acc;
     }, 0);
 
-  return base + proyEfectivo;
+  // Movimientos generales (empresa) pagados en efectivo — monto ya con signo.
+  const mifelEfectivo = (getCollection(KEYS.MOVIMIENTOS) ?? [])
+    .filter(m => m.metodo_pago === 'efectivo' && m.status === 'Pagado')
+    .reduce((acc, m) => acc + (Number(m.monto) || 0), 0);
+
+  return base + proyEfectivo + mifelEfectivo;
 }
 
 // Total del arqueo físico = Σ denominación × cantidad.

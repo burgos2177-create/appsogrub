@@ -227,7 +227,19 @@ function refreshEfectivoTable() {
       proyecto_id: m.proyecto_id,
     }));
 
-  let movs = [...propios, ...deProyectos];
+  // Movimientos generales (empresa) pagados en efectivo — solo lectura.
+  const deEmpresa = (getCollection(KEYS.MOVIMIENTOS) ?? [])
+    .filter(m => m.metodo_pago === 'efectivo')
+    .map(m => ({
+      id:       m.id,
+      fecha:    m.fecha,
+      concepto: m.concepto,
+      monto:    Number(m.monto) || 0,
+      tipo:     (Number(m.monto) || 0) >= 0 ? 'ingreso' : 'egreso',
+      _source:  'empresa',
+    }));
+
+  let movs = [...propios, ...deProyectos, ...deEmpresa];
   if (_efectivoState.mes) movs = movs.filter(m => m.fecha && m.fecha.startsWith(_efectivoState.mes));
   if (_efectivoState.tipo !== 'todos') {
     movs = _efectivoState.tipo === 'retiro'
@@ -258,6 +270,9 @@ function refreshEfectivoTable() {
       const proy = getItem(KEYS.PROYECTOS, m.proyecto_id);
       return `${base} <span class="badge badge-info badge-no-dot" style="font-size:10px">🏗️ ${proy?.nombre ?? 'Proyecto'}</span>`;
     }
+    if (m._source === 'empresa') {
+      return `${base} <span class="badge badge-muted badge-no-dot" style="font-size:10px">🏢 Empresa</span>`;
+    }
     return base;
   };
 
@@ -279,6 +294,8 @@ function refreshEfectivoTable() {
                 <div class="td-actions">
                   ${m._source === 'proyecto'
                     ? `<button class="btn btn-ghost btn-icon btn-ver-proy-efec" data-proy="${m.proyecto_id}" title="Ver en el proyecto (se gestiona ahí)">🏗️→</button>`
+                    : m._source === 'empresa'
+                    ? `<span class="text-dim" style="font-size:11px" title="Egreso de empresa pagado en efectivo · se gestiona en Caja SOGRUB / Buzón">🔒 empresa</span>`
                     : m.tipo === 'retiro'
                       ? `<span class="text-dim" style="font-size:11px" title="Los retiros se gestionan borrando la fila (baja también de Mifel)">🔗 ligado</span>
                          <button class="btn btn-ghost btn-icon btn-del-efec" data-id="${m.id}" title="Eliminar">🗑️</button>`

@@ -1523,7 +1523,12 @@ async function _aprobarGastoIndirecto(item, aprobarYPagar = false) {
   try { folio = await _generarFolio('CP'); }
   catch (err) { _toast('Error al generar folio: ' + err.message, 'error'); return; }
 
-  // ── Empresa / sin obra → egreso de Mifel, no toca ningún proyecto ──
+  // Forma de pago (opcional; indirectos puede mandar formaPago/metodoPago).
+  // 'efectivo' → sale de la CAJA DE EFECTIVO; cualquier otra cosa → Mifel.
+  const _fp = item.formaPago || item.metodoPago || '';
+  const metodoPago = _fp === 'efectivo' ? 'efectivo' : (_fp === 'transferencia' ? 'transferencia' : undefined);
+
+  // ── Empresa / sin obra → egreso de Mifel (o de efectivo), no toca proyecto ──
   if (esEmpresa) {
     const movMifel = {
       fecha:          fechaISO,
@@ -1533,6 +1538,7 @@ async function _aprobarGastoIndirecto(item, aprobarYPagar = false) {
       tipo:           'gasto',
       categoria:      'Indirecto',
       empresa:        true,
+      metodo_pago:    metodoPago,   // 'efectivo' → sale de la caja de efectivo, no de Mifel
       subcontratista: provNombre,
       proveedor_id:   provDef?.id || null,
       monto_subtotal: Number(item?.monto?.subtotal) || 0,
@@ -1545,7 +1551,7 @@ async function _aprobarGastoIndirecto(item, aprobarYPagar = false) {
       const created = addItem('sogrub_movimientos', movMifel);
       await _dbRef(`/shared/buzon/${item.id}`).update(_buzonPatchAprobado(folio, created.id, 'sogrub_movimientos'));
       _buzon.expanded.delete(item.id);
-      _toast(`${folio} · Indirecto empresa $${importe.toLocaleString('es-MX',{minimumFractionDigits:2})} asentado en Mifel.`, 'success');
+      _toast(`${folio} · Indirecto empresa $${importe.toLocaleString('es-MX',{minimumFractionDigits:2})} ${metodoPago === 'efectivo' ? 'pagado de efectivo' : 'asentado en Mifel'}.`, 'success');
     } catch (err) { console.error('[Buzón indirecto empresa]', err); _toast('Error al aprobar: ' + err.message, 'error'); }
     return;
   }
@@ -1581,6 +1587,7 @@ async function _aprobarGastoIndirecto(item, aprobarYPagar = false) {
     categoria:      'Indirecto',
     // Ámbito enviado por indirectos → alimenta la bolsita oficina/campo.
     indirecto_ambito: item.ambito === 'campo' ? 'campo' : 'oficina',
+    metodo_pago:    metodoPago,   // 'efectivo' → figura en la caja de efectivo
     gasto_indirecto_id: item.gastoId || null,
     origen_buzon_id: item.id,
     monto_subtotal: Number(item?.monto?.subtotal) || 0,
