@@ -112,9 +112,17 @@ async function _migrarEstadosLegacy() {
 // Detecta items aprobados/cobrados/pagados cuyo movimiento fue borrado → huérfano.
 async function _reconciliarBuzon() {
   if (!_fbReady) return;
-  const movs = getCollection('sogrub_proy_movimientos');
-  if (!Array.isArray(movs)) return;
-  const movIds = new Set(movs.map(m => m?.id).filter(Boolean));
+  // El movId puede vivir en sogrub_proy_movimientos (gastos/abonos de proyecto)
+  // O en sogrub_movimientos (egresos de Mifel: nómina, carga social, indirecto
+  // de empresa, depósito de caja chica). Hay que buscar en AMBAS colecciones,
+  // si no, esos items se marcan huérfanos apenas se aprueban.
+  const proyMovs = getCollection('sogrub_proy_movimientos');
+  const genMovs  = getCollection('sogrub_movimientos');
+  if (!Array.isArray(proyMovs) && !Array.isArray(genMovs)) return;
+  const movIds = new Set([
+    ...(Array.isArray(proyMovs) ? proyMovs : []),
+    ...(Array.isArray(genMovs)  ? genMovs  : []),
+  ].map(m => m?.id).filter(Boolean));
 
   const updates = {};
   for (const [itemId, item] of Object.entries(_buzon.items)) {
