@@ -1084,13 +1084,15 @@ async function _aprobarGastoOC(item, aprobarYPagar = false) {
     }
 
     const updates = { [`/shared/buzon/${item.id}`]: buzonPatch };
-    // Espejo opcional en la recepción de materiales (merge de campos, no reemplaza).
+    // Espejo opcional en la recepción de materiales. _multiPathUpdate hace
+    // .update(objeto) por nodo → merge de campos (no reemplaza el nodo).
     if (item.obraId && item.refRecepcionId) {
-      const recBase = `/shared/materiales/${item.obraId}/recepciones/${item.refRecepcionId}`;
-      updates[`${recBase}/estadoContable`] = nuevoEstado;
-      updates[`${recBase}/folioContable`]  = folio;
-      updates[`${recBase}/movIdContable`]  = created.id;
-      updates[`${recBase}/actualizadoAt`]  = Date.now();
+      updates[`/shared/materiales/${item.obraId}/recepciones/${item.refRecepcionId}`] = {
+        estadoContable: nuevoEstado,
+        folioContable:  folio,
+        movIdContable:  created.id,
+        actualizadoAt:  Date.now(),
+      };
     }
     await _multiPathUpdate(updates);
 
@@ -1278,10 +1280,11 @@ async function _marcarPagadoCobrado(item) {
       };
     }
     if (esGastoOC && item.obraId && item.refRecepcionId) {
-      const recBase = `/shared/materiales/${item.obraId}/recepciones/${item.refRecepcionId}`;
-      updates[`${recBase}/estadoContable`] = 'pagado';
-      updates[`${recBase}/pagadoAt`]       = pagoData.fecha;
-      updates[`${recBase}/actualizadoAt`]  = Date.now();
+      updates[`/shared/materiales/${item.obraId}/recepciones/${item.refRecepcionId}`] = {
+        estadoContable: 'pagado',
+        pagadoAt:       pagoData.fecha,
+        actualizadoAt:  Date.now(),
+      };
     }
     await _multiPathUpdate(updates);
     _buzon.expanded.delete(item.id);
