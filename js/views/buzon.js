@@ -1620,10 +1620,13 @@ async function _aprobarGastoIndirecto(item, aprobarYPagar = false) {
 }
 
 // Nómina de un período cerrado (tipo 'nomina_*'). Genera:
-//  · 1 egreso de Mifel (sogrub_movimientos) por el neto total — la salida real.
-//  · N sogrub_proy_movimientos por prorrateoPorObra — bajan la caja de cada
-//    proyecto, con no_afecta_mifel:true para no volver a bajar Mifel.
-//  · netoSinObra queda absorbido sólo en el egreso de empresa (Mifel).
+//  · N sogrub_proy_movimientos por prorrateoPorObra — se registran como gastos
+//    normales de cada obra: bajan la caja del proyecto Y bajan Mifel una sola
+//    vez (el dinero sí sale del banco), igual que cualquier gasto de proyecto.
+//    NO se crea un egreso separado en Caja SOGRUB por el neto: la nómina vive
+//    en la obra y SOGRUB queda independiente (respaldo).
+//  · netoSinObra (parte no atribuible a ninguna obra) + partes de obras SIN
+//    proyecto vinculado → un egreso de empresa en Mifel (Caja SOGRUB).
 // Categoría por tipoPersonal: operativo/técnico-campo → 'Mano de Obra';
 // técnico-oficina/directivo → 'Indirecto'.
 async function _aprobarNomina(item) {
@@ -1638,32 +1641,17 @@ async function _aprobarNomina(item) {
   try { folio = await _generarFolio('CP'); }
   catch (err) { _toast('Error al generar folio: ' + err.message, 'error'); return; }
 
-  const movMifel = {
-    fecha:          fechaISO,
-    monto:          -Math.abs(neto),
-    concepto:       `[${folio}] ${item.concepto || ('Nómina · ' + label)}`,
-    status:         'Pagado',
-    tipo:           'nomina',
-    categoria,
-    empresa:        true,
-    nomina_periodo_id: item.periodoId || null,
-    tipo_personal:  item.tipoPersonal || null,
-    num_empleados:  item.numEmpleados || null,
-    total_percepciones: item.totalPercepciones || null,
-    total_deducciones:  item.totalDeducciones || null,
-    origen_buzon_id: item.id,
-  };
-
-  // Prorrateo por obra → gastos de proyecto (no_afecta_mifel).
+  // Prorrateo por obra → gastos de proyecto normales (bajan Mifel y caja de obra).
   const prorrateo = item.prorrateoPorObra || {};
   const proyMovs = [];
   const sinVincular = [];
+  let montoSinVincular = 0;
   for (const [obraId, netoObra] of Object.entries(prorrateo)) {
     const monto = Number(netoObra) || 0;
     if (monto <= 0) continue;
     // Prefiere el proyecto que indirectos ya resolvió; si no, obraLinks.
     const proyectoId = (item.proyectoPorObra && item.proyectoPorObra[obraId]) || await _resolverProyectoIdPorObra(obraId);
-    if (!proyectoId) { sinVincular.push(obraId); continue; }
+    if (!proyectoId) { sinVincular.push(obraId); montoSinVincular += monto; continue; }
     proyMovs.push({
       proyecto_id:  proyectoId,
       obraId,
@@ -1673,25 +1661,50 @@ async function _aprobarNomina(item) {
       status:       'Pagado',
       tipo:         'gasto',
       categoria,
-      no_afecta_mifel: true,   // el neto ya salió de Mifel en el egreso único
       nomina_periodo_id: item.periodoId || null,
       origen_buzon_id: item.id,
     });
   }
-  if (sinVincular.length && !confirm(`⚠ ${sinVincular.length} obra(s) del prorrateo no tienen proyecto vinculado y su parte no se cargará a un proyecto (sí queda en el egreso de Mifel). ¿Procesar de todas formas?`)) return;
+
+  // Parte que va a Caja SOGRUB (empresa): overhead sin obra + obras no vinculadas.
+  const montoEmpresa = (Number(item.netoSinObra) || 0) + montoSinVincular;
+
+  if (!proyMovs.length && montoEmpresa <= 0) {
+    _toast('La nómina no tiene prorrateo a obras ni parte de empresa que asentar.', 'error');
+    return;
+  }
+  if (sinVincular.length && !confirm(`⚠ ${sinVincular.length} obra(s) del prorrateo no tienen proyecto vinculado: su parte ($${montoSinVincular.toLocaleString('es-MX',{minimumFractionDigits:2})}) se cargará como egreso de empresa (Caja SOGRUB) en vez de a la obra. ¿Procesar de todas formas?`)) return;
 
   try {
-    const createdMifel = addItem('sogrub_movimientos', movMifel);
-    for (const m of proyMovs) { m.sogrub_movimiento_id = createdMifel.id; addItem('sogrub_proy_movimientos', m); }
-    await _dbRef(`/shared/buzon/${item.id}`).update(_buzonPatchAprobado(folio, createdMifel.id, 'sogrub_movimientos'));
+    let refMovId = null, refColeccion = 'sogrub_proy_movimientos';
+    for (const m of proyMovs) { const c = addItem('sogrub_proy_movimientos', m); if (!refMovId) refMovId = c.id; }
+    if (montoEmpresa > 0) {
+      const createdMifel = addItem('sogrub_movimientos', {
+        fecha:          fechaISO,
+        monto:          -Math.abs(montoEmpresa),
+        concepto:       `[${folio}] Nómina ${item.tipoPersonal || ''} · ${label} (empresa)`,
+        status:         'Pagado',
+        tipo:           'nomina',
+        categoria,
+        empresa:        true,
+        nomina_periodo_id: item.periodoId || null,
+        tipo_personal:  item.tipoPersonal || null,
+        num_empleados:  item.numEmpleados || null,
+        total_percepciones: item.totalPercepciones || null,
+        total_deducciones:  item.totalDeducciones || null,
+        origen_buzon_id: item.id,
+      });
+      if (!refMovId) { refMovId = createdMifel.id; refColeccion = 'sogrub_movimientos'; }
+    }
+    await _dbRef(`/shared/buzon/${item.id}`).update(_buzonPatchAprobado(folio, refMovId, refColeccion));
     _buzon.expanded.delete(item.id);
-    const nSinObra = Number(item.netoSinObra) || 0;
-    _toast(`${folio} · Nómina $${neto.toLocaleString('es-MX',{minimumFractionDigits:2})} · ${proyMovs.length} obra(s)${nSinObra ? ' + empresa' : ''}.`, 'success');
+    _toast(`${folio} · Nómina $${neto.toLocaleString('es-MX',{minimumFractionDigits:2})} · ${proyMovs.length} obra(s)${montoEmpresa > 0 ? ' + empresa' : ''}.`, 'success');
   } catch (err) { console.error('[Buzón nómina]', err); _toast('Error al procesar nómina: ' + err.message, 'error'); }
 }
 
-// Carga social (IMSS/Infonavit) — mismo patrón que nómina: 1 egreso de Mifel
-// (empresa) + N gastos de proyecto por prorrateo con no_afecta_mifel.
+// Carga social (IMSS/Infonavit) — mismo patrón que nómina: los gastos de cada
+// obra son gastos de proyecto normales (bajan Mifel una vez + caja de la obra).
+// Sólo la parte de obras SIN proyecto vinculado va a Caja SOGRUB (empresa).
 // Categoría: clasificacion 'directo' → 'Mano de Obra'; si no → 'Indirecto'.
 async function _aprobarCargaSocial(item) {
   const neto = Number(item?.monto?.importe) || 0;
@@ -1704,27 +1717,15 @@ async function _aprobarCargaSocial(item) {
   try { folio = await _generarFolio('CP'); }
   catch (err) { _toast('Error al generar folio: ' + err.message, 'error'); return; }
 
-  const movMifel = {
-    fecha:          fechaISO,
-    monto:          -Math.abs(neto),
-    concepto:       `[${folio}] ${item.concepto || 'Carga social'}${item.mes ? ' · ' + item.mes : ''}`,
-    status:         'Pagado',
-    tipo:           'carga_social',
-    categoria,
-    empresa:        true,
-    carga_social_mes:  item.mes || null,
-    incluye_infonavit: !!item.incluyeInfonavit,
-    origen_buzon_id: item.id,
-  };
-
   const prorrateo = item.prorrateoPorObra || {};
   const proyMovs = [];
   const sinVincular = [];
+  let montoSinVincular = 0;
   for (const [obraId, montoObra] of Object.entries(prorrateo)) {
     const m = Number(montoObra) || 0;
     if (m <= 0) continue;
     const proyectoId = (item.proyectoPorObra && item.proyectoPorObra[obraId]) || await _resolverProyectoIdPorObra(obraId);
-    if (!proyectoId) { sinVincular.push(obraId); continue; }
+    if (!proyectoId) { sinVincular.push(obraId); montoSinVincular += m; continue; }
     proyMovs.push({
       proyecto_id:  proyectoId,
       obraId,
@@ -1735,19 +1736,41 @@ async function _aprobarCargaSocial(item) {
       tipo:         'gasto',
       categoria,
       indirecto_ambito: categoria === 'Indirecto' ? ambito : undefined,
-      no_afecta_mifel: true,   // el neto ya salió de Mifel en el egreso único
       carga_social_mes: item.mes || null,
       origen_buzon_id: item.id,
     });
   }
-  if (sinVincular.length && !confirm(`⚠ ${sinVincular.length} obra(s) sin proyecto vinculado; su parte no se cargará a un proyecto (sí queda en el egreso de Mifel). ¿Procesar de todas formas?`)) return;
+
+  // Parte que va a Caja SOGRUB (empresa): sólo obras no vinculadas.
+  const montoEmpresa = montoSinVincular;
+
+  if (!proyMovs.length && montoEmpresa <= 0) {
+    _toast('La carga social no tiene prorrateo válido que asentar.', 'error');
+    return;
+  }
+  if (sinVincular.length && !confirm(`⚠ ${sinVincular.length} obra(s) sin proyecto vinculado: su parte ($${montoSinVincular.toLocaleString('es-MX',{minimumFractionDigits:2})}) se cargará como egreso de empresa (Caja SOGRUB) en vez de a la obra. ¿Procesar de todas formas?`)) return;
 
   try {
-    const createdMifel = addItem('sogrub_movimientos', movMifel);
-    for (const m of proyMovs) { m.sogrub_movimiento_id = createdMifel.id; addItem('sogrub_proy_movimientos', m); }
-    await _dbRef(`/shared/buzon/${item.id}`).update(_buzonPatchAprobado(folio, createdMifel.id, 'sogrub_movimientos'));
+    let refMovId = null, refColeccion = 'sogrub_proy_movimientos';
+    for (const m of proyMovs) { const c = addItem('sogrub_proy_movimientos', m); if (!refMovId) refMovId = c.id; }
+    if (montoEmpresa > 0) {
+      const createdMifel = addItem('sogrub_movimientos', {
+        fecha:          fechaISO,
+        monto:          -Math.abs(montoEmpresa),
+        concepto:       `[${folio}] ${item.concepto || 'Carga social'}${item.mes ? ' · ' + item.mes : ''} (empresa)`,
+        status:         'Pagado',
+        tipo:           'carga_social',
+        categoria,
+        empresa:        true,
+        carga_social_mes:  item.mes || null,
+        incluye_infonavit: !!item.incluyeInfonavit,
+        origen_buzon_id: item.id,
+      });
+      if (!refMovId) { refMovId = createdMifel.id; refColeccion = 'sogrub_movimientos'; }
+    }
+    await _dbRef(`/shared/buzon/${item.id}`).update(_buzonPatchAprobado(folio, refMovId, refColeccion));
     _buzon.expanded.delete(item.id);
-    _toast(`${folio} · Carga social $${neto.toLocaleString('es-MX',{minimumFractionDigits:2})} · ${proyMovs.length} obra(s).`, 'success');
+    _toast(`${folio} · Carga social $${neto.toLocaleString('es-MX',{minimumFractionDigits:2})} · ${proyMovs.length} obra(s)${montoEmpresa > 0 ? ' + empresa' : ''}.`, 'success');
   } catch (err) { console.error('[Buzón carga social]', err); _toast('Error al procesar carga social: ' + err.message, 'error'); }
 }
 
