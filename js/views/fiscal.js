@@ -31,7 +31,24 @@ function renderFiscal() {
 
   const rango = _getFiscalRango();
   if (!rango) {
-    root.innerHTML = '<div class="fiscal-container"><p class="text-muted">Selecciona un periodo válido.</p></div>';
+    // Rango inválido (p. ej. personalizado sin fechas). Igual dibujamos el shell
+    // con el selector de periodo para que el usuario pueda capturar las fechas;
+    // si cortáramos aquí, los inputs de fecha nunca aparecerían y quedaría atorado.
+    root.innerHTML = `
+      <div class="fiscal-container">
+        <div class="fiscal-header">
+          <div>
+            <h2 class="fiscal-title">Módulo Fiscal</h2>
+            <p class="text-muted text-sm">RESICO Persona Moral — Estimación interna</p>
+          </div>
+        </div>
+        <div class="fiscal-period-bar">
+          ${_renderPeriodSelector()}
+        </div>
+        <p class="text-muted" style="padding:24px 4px">Captura las fechas «desde» y «hasta» y pulsa <b>Aplicar</b>.</p>
+      </div>
+    `;
+    _bindFiscalEvents();
     return;
   }
 
@@ -841,6 +858,13 @@ function _bindFiscalEvents() {
   // Tipo de periodo cambia → re-render para actualizar selector
   document.getElementById('fiscal-tipo-periodo')?.addEventListener('change', (e) => {
     _fiscalState.tipoPeriodo = e.target.value;
+    // Al entrar a personalizado sin fechas previas, precargar un rango válido
+    // (del 1 de enero del año seleccionado a hoy) para no dejar el estado vacío.
+    if (e.target.value === 'personalizado' && (!_fiscalState.desdeCustom || !_fiscalState.hastaCustom)) {
+      const hoy = new Date();
+      _fiscalState.desdeCustom = `${_fiscalState.anio}-01-01`;
+      _fiscalState.hastaCustom = hoy.toISOString().slice(0, 10);
+    }
     renderFiscal();
   });
 
