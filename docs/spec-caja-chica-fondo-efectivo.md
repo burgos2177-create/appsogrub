@@ -98,6 +98,31 @@ Si la recepción se pagó del fondo efectivo, agregar `fondo:'efectivo'` al item
 del buzón (`tipo:'gasto_oc'`, `formaPago:'caja_chica'`). Bitácora marca el
 contable con `fondo_caja:'efectivo'`.
 
+> Implementado en materiales: el fondo se pregunta al **crear** la recepción de
+> caja chica (queda en `fondoCaja` de la recepción) y al **enviar** una de OC
+> cuando la forma de pago es caja chica. El modal de reportar solo lo confirma.
+
+### 4. `meta.arqueoEfectivo` — arqueo del fondo declarado por la obra
+
+El billete del fondo efectivo ya salió de la caja física de SOGRUB, así que el
+arqueo por denominación de bitácora **no** lo cuenta. Para poder conciliar el
+otro lado, el contador captura en la vista de Efectivo lo que el almacenista
+reportó contar, y se guarda en el path compartido:
+
+```js
+/shared/cajaChica/{obraId}/meta/arqueoEfectivo = {
+  monto,                 // efectivo contado en obra
+  fecha,                 // 'YYYY-MM-DD' del conteo
+  registradoPor,         // email de quien lo capturó
+  updatedAt
+}
+```
+
+Es informativo y opcional: nadie lo necesita para calcular saldo. Las apps de
+campo pueden mostrarlo (“último arqueo confirmado”) o dejar que el almacenista
+lo capture; mientras no exista, ese fondo simplemente queda fuera de la
+conciliación consolidada en vez de asumirse cuadrado.
+
 ## UI sugerida (para paridad con bitácora)
 
 Bitácora muestra la caja chica del proyecto con **pills de fondo**

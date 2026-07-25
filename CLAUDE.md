@@ -67,6 +67,31 @@ Vive como sub-tab dentro del detalle de cada proyecto: **Movimientos · Presupue
 
 **Dos fondos por obra (2026-07-25)**: cada movimiento de `/shared/cajaChica` pertenece a un fondo — `fondo` ausente = **transferencia** (histórico, intacto) o `fondo:'efectivo'` = **fondo de efectivo** (nuevo). Cada fondo lleva su propio saldo conciliado (`_computeSaldoCajaChica(movs, fondo)`); la vista tiene pills 🏦/💵 para cambiar de fondo. El fondo efectivo replica la máquina de estados completa pero al asentar mueve dinero desde la **caja física de SOGRUB** (`sogrub_efectivo_movimientos`, la del arqueo) en vez de Mifel: depósito = caja física ↓ + caja proyecto ↓ + fondo ↑ (folio CC); gasto aprobado = contable `paga_de_caja_chica:true, fondo_caja:'efectivo'` (folio CP, no vuelve a descontar saldos). El depósito "efectivo" sin `fondo` sigue siendo informativo (legacy, no confundir). Los items de buzón `gasto_caja_chica`/`deposito_caja_chica`/`gasto_oc` llevan `fondo:'efectivo'` cuando pertenecen al fondo; a diferencia del efectivo informativo, el **depósito del fondo efectivo SÍ pasa por el buzón y SÍ se asienta**. Contrato para las apps de campo: `docs/spec-caja-chica-fondo-efectivo.md`.
 
+## Efectivo (caja física SOGRUB) ↔ fondos de efectivo en obra
+
+`js/views/efectivo.js` concilia la caja física de SOGRUB por denominación. Desde
+2026-07-25 muestra también el otro lado del fondo efectivo de caja chica:
+
+- **KPI "🏗️ Fondos en obra"** — Σ saldos de los fondos efectivo por obra, más el
+  *efectivo total de la empresa* (caja SOGRUB + obra) en el subtítulo.
+- **Tarjeta "Fondos de efectivo en obra"** — una fila por obra con fondo efectivo
+  (saldo, arqueo declarado, diferencia, pendiente de aprobación) y botón 🧮 para
+  capturar el arqueo que reportó el almacenista. Se guarda en
+  `/shared/cajaChica/{obraId}/meta.arqueoEfectivo` (path compartido, las apps de
+  campo pueden leerlo). Lee `/shared/cajaChica` + `/shared/obraLinks` con listener
+  propio; el cache vive en `calculations.js` (`setFondosEfectivoObra`).
+- **Conciliación consolidada** en el arqueo: `(arqueo SOGRUB + arqueo declarado en
+  obra) − (saldo SOGRUB + saldo de esos fondos)`. Solo entran las obras **con**
+  arqueo declarado; las demás se listan aparte con su monto, para no aparentar que
+  cuadran sin haberlas contado.
+
+**No hay doble conteo**: `calcSaldoEfectivo()` ya está neto de los fondos (el
+depósito al fondo efectivo asienta su egreso en `sogrub_efectivo_movimientos`), así
+que el arqueo de arriba sigue conciliando exactamente igual que antes. El gasto
+pagado con caja chica (`paga_de_caja_chica:true`) tampoco vuelve a descontar.
+`calcSaldoGlobal` se deja **sin cambio**: igual que el fondo transferencia, la caja
+chica no suma al saldo global una vez depositada.
+
 ## Hook bidireccional `sogrub_proy_movimientos` ↔ buzón ↔ caja chica
 
 En `js/firebase.js` (`_syncBuzonOnMovimientoUpdate` / `_syncBuzonOnMovimientoDelete` / `_syncCajaChicaMirrorOnUpdate` / `_syncCajaChicaMirrorOnDelete`):

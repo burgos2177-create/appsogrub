@@ -111,6 +111,80 @@ function calcDiferenciaArqueo() {
 }
 
 // =====================================================
+// FONDOS DE EFECTIVO EN OBRA (caja chica · billete fuera de la caja SOGRUB)
+//
+// Al depositar al fondo efectivo de una obra, el billete SALE de la caja
+// física de SOGRUB (egreso en sogrub_efectivo_movimientos) y queda en manos
+// del almacenista. Por eso calcSaldoEfectivo() ya está NETO de esos fondos y
+// el arqueo por denominación de arriba concilia sin tocar nada.
+//
+// Lo que faltaba era el otro lado: ese efectivo sigue siendo de la empresa,
+// solo que custodiado en obra. Aquí viven el cache (lo llena la vista de
+// efectivo, async desde /shared/cajaChica) y las sumas puras que consolidan
+// ambas cajas:
+//
+//   Efectivo total de la empresa = caja física SOGRUB + Σ fondos en obra
+//
+// La conciliación consolidada solo suma las obras CON arqueo declarado (el
+// contador captura lo que el almacenista reportó contar, en
+// /shared/cajaChica/{obraId}/meta.arqueoEfectivo). Las obras sin conteo se
+// reportan aparte: sin arqueo no hay nada que conciliar, y meterlas como si
+// cuadraran escondería justo lo que esta vista debe destapar.
+// =====================================================
+let _fondosEfectivoObra = [];   // lo llena setFondosEfectivoObra() desde la vista
+
+// [{ obraId, nombre, proyectoId, saldo, pendiente, arqueo: {monto,fecha}|null }]
+function setFondosEfectivoObra(lista) {
+  _fondosEfectivoObra = Array.isArray(lista) ? lista : [];
+}
+
+function getFondosEfectivoObra() {
+  return _fondosEfectivoObra;
+}
+
+// Σ saldo teórico de los fondos de efectivo en obra.
+function calcTotalFondosEfectivoObra() {
+  return _fondosEfectivoObra.reduce((acc, f) => acc + (Number(f.saldo) || 0), 0);
+}
+
+// Efectivo total de la empresa: caja física de SOGRUB + custodiado en obra.
+function calcEfectivoTotalEmpresa() {
+  return calcSaldoEfectivo() + calcTotalFondosEfectivoObra();
+}
+
+// ¿Este fondo trae un arqueo declarado usable?
+function _tieneArqueoObra(f) {
+  return !!(f && f.arqueo && Number.isFinite(Number(f.arqueo.monto)));
+}
+
+// Conciliación consolidada: caja SOGRUB + fondos en obra con arqueo declarado.
+//   diferencia > 0 sobrante · < 0 faltante · 0 cuadrado (mismo signo que arriba).
+function calcConciliacionEfectivoConsolidada() {
+  const conArqueo = _fondosEfectivoObra.filter(_tieneArqueoObra);
+  const sinArqueo = _fondosEfectivoObra.filter(f => !_tieneArqueoObra(f));
+
+  const arqueoObras  = conArqueo.reduce((acc, f) => acc + Number(f.arqueo.monto), 0);
+  const teoricoObras = conArqueo.reduce((acc, f) => acc + (Number(f.saldo) || 0), 0);
+
+  const arqueoSOGRUB  = calcTotalArqueo();
+  const teoricoSOGRUB = calcSaldoEfectivo();
+  const arqueoTotal   = arqueoSOGRUB + arqueoObras;
+  const teoricoTotal  = teoricoSOGRUB + teoricoObras;
+
+  return {
+    arqueoSOGRUB, teoricoSOGRUB,
+    arqueoObras, teoricoObras,
+    arqueoTotal, teoricoTotal,
+    diferencia: arqueoTotal - teoricoTotal,
+    difSOGRUB:  arqueoSOGRUB - teoricoSOGRUB,
+    difObras:   arqueoObras - teoricoObras,
+    conArqueo, sinArqueo,
+    // Saldo teórico que nadie ha contado todavía — no entra en la diferencia.
+    montoSinArqueo: sinArqueo.reduce((acc, f) => acc + (Number(f.saldo) || 0), 0),
+  };
+}
+
+// =====================================================
 // Retiro de Mifel a efectivo (doble registro)
 //   Mifel: egreso (sogrub_movimientos, tipo='retiro_efectivo')
 //   Efectivo: ingreso (sogrub_efectivo_movimientos, tipo='retiro')
