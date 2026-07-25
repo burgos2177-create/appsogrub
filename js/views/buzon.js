@@ -38,6 +38,34 @@ const _TABS = [
   { key: 'todos',          label: 'Todos',            estados: null,                      priority: false },
 ];
 
+// Tipos que NO se muestran en el buzón mientras son un placeholder sin folio
+// (p. ej. una requisición de materiales llega en $0 sólo para ir armando el
+// movimiento; el contador la debe ver hasta que se materializa en OC/recepción
+// con folio). En cuanto tienen folio, se muestran normalmente.
+const _TIPOS_OCULTOS_SIN_FOLIO = ['requisicion_materiales'];
+function _esItemOculto(it) {
+  return _TIPOS_OCULTOS_SIN_FOLIO.includes(it?.tipo) && !it?.folio;
+}
+
+// Etiqueta corta por tipo, para el dropdown de filtro (sin variantes por item).
+function _tipoLabelCorto(tipo) {
+  return {
+    pago_cliente: '💰 Pago de cliente',
+    estimacion_subcontratista: '🔧 Estim. subcontratista',
+    gasto_caja_chica: '🧾 Gasto caja chica',
+    deposito_caja_chica: '🏦 Depósito caja chica',
+    oc_materiales: '📦 Orden de compra',
+    gasto_oc: '📦 Gasto de OC',
+    gasto_indirecto: '🏗️ Gasto indirecto',
+    carga_social: '🏛️ Carga social',
+    requisicion_materiales: '📋 Requisición',
+    nomina_operativo_semana: '👷 Nómina operativo',
+    nomina_tecnico_campo_quincena: '👷 Nómina técnico campo',
+    nomina_tecnico_oficina_quincena: '🧑‍💼 Nómina técnico oficina',
+    nomina_directivo_quincena: '🧑‍💼 Nómina directivo',
+  }[tipo] || tipo;
+}
+
 // ─── Estado del módulo ─────────────────────────────────────────────────────
 
 const _buzon = {
@@ -166,6 +194,7 @@ function renderBuzon() {
 
   const all = Object.entries(_buzon.items)
     .map(([id, it]) => ({ id, ...it }))
+    .filter(it => !_esItemOculto(it))
     .sort((a, b) => (b.creadoAt || 0) - (a.creadoAt || 0));
 
   // Conteos por tab
@@ -178,9 +207,17 @@ function renderBuzon() {
   const accionables = all.filter(i => _ESTADOS_CFG[i?.estado]?.accionable).length;
 
   const activeTab = _TABS.find(t => t.key === _buzon.tab) || _TABS[0];
-  const filtered  = activeTab.estados
+  let filtered = activeTab.estados
     ? all.filter(i => activeTab.estados.includes(i.estado))
     : all;
+
+  // Filtro por tipo (dropdown), independiente de la pestaña de estado.
+  if (!_buzon.filtroTipo) _buzon.filtroTipo = 'todos';
+  // Tipos presentes en los items visibles (para poblar el dropdown).
+  const tiposPresentes = [...new Set(all.map(i => i.tipo).filter(Boolean))].sort();
+  if (_buzon.filtroTipo !== 'todos') {
+    filtered = filtered.filter(i => i.tipo === _buzon.filtroTipo);
+  }
 
   root.innerHTML = '';
 
@@ -236,11 +273,25 @@ function renderBuzon() {
           ${tab.label}${cnt > 0 ? ` <small style="opacity:.75">(${cnt})</small>` : ''}
         </button>`;
       }).join('')}
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap">
+      <label style="font-size:12px;color:var(--text-muted)">Filtrar por tipo:</label>
+      <select id="bz-filtro-tipo" style="padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg,var(--surface));color:var(--text);font-size:12px">
+        <option value="todos" ${_buzon.filtroTipo === 'todos' ? 'selected' : ''}>Todos los tipos (${tabCounts[activeTab.key] ?? all.length})</option>
+        ${tiposPresentes.map(t => `<option value="${t}" ${_buzon.filtroTipo === t ? 'selected' : ''}>${_tipoLabelCorto(t)}</option>`).join('')}
+      </select>
+      ${_buzon.filtroTipo !== 'todos' ? `<button id="bz-filtro-clear" style="padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:transparent;color:var(--text-muted);font-size:12px;cursor:pointer">✕ Limpiar</button>` : ''}
     </div>`;
   root.appendChild(header);
   header.querySelectorAll('.bz-tab').forEach(b =>
     b.addEventListener('click', () => { _buzon.tab = b.dataset.tab; renderBuzon(); })
   );
+  header.querySelector('#bz-filtro-tipo')?.addEventListener('change', (e) => {
+    _buzon.filtroTipo = e.target.value; renderBuzon();
+  });
+  header.querySelector('#bz-filtro-clear')?.addEventListener('click', () => {
+    _buzon.filtroTipo = 'todos'; renderBuzon();
+  });
 
   // ── Empty ──
   if (!filtered.length) {
