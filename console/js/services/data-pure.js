@@ -26,17 +26,34 @@ export function parseFolio(folio) {
   return { prefix: m[1], year: m[2], n: parseInt(m[3], 10) };
 }
 
-// Saldo conciliado de una caja chica — réplica de appsogrub/js/views/caja-chica.js
-// (_computeSaldoCajaChica): Σ(depósito transferencia) − Σ(gasto aprobado).
-export function computeSaldoCajaChica(cajaObra) {
+// Saldos conciliados de una caja chica por fondo — réplica de
+// appsogrub/js/views/caja-chica.js (_computeSaldoCajaChica). Cada movimiento
+// pertenece al fondo 'transferencia' (default, m.fondo ausente) o 'efectivo'.
+//   - transferencia: Σ(depósito transferencia) − Σ(gasto aprobado del fondo).
+//     Depósitos "efectivo" sin fondo son informativos (legacy, no cuentan).
+//   - efectivo: Σ(todo depósito del fondo) − Σ(gasto aprobado del fondo).
+export function computeSaldosCajaChicaPorFondo(cajaObra) {
   const movs = cajaObra && cajaObra.movimientos ? Object.values(cajaObra.movimientos) : [];
-  let saldo = 0;
+  const s = { transferencia: 0, efectivo: 0 };
   for (const m of movs) {
     if (!m) continue;
-    if (m.tipo === 'deposito' && m.metodoDeposito === 'transferencia') saldo += Number(m.monto) || 0;
-    else if (m.tipo === 'gasto' && m.estado === 'aprobado') saldo -= Number(m.monto) || 0;
+    const fondo = m.fondo === 'efectivo' ? 'efectivo' : 'transferencia';
+    if (m.tipo === 'deposito') {
+      if (fondo === 'efectivo') s.efectivo += Number(m.monto) || 0;
+      else if ((m.metodoDeposito || 'transferencia') === 'transferencia') s.transferencia += Number(m.monto) || 0;
+    } else if (m.tipo === 'gasto' && m.estado === 'aprobado') {
+      s[fondo] -= Number(m.monto) || 0;
+    }
   }
-  return saldo;
+  return s;
+}
+
+// Compat: saldo total (suma de ambos fondos). Para detectar fondos en negativo
+// usar computeSaldosCajaChicaPorFondo (un fondo negativo puede quedar oculto
+// por el otro en la suma).
+export function computeSaldoCajaChica(cajaObra) {
+  const s = computeSaldosCajaChicaPorFondo(cajaObra);
+  return s.transferencia + s.efectivo;
 }
 
 // Máximo timestamp hallado entre los hijos de un nodo (para "último escrito").

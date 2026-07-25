@@ -1,4 +1,4 @@
-import { computeSaldoCajaChica, parseFolio, resolveProyectoId, nombreObra } from './data-pure.js?v=1';
+import { computeSaldosCajaChicaPorFondo, parseFolio, resolveProyectoId, nombreObra } from './data-pure.js?v=2';
 
 // ============================================================================
 // Invariantes del ecosistema. Cada check es PURO: recibe el ctx de data.js y
@@ -193,17 +193,21 @@ function checkFolios(ctx) {
 }
 
 // 9 — Caja chica negativa: el almacenista puso de su bolsillo (info).
+// Revisa cada fondo por separado (transferencia y efectivo): un fondo en
+// negativo puede quedar oculto por el otro si solo se mira la suma.
 function checkCajaChicaNegativa(ctx) {
   const out = [];
   for (const [obraId, caja] of Object.entries(ctx.cajaChica)) {
-    const saldo = computeSaldoCajaChica(caja);
-    if (saldo < -0.005) {
-      const nombre = nombreObra(ctx.obrasCampo, obraId) || obraId;
-      out.push({
-        id: `cc-negativa-${obraId}`, severity: 'info', check: 'cajaChica',
-        title: `Caja chica en negativo: ${nombre}`,
-        detail: `Saldo conciliado ${saldo.toFixed(2)}. El almacenista está adelantando dinero; se salda con un depósito.`
-      });
+    const s = computeSaldosCajaChicaPorFondo(caja);
+    for (const fondo of ['transferencia', 'efectivo']) {
+      if (s[fondo] < -0.005) {
+        const nombre = nombreObra(ctx.obrasCampo, obraId) || obraId;
+        out.push({
+          id: `cc-negativa-${obraId}-${fondo}`, severity: 'info', check: 'cajaChica',
+          title: `Caja chica (fondo ${fondo}) en negativo: ${nombre}`,
+          detail: `Saldo conciliado del fondo ${fondo}: ${s[fondo].toFixed(2)}. El almacenista está adelantando dinero; se salda con un depósito a ese fondo.`
+        });
+      }
     }
   }
   return out;
@@ -238,7 +242,12 @@ function checkTrabajoRezagado(ctx) {
     const pendientes = ctx.buzonList.filter(i =>
       String(resolveProyectoId(i, ctx.obraLinks)) === pid && ACTIONABLE.has(i.estado));
     const obraId = ctx.obraByProyecto[pid];
-    const saldo = obraId && ctx.cajaChica[obraId] ? computeSaldoCajaChica(ctx.cajaChica[obraId]) : 0;
+    // El fondo más castigado decide (un fondo negativo no debe quedar oculto
+    // por el otro en la suma).
+    const _s = obraId && ctx.cajaChica[obraId]
+      ? computeSaldosCajaChicaPorFondo(ctx.cajaChica[obraId])
+      : { transferencia: 0, efectivo: 0 };
+    const saldo = Math.min(_s.transferencia, _s.efectivo);
     if (pendientes.length || saldo < -0.005) {
       const bits = [];
       if (pendientes.length) bits.push(`${pendientes.length} item(s) de buzón accionables`);

@@ -263,6 +263,7 @@ function refreshEfectivoTable() {
 
   const _efecTipoBadge = (m) => {
     if (m.tipo === 'retiro') return '<span class="badge badge-info badge-no-dot">⇄ Retiro Mifel</span>';
+    if (m.tipo === 'deposito_caja_chica') return '<span class="badge badge-warning badge-no-dot">💵 → Caja chica obra</span>';
     const base = m.monto >= 0
       ? '<span class="badge badge-success badge-no-dot">Ingreso</span>'
       : '<span class="badge badge-danger badge-no-dot">Egreso</span>';
@@ -296,6 +297,8 @@ function refreshEfectivoTable() {
                     ? `<button class="btn btn-ghost btn-icon btn-ver-proy-efec" data-proy="${m.proyecto_id}" title="Ver en el proyecto (se gestiona ahí)">🏗️→</button>`
                     : m._source === 'empresa'
                     ? `<span class="text-dim" style="font-size:11px" title="Egreso de empresa pagado en efectivo · se gestiona en Caja SOGRUB / Buzón">🔒 empresa</span>`
+                    : m.tipo === 'deposito_caja_chica'
+                      ? `<span class="text-dim" style="font-size:11px" title="Depósito al fondo efectivo de la caja chica de una obra · gestiónalo desde el proyecto (tab Caja chica) para que el saldo compartido no se desincronice">🔒 caja chica</span>`
                     : m.tipo === 'retiro'
                       ? `<span class="text-dim" style="font-size:11px" title="Los retiros se gestionan borrando la fila (baja también de Mifel)">🔗 ligado</span>
                          <button class="btn btn-ghost btn-icon btn-del-efec" data-id="${m.id}" title="Eliminar">🗑️</button>`

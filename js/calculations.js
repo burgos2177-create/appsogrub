@@ -76,8 +76,13 @@ function calcSaldoEfectivo() {
   const base = (Number(saldo_inicial_efectivo) || 0) +
     movs.reduce((acc, m) => acc + (Number(m.monto) || 0), 0);
 
+  // Nota: los gastos con paga_de_caja_chica se excluyen — ese billete ya salió
+  // de la caja física cuando se depositó al fondo efectivo de la obra (egreso
+  // en sogrub_efectivo_movimientos); contarlos aquí sería doble descuento.
+  // Los tipo='deposito_caja_chica' tampoco pasan este reduce (solo abono/gasto):
+  // su descuento de caja física es el egreso propio en EFECTIVO_MOV.
   const proyEfectivo = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
-    .filter(m => m.metodo_pago === 'efectivo')
+    .filter(m => m.metodo_pago === 'efectivo' && !m.paga_de_caja_chica)
     .reduce((acc, m) => {
       if (m.tipo === 'abono_cliente') return acc + Math.abs(m.monto);                 // ingreso a caja
       if (m.tipo === 'gasto' && m.status === 'Pagado') return acc - Math.abs(m.monto); // egreso de caja

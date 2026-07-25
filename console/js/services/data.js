@@ -1,11 +1,11 @@
 import { rread } from './db.js?v=1';
-import { buildCtx } from './data-pure.js?v=1';
+import { buildCtx } from './data-pure.js?v=2';
 
 // Re-export de helpers puros para las vistas (compat).
 export {
   toItemArray, parseFolio, computeSaldoCajaChica, lastWrite,
   resolveProyectoId, nombreProyecto, nombreObra, buildCtx
-} from './data-pure.js?v=1';
+} from './data-pure.js?v=2';
 
 // ============================================================================
 // Lecturas agregadas cross-app. Todo se lee con "/"-escape (paths absolutos)
