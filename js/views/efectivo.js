@@ -18,6 +18,10 @@ function renderEfectivo() {
   const root = document.getElementById('efectivo-root');
   root.innerHTML = '';
 
+  // Fondos de efectivo en obra (caja chica): async, se refresca solo cuando
+  // llega. Si aún no cargó, las sumas dan 0 y la vista se ve como siempre.
+  _suscribirFondosEfectivoObra();
+
   // ---- KPIs ----
   root.appendChild(renderEfectivoKPIs());
 
@@ -58,6 +62,12 @@ function renderEfectivo() {
   // ---- Arqueo por denominación ----
   root.appendChild(renderArqueoCard());
 
+  // ---- Fondos de efectivo en obra (caja chica) ----
+  const fondosContainer = document.createElement('div');
+  fondosContainer.id = 'efectivo-fondos-container';
+  root.appendChild(fondosContainer);
+  refreshFondosObraCard();
+
   // ---- Tabla de movimientos ----
   const tableContainer = document.createElement('div');
   tableContainer.id = 'efectivo-table-container';
@@ -80,6 +90,12 @@ function renderEfectivoKPIs() {
   const difClass = Math.abs(dif) < 0.005 ? 'text-success' : dif > 0 ? 'text-warning' : 'text-danger';
   const difIcon  = Math.abs(dif) < 0.005 ? '✅' : '⚠️';
 
+  // Efectivo que ya salió de esta caja pero sigue siendo de la empresa:
+  // los fondos de caja chica en efectivo, custodiados por cada almacenista.
+  const fondos      = getFondosEfectivoObra();
+  const totalFondos = calcTotalFondosEfectivoObra();
+  const totalEmpresa = calcEfectivoTotalEmpresa();
+
   const grid = document.createElement('div');
   grid.className = 'kpi-grid mb-24';
   grid.id = 'efectivo-kpi-grid';
@@ -87,7 +103,7 @@ function renderEfectivoKPIs() {
     <div class="kpi-card">
       <div class="kpi-label">💵 Saldo en efectivo</div>
       <div class="kpi-value ${saldo >= 0 ? 'text-success' : 'text-danger'}">${formatMXN(saldo)}</div>
-      <div class="kpi-sub">Según la bitácora (teórico)</div>
+      <div class="kpi-sub">Caja física SOGRUB · según bitácora</div>
     </div>
     <div class="kpi-card">
       <div class="kpi-label">🧮 Arqueo físico</div>
@@ -98,6 +114,15 @@ function renderEfectivoKPIs() {
       <div class="kpi-label">${difIcon} Conciliación</div>
       <div class="kpi-value ${difClass}">${dif >= 0 ? '+' : ''}${formatMXN(dif)}</div>
       <div class="kpi-sub">${difLabel} (arqueo − bitácora)</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">🏗️ Fondos en obra</div>
+      <div class="kpi-value ${totalFondos > 0 ? 'text-warning' : ''}">${formatMXN(totalFondos)}</div>
+      <div class="kpi-sub">
+        ${fondos.length
+          ? `Caja chica en efectivo · ${fondos.length} obra${fondos.length === 1 ? '' : 's'} · total empresa ${formatMXN(totalEmpresa)}`
+          : 'Sin fondos de efectivo en obra'}
+      </div>
     </div>
   `;
   return grid;
@@ -114,6 +139,11 @@ function refreshEfectivoKPIs() {
 function renderArqueoCard() {
   const cfg = getConfig();
   const conteo = { ...(cfg.efectivo_arqueo ?? {}) };
+
+  // Fondos de efectivo en obra: el arqueo de esta caja solo cuenta el billete
+  // que está AQUÍ, así que la conciliación consolidada suma el arqueo que cada
+  // obra declaró (ver tarjeta de abajo) contra el saldo teórico de esos fondos.
+  const cc = { ...calcConciliacionEfectivoConsolidada(), fondos: getFondosEfectivoObra() };
 
   const card = document.createElement('div');
   card.className = 'card mb-24';
@@ -149,7 +179,7 @@ function renderArqueoCard() {
     </div>
     <div class="arqueo-totales">
       <div class="arqueo-total-row">
-        <span>Total contado</span>
+        <span>Total contado <span class="text-dim" style="font-weight:400">· caja SOGRUB</span></span>
         <strong id="arqueo-total">${formatMXN(calcTotalArqueo())}</strong>
       </div>
       <div class="arqueo-total-row">
@@ -160,6 +190,29 @@ function renderArqueoCard() {
         <span>Diferencia</span>
         <strong id="arqueo-dif">—</strong>
       </div>
+      ${cc.fondos.length ? `
+        <div class="arqueo-total-row" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+          <span class="text-muted">+ Arqueo declarado en obra
+            <span class="text-dim" style="font-weight:400">· ${cc.conArqueo.length} de ${cc.fondos.length} fondo${cc.fondos.length === 1 ? '' : 's'}</span>
+          </span>
+          <strong class="text-muted" id="arqueo-obras">${formatMXN(cc.arqueoObras)}</strong>
+        </div>
+        <div class="arqueo-total-row">
+          <span class="text-muted">+ Saldo de esos fondos <span class="text-dim" style="font-weight:400">· según bitácora</span></span>
+          <strong class="text-muted">${formatMXN(cc.teoricoObras)}</strong>
+        </div>
+        <div class="arqueo-total-row arqueo-dif-row">
+          <span>Diferencia consolidada <span class="text-dim" style="font-weight:400">· caja SOGRUB + obra</span></span>
+          <strong id="arqueo-dif-consol">—</strong>
+        </div>
+        ${cc.sinArqueo.length ? `
+          <div class="arqueo-total-row">
+            <span class="text-dim" style="font-size:12px">
+              ⚠️ ${cc.sinArqueo.length} fondo${cc.sinArqueo.length === 1 ? '' : 's'} sin arqueo declarado —
+              ${formatMXN(cc.montoSinArqueo)} fuera de la conciliación
+            </span>
+          </div>` : ''}
+      ` : ''}
     </div>
   `;
 
@@ -180,6 +233,14 @@ function renderArqueoCard() {
     const difEl = card.querySelector('#arqueo-dif');
     difEl.textContent = `${dif >= 0 ? '+' : ''}${formatMXN(dif)}`;
     difEl.className = Math.abs(dif) < 0.005 ? 'text-success' : dif > 0 ? 'text-warning' : 'text-danger';
+
+    // Consolidada: usa el conteo en vivo de esta caja + lo ya declarado en obra.
+    const difConsolEl = card.querySelector('#arqueo-dif-consol');
+    if (difConsolEl) {
+      const difConsol = (total + cc.arqueoObras) - (teorico + cc.teoricoObras);
+      difConsolEl.textContent = `${difConsol >= 0 ? '+' : ''}${formatMXN(difConsol)}`;
+      difConsolEl.className = Math.abs(difConsol) < 0.005 ? 'text-success' : difConsol > 0 ? 'text-warning' : 'text-danger';
+    }
   };
   card.querySelectorAll('.arqueo-input').forEach(inp => inp.addEventListener('input', _recalc));
   _recalc();
@@ -201,6 +262,276 @@ function renderArqueoCard() {
 function refreshArqueoCard() {
   const old = document.getElementById('arqueo-card');
   if (old) old.replaceWith(renderArqueoCard());
+}
+
+// =====================================================
+// FONDOS DE EFECTIVO EN OBRA (caja chica)
+//
+// El billete que se deposita al fondo efectivo de una obra ya salió de esta
+// caja (egreso en sogrub_efectivo_movimientos), así que NO se cuenta en el
+// arqueo de arriba — pero sigue siendo dinero de la empresa. Aquí se ve el
+// saldo de cada fondo y se captura el arqueo que reportó el almacenista, para
+// que la conciliación cierre por los dos lados.
+//
+// Fuente: /shared/cajaChica/{obraId} (mismo path que el tab del proyecto y que
+// app-materiales / app-indirectos). El arqueo declarado se guarda en
+// .../meta.arqueoEfectivo para que las apps de campo también puedan verlo.
+// =====================================================
+const _efecFondos = { unsub: null, obraLinks: {}, cargado: false };
+
+function _suscribirFondosEfectivoObra() {
+  if (_efecFondos.unsub) return;   // ya suscrito, el listener mantiene el cache
+
+  // obraLinks resuelve obraId → proyectoId, para nombrar cada fondo con el
+  // nombre del proyecto contable (el contador piensa en proyectos, no obras).
+  const refLinks = _dbRef('/shared/obraLinks');
+  refLinks.on('value', snap => {
+    _efecFondos.obraLinks = snap.val() || {};
+    _recomputarFondosEfectivo();
+  }, err => console.warn('[Efectivo] obraLinks listener:', err));
+
+  const refCC = _dbRef('/shared/cajaChica');
+  const handler = refCC.on('value', snap => {
+    _efecFondos.raw = snap.val() || {};
+    _efecFondos.cargado = true;
+    _recomputarFondosEfectivo();
+  }, err => console.warn('[Efectivo] cajaChica listener:', err));
+
+  _efecFondos.unsub = () => refCC.off('value', handler);
+}
+
+function _recomputarFondosEfectivo() {
+  const todas = _efecFondos.raw || {};
+  const lista = [];
+
+  // _computeSaldoCajaChica vive en views/caja-chica.js (mismo scope global).
+  if (typeof _computeSaldoCajaChica !== 'function') {
+    console.warn('[Efectivo] _computeSaldoCajaChica no disponible; se omiten los fondos en obra');
+    return;
+  }
+
+  for (const [obraId, nodo] of Object.entries(todas)) {
+    const movimientos = nodo?.movimientos || {};
+    // Réplica exacta del cálculo por fondo (caja-chica.js) — misma fórmula que
+    // materiales/indirectos/consola. 'efectivo' = billete físico de la obra.
+    const sums = _computeSaldoCajaChica(movimientos, 'efectivo');
+
+    // Solo obras que realmente tienen fondo de efectivo: sin esto la vista se
+    // llenaría de obras en ceros que solo usan el fondo de transferencia.
+    const tieneFondo = sums.countDepositos > 0 || sums.countAprobados > 0 ||
+                       sums.countReportados > 0 || sums.countRechazados > 0;
+    if (!tieneFondo) continue;
+
+    const arq = nodo?.meta?.arqueoEfectivo || null;
+    const proyectoId = _efecFondos.obraLinks[obraId] || null;
+    const proy = proyectoId ? getItem(KEYS.PROYECTOS, proyectoId) : null;
+
+    lista.push({
+      obraId,
+      proyectoId,
+      nombre: proy?.nombre || nodo?.meta?.obraNombre || obraId,
+      vinculada: !!proy,
+      saldo: sums.saldo,
+      pendiente: sums.totalReportadoPendiente,
+      depositado: sums.totalDepositado,
+      gastado: sums.totalGastadoAprobado,
+      arqueo: (arq && Number.isFinite(Number(arq.monto)))
+        ? { monto: Number(arq.monto), fecha: arq.fecha || null, registradoPor: arq.registradoPor || null }
+        : null,
+    });
+  }
+
+  lista.sort((a, b) => String(a.nombre).localeCompare(String(b.nombre), 'es'));
+  setFondosEfectivoObra(lista);
+
+  if (_activeView === 'efectivo') {
+    refreshEfectivoKPIs();
+    refreshArqueoCard();
+    refreshFondosObraCard();
+  }
+}
+
+function refreshFondosObraCard() {
+  const container = document.getElementById('efectivo-fondos-container');
+  if (!container) return;
+  container.innerHTML = '';
+  const card = renderFondosObraCard();
+  if (card) container.appendChild(card);
+}
+
+function renderFondosObraCard() {
+  const fondos = getFondosEfectivoObra();
+
+  // Sin fondos de efectivo en obra no hay nada que conciliar: la vista se
+  // queda idéntica a como era antes (solo la caja de SOGRUB).
+  if (!fondos.length) {
+    if (!_efecFondos.cargado) return null;
+    const vacio = document.createElement('div');
+    vacio.className = 'card mb-24';
+    vacio.innerHTML = `
+      <h3 class="section-title" style="margin:0 0 8px">🏗️ Fondos de efectivo en obra</h3>
+      <p class="text-muted text-sm" style="margin:0;line-height:1.5">
+        Ninguna obra tiene fondo de caja chica en efectivo todavía. Cuando deposites uno
+        (proyecto → <b>Caja chica</b> → pill 💵), el billete sale de esta caja y su saldo
+        aparece aquí para conciliarse junto con el arqueo.
+      </p>
+    `;
+    return vacio;
+  }
+
+  const total     = calcTotalFondosEfectivoObra();
+  const cc        = calcConciliacionEfectivoConsolidada();
+  const card      = document.createElement('div');
+  card.className  = 'card mb-24';
+  card.id         = 'fondos-obra-card';
+
+  const _difCell = (f) => {
+    if (!f.arqueo) return '<span class="text-dim" style="font-size:12px">sin arqueo</span>';
+    const d = Number(f.arqueo.monto) - (Number(f.saldo) || 0);
+    const cls = Math.abs(d) < 0.005 ? 'text-success' : d > 0 ? 'text-warning' : 'text-danger';
+    return `<span class="${cls} font-mono">${d >= 0 ? '+' : ''}${formatMXN(d)}</span>`;
+  };
+
+  card.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;flex-wrap:wrap;gap:8px">
+      <h3 class="section-title" style="margin:0">🏗️ Fondos de efectivo en obra <span class="text-dim" style="font-size:13px;font-weight:400">· caja chica</span></h3>
+      <span class="text-muted text-sm">Total custodiado en obra: <strong class="${total > 0 ? 'text-warning' : ''}">${formatMXN(total)}</strong></span>
+    </div>
+    <p class="text-muted text-sm" style="margin:0 0 14px;line-height:1.5">
+      Este billete ya salió de la caja de SOGRUB al depositarse, por eso <b>no</b> se cuenta en el
+      arqueo de arriba. Captura aquí lo que el almacenista reportó tener y la diferencia se suma a
+      la <b>conciliación consolidada</b>.
+    </p>
+    <div class="table-wrapper">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Obra / proyecto</th>
+            <th>Saldo (bitácora)</th>
+            <th>Arqueo declarado</th>
+            <th>Diferencia</th>
+            <th>Pendiente</th>
+            <th>Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${fondos.map(f => `
+            <tr>
+              <td>
+                ${f.nombre}
+                ${f.vinculada ? '' : '<span class="text-dim" style="font-size:11px" title="Obra sin proyecto contable vinculado en /shared/obraLinks"> · sin vincular</span>'}
+              </td>
+              <td class="font-mono ${f.saldo < 0 ? 'amount-negative' : ''}">${formatMXN(f.saldo)}</td>
+              <td class="font-mono">
+                ${f.arqueo
+                  ? `${formatMXN(f.arqueo.monto)}${f.arqueo.fecha ? `<span class="text-dim" style="font-size:11px"> · ${formatDate(f.arqueo.fecha)}</span>` : ''}`
+                  : '<span class="text-dim" style="font-size:12px">—</span>'}
+              </td>
+              <td>${_difCell(f)}</td>
+              <td class="font-mono text-muted">${f.pendiente > 0 ? formatMXN(f.pendiente) : '—'}</td>
+              <td>
+                <div class="td-actions">
+                  <button class="btn btn-ghost btn-icon btn-arqueo-obra" data-obra="${f.obraId}" title="Registrar arqueo declarado por la obra">🧮</button>
+                  ${f.proyectoId
+                    ? `<button class="btn btn-ghost btn-icon btn-ver-proy-cc" data-proy="${f.proyectoId}" title="Ver caja chica en el proyecto">🏗️→</button>`
+                    : ''}
+                </div>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+      <div class="table-footer">
+        <span style="margin-left:auto">
+          Arqueo declarado: <strong>${formatMXN(cc.arqueoObras)}</strong> de <strong>${formatMXN(cc.teoricoObras)}</strong> conciliables
+          ${cc.sinArqueo.length ? `<span class="text-dim"> · ${formatMXN(cc.montoSinArqueo)} sin contar</span>` : ''}
+        </span>
+      </div>
+    </div>
+  `;
+
+  card.querySelectorAll('.btn-arqueo-obra').forEach(btn =>
+    btn.addEventListener('click', () => abrirModalArqueoObra(btn.dataset.obra)));
+  card.querySelectorAll('.btn-ver-proy-cc').forEach(btn =>
+    btn.addEventListener('click', () => navigateTo('detalle', btn.dataset.proy)));
+
+  return card;
+}
+
+// Registrar el arqueo que la obra declaró de su fondo de efectivo.
+// Se guarda en /shared/cajaChica/{obraId}/meta.arqueoEfectivo — path compartido,
+// así que app-materiales / app-indirectos pueden mostrarlo sin sync extra.
+function abrirModalArqueoObra(obraId) {
+  const f = getFondosEfectivoObra().find(x => x.obraId === obraId);
+  if (!f) { showToast('Fondo no encontrado', 'warning'); return; }
+
+  const body = document.createElement('div');
+  body.style.cssText = 'display:flex;flex-direction:column;gap:14px';
+  body.innerHTML = `
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label" for="arq-obra-monto">Efectivo contado en obra ($)</label>
+        <input type="number" id="arq-obra-monto" class="form-input" min="0" step="0.01" placeholder="0.00"
+          value="${f.arqueo ? f.arqueo.monto : ''}" autofocus>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="arq-obra-fecha">Fecha del conteo</label>
+        <input type="date" id="arq-obra-fecha" class="form-input" value="${f.arqueo?.fecha ?? todayISO()}">
+      </div>
+    </div>
+    <div class="arqueo-totales" style="margin-top:0">
+      <div class="arqueo-total-row">
+        <span class="text-muted">Saldo según bitácora</span>
+        <strong class="text-muted font-mono">${formatMXN(f.saldo)}</strong>
+      </div>
+      <div class="arqueo-total-row arqueo-dif-row">
+        <span>Diferencia</span>
+        <strong id="arq-obra-dif">—</strong>
+      </div>
+    </div>
+    <p class="text-muted text-sm" style="margin:0;line-height:1.5">
+      Es lo que el almacenista reportó tener del fondo de <b>${f.nombre}</b>. Se guarda en la caja
+      chica compartida, así que también se ve desde las apps de campo, y entra en la conciliación
+      consolidada del arqueo.
+    </p>
+  `;
+
+  const montoInput = body.querySelector('#arq-obra-monto');
+  const difEl      = body.querySelector('#arq-obra-dif');
+  const _recalcDif = () => {
+    if (montoInput.value === '') { difEl.textContent = '—'; difEl.className = 'text-muted'; return; }
+    const d = (Number(montoInput.value) || 0) - (Number(f.saldo) || 0);
+    difEl.textContent = `${d >= 0 ? '+' : ''}${formatMXN(d)}`;
+    difEl.className = Math.abs(d) < 0.005 ? 'text-success' : d > 0 ? 'text-warning' : 'text-danger';
+  };
+  montoInput.addEventListener('input', _recalcDif);
+  _recalcDif();
+
+  openModal({
+    title: `🧮 Arqueo del fondo en obra · ${f.nombre}`,
+    body,
+    confirmText: 'Guardar arqueo',
+    onConfirm: async () => {
+      const monto = parseFloat(montoInput.value);
+      if (isNaN(monto) || monto < 0) { showToast('Ingresa un monto válido', 'warning'); return; }
+      try {
+        await _dbRef(`/shared/cajaChica/${obraId}/meta`).update({
+          arqueoEfectivo: {
+            monto,
+            fecha: body.querySelector('#arq-obra-fecha').value || todayISO(),
+            registradoPor: _currentUser?.email || '',
+            updatedAt: Date.now(),
+          },
+          updatedAt: Date.now(),
+        });
+        closeModal();
+        showToast('Arqueo del fondo guardado', 'success');
+        // El listener de /shared/cajaChica repinta solo.
+      } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+      }
+    },
+  });
 }
 
 // =====================================================
@@ -263,6 +594,7 @@ function refreshEfectivoTable() {
 
   const _efecTipoBadge = (m) => {
     if (m.tipo === 'retiro') return '<span class="badge badge-info badge-no-dot">⇄ Retiro Mifel</span>';
+    if (m.tipo === 'deposito_caja_chica') return '<span class="badge badge-warning badge-no-dot">💵 → Caja chica obra</span>';
     const base = m.monto >= 0
       ? '<span class="badge badge-success badge-no-dot">Ingreso</span>'
       : '<span class="badge badge-danger badge-no-dot">Egreso</span>';
@@ -296,6 +628,8 @@ function refreshEfectivoTable() {
                     ? `<button class="btn btn-ghost btn-icon btn-ver-proy-efec" data-proy="${m.proyecto_id}" title="Ver en el proyecto (se gestiona ahí)">🏗️→</button>`
                     : m._source === 'empresa'
                     ? `<span class="text-dim" style="font-size:11px" title="Egreso de empresa pagado en efectivo · se gestiona en Caja SOGRUB / Buzón">🔒 empresa</span>`
+                    : m.tipo === 'deposito_caja_chica'
+                      ? `<span class="text-dim" style="font-size:11px" title="Depósito al fondo efectivo de la caja chica de una obra · gestiónalo desde el proyecto (tab Caja chica) para que el saldo compartido no se desincronice">🔒 caja chica</span>`
                     : m.tipo === 'retiro'
                       ? `<span class="text-dim" style="font-size:11px" title="Los retiros se gestionan borrando la fila (baja también de Mifel)">🔗 ligado</span>
                          <button class="btn btn-ghost btn-icon btn-del-efec" data-id="${m.id}" title="Eliminar">🗑️</button>`
@@ -327,6 +661,7 @@ function _refreshEfectivoTodo() {
   refreshEfectivoKPIs();
   refreshEfectivoTable();
   refreshArqueoCard();
+  refreshFondosObraCard();
 }
 
 // =====================================================

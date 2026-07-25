@@ -3,7 +3,7 @@ import { state, setState } from '../state/store.js?v=1';
 import { navigate } from '../state/router.js?v=1';
 import { renderShell } from './shell.js?v=1';
 import { loadEcosystem, lastWrite, computeSaldoCajaChica } from '../services/data.js?v=1';
-import { runChecks, countBySeverity } from '../services/checks.js?v=1';
+import { runChecks, countBySeverity } from '../services/checks.js?v=2';
 import { money, num0, ago, dateMx } from '../util/format.js?v=1';
 import { estadoTag } from './_ui.js?v=1';
 
