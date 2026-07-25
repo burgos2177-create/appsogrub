@@ -29,9 +29,11 @@ export function parseFolio(folio) {
 // Saldos conciliados de una caja chica por fondo — réplica de
 // appsogrub/js/views/caja-chica.js (_computeSaldoCajaChica). Cada movimiento
 // pertenece al fondo 'transferencia' (default, m.fondo ausente) o 'efectivo'.
-//   - transferencia: Σ(depósito transferencia) − Σ(gasto aprobado del fondo).
-//     Depósitos "efectivo" sin fondo son informativos (legacy, no cuentan).
-//   - efectivo: Σ(todo depósito del fondo) − Σ(gasto aprobado del fondo).
+//   - transferencia: Σ(depósito transferencia aprobado) − Σ(gasto aprobado del
+//     fondo). Depósitos "efectivo" sin fondo son informativos (legacy, no cuentan).
+//   - efectivo: Σ(depósito aprobado del fondo) − Σ(gasto aprobado del fondo).
+//   - Depósitos sin estado se asumen aprobados (legacy); 'solicitado' y
+//     'rechazado' no cuentan.
 export function computeSaldosCajaChicaPorFondo(cajaObra) {
   const movs = cajaObra && cajaObra.movimientos ? Object.values(cajaObra.movimientos) : [];
   const s = { transferencia: 0, efectivo: 0 };
@@ -39,6 +41,7 @@ export function computeSaldosCajaChicaPorFondo(cajaObra) {
     if (!m) continue;
     const fondo = m.fondo === 'efectivo' ? 'efectivo' : 'transferencia';
     if (m.tipo === 'deposito') {
+      if ((m.estado || 'aprobado') !== 'aprobado') continue;
       if (fondo === 'efectivo') s.efectivo += Number(m.monto) || 0;
       else if ((m.metodoDeposito || 'transferencia') === 'transferencia') s.transferencia += Number(m.monto) || 0;
     } else if (m.tipo === 'gasto' && m.estado === 'aprobado') {

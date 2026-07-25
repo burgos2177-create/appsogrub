@@ -324,6 +324,9 @@ function _filaMovimientoCC(obraId, movId, m) {
 //   - transferencia: depósitos transferencia SUMAN; depósitos efectivo NO
 //     afectan (informativos, legacy).
 //   - efectivo: TODO depósito suma (siempre es billete físico).
+//   - Depósitos cuentan solo con estado='aprobado' (sin estado = aprobado,
+//     legacy). Los 'solicitado' van a pendiente; 'rechazado' a rechazado.
+//     Igual que computeSaldoCajaChica del lado materiales.
 //   - Gastos aprobados restan (del fondo al que pertenecen).
 //     Reportados y rechazados no afectan.
 function _computeSaldoCajaChica(movimientos, fondo = 'transferencia') {
@@ -336,12 +339,17 @@ function _computeSaldoCajaChica(movimientos, fondo = 'transferencia') {
     const monto = Number(m.monto) || 0;
     if (m.tipo === 'deposito') {
       const metodo = m.metodoDeposito || 'transferencia';
+      const estadoDep = m.estado || 'aprobado';   // legacy default
       // En el fondo efectivo todo depósito cuenta; el "efectivo informativo"
       // solo existe en el fondo transferencia.
       if (fondo === 'transferencia' && metodo === 'efectivo') {
         totalDepositadoEfectivo += monto; countDepositosEfectivo++;
-      } else {
+      } else if (estadoDep === 'aprobado') {
         saldo += monto; totalDepositadoTransfer += monto; countDepositosTransfer++;
+      } else if (estadoDep === 'rechazado') {
+        totalRechazado += monto; countRechazados++;
+      } else {   // solicitado — esperando aprobación del contador
+        totalReportadoPendiente += monto; countReportados++;
       }
     } else if (m.tipo === 'gasto') {
       if (m.estado === 'aprobado') { saldo -= monto; totalGastadoAprobado += monto; countAprobados++; }
@@ -600,6 +608,7 @@ async function _reabrirFilaCC(movCajaChicaId, obraId) {
         deleteItem('sogrub_proy_movimientos', mov.asentadoProyectoMovId);
       }
       await _dbRef(`/shared/cajaChica/${obraId}/movimientos/${movCajaChicaId}`).update({
+        estado: 'solicitado',
         asentadoAt: null,
         asentadoBancarioId: null,
         asentadoProyectoMovId: null,

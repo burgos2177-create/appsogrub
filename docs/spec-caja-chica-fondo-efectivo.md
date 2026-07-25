@@ -41,11 +41,13 @@ ningún saldo. Igual que el fondo transferencia.
 saldo(fondo) =
     Σ depósitos del fondo que cuentan
   − Σ gastos con estado='aprobado' del fondo
-// Un depósito cuenta si:
+// Un depósito cuenta si (m.estado || 'aprobado') === 'aprobado'  ← sin estado =
+// aprobado (legacy; los del contador nacen aprobados) — 'solicitado' y
+// 'rechazado' NO cuentan — y además:
 //   fondo transferencia → (m.metodoDeposito || 'transferencia') !== 'efectivo'
 //     (el depósito "efectivo" SIN fondo sigue siendo informativo, legacy)
-//   fondo efectivo      → SIEMPRE (todo depósito del fondo es billete físico)
-// reportado / rechazado no afectan (igual que siempre)
+//   fondo efectivo      → sin condición extra (todo depósito del fondo es billete)
+// Gastos reportado / rechazado no afectan (igual que siempre)
 ```
 
 ## Qué escribe la app de campo
@@ -85,9 +87,10 @@ transferencia (mismos campos, mismo espejo).
 se publica al buzón (informativo). El depósito del **fondo efectivo SÍ se
 publica** — al aprobarlo, bitácora asienta el egreso en la **caja física
 SOGRUB** (`sogrub_efectivo_movimientos`, folio **CC**) + egreso espejo del
-proyecto, y sella `asentadoAt`/`asentadoBancarioId`/`folioBancario` en el
-espejo. El saldo del fondo cuenta el depósito desde que se crea (no espera
-el asiento), igual que el fondo transferencia.
+proyecto, y sella `estado:'aprobado'` + `asentadoAt`/`asentadoBancarioId`/
+`folioBancario` en el espejo. El depósito solicitado desde campo NO cuenta al
+saldo hasta ese `estado:'aprobado'`; los depósitos hechos por el contador
+desde bitácora nacen aprobados y cuentan de inmediato.
 
 ### 3. `gasto_oc` pagado con caja chica (materiales)
 

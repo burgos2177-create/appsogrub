@@ -60,9 +60,10 @@ Vive como sub-tab dentro del detalle de cada proyecto: **Movimientos · Presupue
 3. **Rechazar / reabrir / borrar** — propaga a `/shared/buzon` y `/shared/cajaChica` simétricamente.
 
 **Saldo**: replica idéntica de `computeSaldoCajaChica` del lado materiales. Reglas:
-- Depósito transferencia → suma al saldo conciliado.
-- Depósito efectivo → informativo, no afecta.
+- Depósito transferencia con `estado='aprobado'` (o sin estado, legacy) → suma al saldo conciliado. `solicitado`/`rechazado` no cuentan (2026-07-25: unificado con materiales; bitácora ahora sella `estado:'aprobado'` en el espejo al aprobar un depósito y `'solicitado'` al reabrirlo).
+- Depósito efectivo (sin `fondo`) → informativo, no afecta.
 - Gasto aprobado → resta. Reportado/rechazado → no afectan saldo.
+- Paridad verificada entre las 4 apps (bitácora, materiales, indirectos, consola) — misma fórmula por fondo.
 
 **Dos fondos por obra (2026-07-25)**: cada movimiento de `/shared/cajaChica` pertenece a un fondo — `fondo` ausente = **transferencia** (histórico, intacto) o `fondo:'efectivo'` = **fondo de efectivo** (nuevo). Cada fondo lleva su propio saldo conciliado (`_computeSaldoCajaChica(movs, fondo)`); la vista tiene pills 🏦/💵 para cambiar de fondo. El fondo efectivo replica la máquina de estados completa pero al asentar mueve dinero desde la **caja física de SOGRUB** (`sogrub_efectivo_movimientos`, la del arqueo) en vez de Mifel: depósito = caja física ↓ + caja proyecto ↓ + fondo ↑ (folio CC); gasto aprobado = contable `paga_de_caja_chica:true, fondo_caja:'efectivo'` (folio CP, no vuelve a descontar saldos). El depósito "efectivo" sin `fondo` sigue siendo informativo (legacy, no confundir). Los items de buzón `gasto_caja_chica`/`deposito_caja_chica`/`gasto_oc` llevan `fondo:'efectivo'` cuando pertenecen al fondo; a diferencia del efectivo informativo, el **depósito del fondo efectivo SÍ pasa por el buzón y SÍ se asienta**. Contrato para las apps de campo: `docs/spec-caja-chica-fondo-efectivo.md`.
 

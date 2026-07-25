@@ -272,6 +272,8 @@ async function _cargarDeudaCajaChica(proyectoId, deudaProveedores) {
       const monto = Number(m.monto) || 0;
       const esFondoEfectivo = m.fondo === 'efectivo';
       if (m.tipo === 'deposito') {
+        // Solo depósitos aprobados cuentan (sin estado = aprobado, legacy).
+        if ((m.estado || 'aprobado') !== 'aprobado') continue;
         if (esFondoEfectivo) saldoEfectivo += monto;
         else if ((m.metodoDeposito || 'transferencia') !== 'efectivo') saldoTransfer += monto;
         // depósito efectivo informativo (fondo transferencia): no afecta

@@ -1376,7 +1376,7 @@ async function _reabrirItemCajaChica(item) {
     if (item.obraId && item.movimientoId) {
       const ccPatch = item.tipo === 'gasto_caja_chica'
         ? { estado: 'reportado', aprobadoAt: null, aprobadoPor: null, actualizadoAt: Date.now() }
-        : { pendienteAsentar: true, asentadoAt: null, asentadoBancarioId: null,
+        : { estado: 'solicitado', pendienteAsentar: true, asentadoAt: null, asentadoBancarioId: null,
             asentadoProyectoMovId: null, folioBancario: null, actualizadoAt: Date.now() };
       updates[`/shared/cajaChica/${item.obraId}/movimientos/${item.movimientoId}`] = ccPatch;
     }
@@ -2165,6 +2165,10 @@ async function _aprobarDepositoCajaChica(item) {
     const updates = { [`/shared/buzon/${item.id}`]: buzonPatch };
     if (item.obraId && item.movimientoId) {
       updates[`/shared/cajaChica/${item.obraId}/movimientos/${item.movimientoId}`] = {
+        // estado='aprobado' es lo que hace que el depósito cuente al saldo
+        // conciliado en las apps de campo (materiales exige estado aprobado;
+        // los depósitos nacidos como solicitud quedan en 'solicitado' hasta aquí).
+        estado: 'aprobado',
         asentadoAt: Date.now(),
         asentadoPor: { uid: _currentUser?.uid || '', email: _currentUser?.email || '' },
         asentadoBancarioId: createdMifel.id,
@@ -2667,6 +2671,9 @@ async function _depositarCajaChicaDesdeBitacora({ obraId, obraNombre, monto, fec
   // 1) Crear movimiento en /shared/cajaChica (source of truth del saldo)
   const ccData = {
     tipo: 'deposito',
+    // El contador deposita con autoridad propia: nace aprobado (no pasa por
+    // solicitud). Las apps de campo cuentan depósitos con estado='aprobado'.
+    estado: 'aprobado',
     metodoDeposito: metodo,
     monto: importe,
     fecha: fechaMs,
