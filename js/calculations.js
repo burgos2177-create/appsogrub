@@ -76,8 +76,13 @@ function calcSaldoEfectivo() {
   const base = (Number(saldo_inicial_efectivo) || 0) +
     movs.reduce((acc, m) => acc + (Number(m.monto) || 0), 0);
 
+  // Nota: los gastos con paga_de_caja_chica se excluyen — ese billete ya salió
+  // de la caja física cuando se depositó al fondo efectivo de la obra (egreso
+  // en sogrub_efectivo_movimientos); contarlos aquí sería doble descuento.
+  // Los tipo='deposito_caja_chica' tampoco pasan este reduce (solo abono/gasto):
+  // su descuento de caja física es el egreso propio en EFECTIVO_MOV.
   const proyEfectivo = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
-    .filter(m => m.metodo_pago === 'efectivo')
+    .filter(m => m.metodo_pago === 'efectivo' && !m.paga_de_caja_chica)
     .reduce((acc, m) => {
       if (m.tipo === 'abono_cliente') return acc + Math.abs(m.monto);                 // ingreso a caja
       if (m.tipo === 'gasto' && m.status === 'Pagado') return acc - Math.abs(m.monto); // egreso de caja
@@ -103,6 +108,80 @@ function calcTotalArqueo() {
 //   > 0 sobrante · < 0 faltante · 0 cuadrado.
 function calcDiferenciaArqueo() {
   return calcTotalArqueo() - calcSaldoEfectivo();
+}
+
+// =====================================================
+// FONDOS DE EFECTIVO EN OBRA (caja chica · billete fuera de la caja SOGRUB)
+//
+// Al depositar al fondo efectivo de una obra, el billete SALE de la caja
+// física de SOGRUB (egreso en sogrub_efectivo_movimientos) y queda en manos
+// del almacenista. Por eso calcSaldoEfectivo() ya está NETO de esos fondos y
+// el arqueo por denominación de arriba concilia sin tocar nada.
+//
+// Lo que faltaba era el otro lado: ese efectivo sigue siendo de la empresa,
+// solo que custodiado en obra. Aquí viven el cache (lo llena la vista de
+// efectivo, async desde /shared/cajaChica) y las sumas puras que consolidan
+// ambas cajas:
+//
+//   Efectivo total de la empresa = caja física SOGRUB + Σ fondos en obra
+//
+// La conciliación consolidada solo suma las obras CON arqueo declarado (el
+// contador captura lo que el almacenista reportó contar, en
+// /shared/cajaChica/{obraId}/meta.arqueoEfectivo). Las obras sin conteo se
+// reportan aparte: sin arqueo no hay nada que conciliar, y meterlas como si
+// cuadraran escondería justo lo que esta vista debe destapar.
+// =====================================================
+let _fondosEfectivoObra = [];   // lo llena setFondosEfectivoObra() desde la vista
+
+// [{ obraId, nombre, proyectoId, saldo, pendiente, arqueo: {monto,fecha}|null }]
+function setFondosEfectivoObra(lista) {
+  _fondosEfectivoObra = Array.isArray(lista) ? lista : [];
+}
+
+function getFondosEfectivoObra() {
+  return _fondosEfectivoObra;
+}
+
+// Σ saldo teórico de los fondos de efectivo en obra.
+function calcTotalFondosEfectivoObra() {
+  return _fondosEfectivoObra.reduce((acc, f) => acc + (Number(f.saldo) || 0), 0);
+}
+
+// Efectivo total de la empresa: caja física de SOGRUB + custodiado en obra.
+function calcEfectivoTotalEmpresa() {
+  return calcSaldoEfectivo() + calcTotalFondosEfectivoObra();
+}
+
+// ¿Este fondo trae un arqueo declarado usable?
+function _tieneArqueoObra(f) {
+  return !!(f && f.arqueo && Number.isFinite(Number(f.arqueo.monto)));
+}
+
+// Conciliación consolidada: caja SOGRUB + fondos en obra con arqueo declarado.
+//   diferencia > 0 sobrante · < 0 faltante · 0 cuadrado (mismo signo que arriba).
+function calcConciliacionEfectivoConsolidada() {
+  const conArqueo = _fondosEfectivoObra.filter(_tieneArqueoObra);
+  const sinArqueo = _fondosEfectivoObra.filter(f => !_tieneArqueoObra(f));
+
+  const arqueoObras  = conArqueo.reduce((acc, f) => acc + Number(f.arqueo.monto), 0);
+  const teoricoObras = conArqueo.reduce((acc, f) => acc + (Number(f.saldo) || 0), 0);
+
+  const arqueoSOGRUB  = calcTotalArqueo();
+  const teoricoSOGRUB = calcSaldoEfectivo();
+  const arqueoTotal   = arqueoSOGRUB + arqueoObras;
+  const teoricoTotal  = teoricoSOGRUB + teoricoObras;
+
+  return {
+    arqueoSOGRUB, teoricoSOGRUB,
+    arqueoObras, teoricoObras,
+    arqueoTotal, teoricoTotal,
+    diferencia: arqueoTotal - teoricoTotal,
+    difSOGRUB:  arqueoSOGRUB - teoricoSOGRUB,
+    difObras:   arqueoObras - teoricoObras,
+    conArqueo, sinArqueo,
+    // Saldo teórico que nadie ha contado todavía — no entra en la diferencia.
+    montoSinArqueo: sinArqueo.reduce((acc, f) => acc + (Number(f.saldo) || 0), 0),
+  };
 }
 
 // =====================================================

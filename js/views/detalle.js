@@ -277,17 +277,26 @@ async function _cargarDeudaCajaChica(proyectoId, deudaProveedores) {
     const movsSnap = await _dbRef(`/shared/cajaChica/${obraId}/movimientos`).get();
     const movs = movsSnap.val() || {};
 
-    // Réplica de _computeSaldoCajaChica (caja-chica.js) — saldo conciliado:
-    // depósitos transferencia − gastos aprobados.
-    let saldo = 0;
+    // Réplica de _computeSaldoCajaChica (caja-chica.js), por fondo. Cada
+    // movimiento pertenece al fondo 'transferencia' (default) o 'efectivo';
+    // la deuda es la suma de los saldos negativos de ambos fondos (alguien
+    // puso de su bolsillo en ese fondo).
+    let saldoTransfer = 0, saldoEfectivo = 0;
     for (const m of Object.values(movs)) {
-      if (m.tipo === 'deposito' && (m.metodoDeposito || 'transferencia') !== 'efectivo') {
-        saldo += Number(m.monto) || 0;
+      const monto = Number(m.monto) || 0;
+      const esFondoEfectivo = m.fondo === 'efectivo';
+      if (m.tipo === 'deposito') {
+        // Solo depósitos aprobados cuentan (sin estado = aprobado, legacy).
+        if ((m.estado || 'aprobado') !== 'aprobado') continue;
+        if (esFondoEfectivo) saldoEfectivo += monto;
+        else if ((m.metodoDeposito || 'transferencia') !== 'efectivo') saldoTransfer += monto;
+        // depósito efectivo informativo (fondo transferencia): no afecta
       } else if (m.tipo === 'gasto' && m.estado === 'aprobado') {
-        saldo -= Number(m.monto) || 0;
+        if (esFondoEfectivo) saldoEfectivo -= monto;
+        else saldoTransfer -= monto;
       }
     }
-    const deudaCC = Math.max(0, -saldo);
+    const deudaCC = Math.max(0, -saldoTransfer) + Math.max(0, -saldoEfectivo);
     const total = deudaProveedores + deudaCC;
 
     // Update KPI in place
@@ -605,7 +614,7 @@ function renderDetalleTableOnly(proyectoId, wrap) {
               <tr>
                 <td class="text-muted">${formatDate(m.fecha)}</td>
                 <td>${m.concepto || '—'}</td>
-                <td>${m.tipo === 'gasto' ? categoriaBadge(m.categoria) + (m.categoria === 'Indirecto' && m.indirecto_ambito ? ` <span class="badge badge-muted badge-no-dot" style="font-size:10px">${m.indirecto_ambito === 'campo' ? '🚧 Campo' : '🏢 Oficina'}</span>` : '') + (m.paga_de_caja_chica ? ' <span class="badge badge-warning" style="font-size:10px" title="Pagado con caja chica · no descuenta saldo del proyecto (ya bajó al depositar)">💰 caja chica</span>' : '') : '—'}</td>
+                <td>${m.tipo === 'gasto' ? categoriaBadge(m.categoria) + (m.categoria === 'Indirecto' && m.indirecto_ambito ? ` <span class="badge badge-muted badge-no-dot" style="font-size:10px">${m.indirecto_ambito === 'campo' ? '🚧 Campo' : '🏢 Oficina'}</span>` : '') + (m.paga_de_caja_chica ? ` <span class="badge badge-warning" style="font-size:10px" title="Pagado con caja chica${m.fondo_caja === 'efectivo' ? ' (fondo efectivo)' : ''} · no descuenta saldo del proyecto (ya bajó al depositar)">${m.fondo_caja === 'efectivo' ? '💵 caja chica efectivo' : '💰 caja chica'}</span>` : '') : '—'}</td>
                 <td class="text-muted">${m.subcontratista || '—'}</td>
                 <td>${tipoBadge(m.tipo)}${(m.tipo === 'gasto' || m.tipo === 'abono_cliente') ? ` <span class="badge badge-muted badge-no-dot" style="font-size:10px" title="Forma de pago">${m.metodo_pago === 'efectivo' ? '💵 Efectivo' : '🏦 Transf.'}</span>` : ''}</td>
                 <td class="${colorMonto} font-mono">${formatMXN(m.monto)}</td>

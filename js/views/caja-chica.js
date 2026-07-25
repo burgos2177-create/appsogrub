@@ -95,14 +95,23 @@ function _renderEmptyVinculo(proyectoId, proyecto) {
   root.appendChild(card);
 }
 
+// Fondo al que pertenece un movimiento de caja chica. Ausente = transferencia
+// (todo lo histórico), 'efectivo' = fondo de efectivo por obra (2026-07).
+function _fondoDeMovCC(m) {
+  return m?.fondo === 'efectivo' ? 'efectivo' : 'transferencia';
+}
+
 function _renderCajaChicaContenido(proyectoId, proyecto) {
   const root = document.getElementById('caja-chica-tab-wrap');
   if (!root) return;
   const st = _ccState[proyectoId];
   if (!st) return;
   const { obraId, meta, movimientos } = st;
+  const fondo = st.fondo || 'transferencia';
+  const esEfectivo = fondo === 'efectivo';
 
-  const sums = _computeSaldoCajaChica(movimientos);
+  const sums = _computeSaldoCajaChica(movimientos, fondo);
+  const sumsOtro = _computeSaldoCajaChica(movimientos, esEfectivo ? 'transferencia' : 'efectivo');
   const umbral = (meta?.umbralAlerta ?? _DEFAULT_UMBRAL_CC);
   const lowBalance = sums.saldo < umbral && sums.saldo > 0;
   const empty = sums.saldo <= 0 && sums.totalDepositado === 0;
@@ -119,11 +128,11 @@ function _renderCajaChicaContenido(proyectoId, proyecto) {
   // ─── KPIs ───
   const kpis = `
     <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:14px;margin-top:20px">
-      ${_kpiCajaChica('Depositado (transfer)', formatMXN(sums.totalDepositadoTransfer),
-        `${sums.countDepositosTransfer} transferencias`)}
-      ${sums.totalDepositadoEfectivo > 0
-        ? _kpiCajaChica('Depositado (efectivo)', formatMXN(sums.totalDepositadoEfectivo),
-            `${sums.countDepositosEfectivo} en efectivo · informativo`)
+      ${_kpiCajaChica(esEfectivo ? 'Depositado (efectivo)' : 'Depositado (transfer)', formatMXN(sums.totalDepositadoTransfer),
+        esEfectivo ? `${sums.countDepositosTransfer} depósitos en efectivo` : `${sums.countDepositosTransfer} transferencias`)}
+      ${!esEfectivo && sums.totalDepositadoEfectivo > 0
+        ? _kpiCajaChica('Efectivo informativo', formatMXN(sums.totalDepositadoEfectivo),
+            `${sums.countDepositosEfectivo} en efectivo · no afecta saldo`)
         : ''}
       ${_kpiCajaChica('Total gastado (aprobado)', formatMXN(sums.totalGastadoAprobado),
         `${sums.countAprobados} gastos aprobados`)}
@@ -148,15 +157,17 @@ function _renderCajaChicaContenido(proyectoId, proyecto) {
     </div>
   `;
 
-  // ─── Tabla ───
-  const ids = Object.keys(movimientos);
+  // ─── Tabla (solo movimientos del fondo activo) ───
+  const ids = Object.keys(movimientos).filter(id => _fondoDeMovCC(movimientos[id]) === fondo);
   ids.sort((a, b) => (movimientos[b].fecha || movimientos[b].createdAt || 0) - (movimientos[a].fecha || movimientos[a].createdAt || 0));
 
   const tableHTML = ids.length === 0
     ? `<div class="empty-state" style="margin-top:16px">
-         <div class="empty-state-icon">💰</div>
-         <div class="empty-state-title">Sin movimientos todavía</div>
-         <p class="empty-state-desc">Deposita para iniciar la caja chica de esta obra. Los gastos aprobados llegan reportados desde recepciones del almacenista.</p>
+         <div class="empty-state-icon">${esEfectivo ? '💵' : '💰'}</div>
+         <div class="empty-state-title">Sin movimientos ${esEfectivo ? 'del fondo efectivo' : 'todavía'}</div>
+         <p class="empty-state-desc">${esEfectivo
+           ? 'Deposita efectivo para iniciar el fondo de esta obra. Sale de la caja física de SOGRUB (arqueo) y los gastos llegan reportados desde las apps de campo.'
+           : 'Deposita para iniciar la caja chica de esta obra. Los gastos aprobados llegan reportados desde recepciones del almacenista.'}</p>
        </div>`
     : `<div class="table-wrapper" style="margin-top:14px">
          <table class="data-table" id="cc-tabla">
@@ -171,24 +182,42 @@ function _renderCajaChicaContenido(proyectoId, proyecto) {
          </table>
        </div>`;
 
+  // Pill del otro fondo con su saldo, para ver ambos de un vistazo.
+  const _pill = (f, activo, saldoStr) => `
+    <button class="btn btn-sm ${activo ? 'btn-primary' : 'btn-secondary'}" data-cc-fondo="${f}"
+      style="${activo ? '' : 'opacity:.75'}">
+      ${f === 'efectivo' ? '💵 Fondo efectivo' : '🏦 Fondo transferencia'}${saldoStr ? ` · ${saldoStr}` : ''}
+    </button>`;
+
   root.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
       <h3 style="margin:0">Caja chica · ${proyecto.nombre}</h3>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn btn-primary" id="cc-btn-depositar">＋ Depositar</button>
+        <button class="btn btn-primary" id="cc-btn-depositar">＋ Depositar${esEfectivo ? ' efectivo' : ''}</button>
         <button class="btn btn-secondary btn-sm" id="cc-btn-umbral">⚙ Umbral de alerta</button>
       </div>
     </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+      ${_pill('transferencia', !esEfectivo, esEfectivo ? formatMXN(sumsOtro.saldo) : '')}
+      ${_pill('efectivo', esEfectivo, esEfectivo ? '' : formatMXN(sumsOtro.saldo))}
+    </div>
     <div class="text-muted" style="font-size:11px;margin-bottom:10px">
-      Obra vinculada: <code>${obraId}</code> · Vista compartida con app-materiales (los cambios aquí se reflejan en el almacén).
+      Obra vinculada: <code>${obraId}</code> · Vista compartida con las apps de campo (los cambios aquí se reflejan allá).
+      ${esEfectivo ? ' · Los depósitos de este fondo salen de la <b>caja física de SOGRUB</b> (arqueo), no de Mifel.' : ''}
     </div>
     ${saldoCard}
     <h4 style="margin:20px 0 4px">Movimientos</h4>
     ${tableHTML}
   `;
 
-  root.querySelector('#cc-btn-depositar').addEventListener('click', () =>
-    _abrirModalDepositarCC(obraId, proyecto.nombre, proyectoId, proyecto));
+  root.querySelectorAll('[data-cc-fondo]').forEach(btn =>
+    btn.addEventListener('click', () => {
+      _ccState[proyectoId].fondo = btn.dataset.ccFondo;
+      _renderCajaChicaContenido(proyectoId, proyecto);
+    }));
+  root.querySelector('#cc-btn-depositar').addEventListener('click', () => esEfectivo
+    ? _abrirModalDepositarCCEfectivo(obraId, proyecto.nombre, proyectoId, proyecto)
+    : _abrirModalDepositarCC(obraId, proyecto.nombre, proyectoId, proyecto));
   root.querySelector('#cc-btn-umbral').addEventListener('click', () =>
     _abrirModalUmbralCC(obraId, umbral, proyectoId, proyecto));
 
@@ -235,10 +264,13 @@ function _filaMovimientoCC(obraId, movId, m) {
     ? `<span class="badge badge-success">⬆ Depósito</span>`
     : `<span class="badge badge-danger">⬇ Gasto</span>`;
 
+  const sufAsentado = m.asentadoAt ? ' · asentada' : (m.pendienteAsentar ? ' · pendiente asentar' : '');
   const estadoCell = isDeposito
-    ? (m.metodoDeposito === 'efectivo'
-        ? `<span class="badge badge-muted">💵 Efectivo</span>`
-        : `<span class="badge badge-info">🏦 Transfer${m.asentadoAt ? ' · asentada' : (m.pendienteAsentar ? ' · pendiente asentar' : '')}</span>`)
+    ? (_fondoDeMovCC(m) === 'efectivo'
+        ? `<span class="badge badge-warning">💵 Fondo efectivo${sufAsentado}</span>`
+        : m.metodoDeposito === 'efectivo'
+        ? `<span class="badge badge-muted">💵 Efectivo (informativo)</span>`
+        : `<span class="badge badge-info">🏦 Transfer${sufAsentado}</span>`)
     : isReportado ? `<span class="badge badge-warning">⏳ Reportado</span>`
     : isAprobado  ? `<span class="badge badge-success">✓ Aprobado</span>`
     : isRechazado ? `<span class="badge badge-danger">✕ Rechazado</span>`
@@ -285,24 +317,39 @@ function _filaMovimientoCC(obraId, movId, m) {
 }
 
 // Réplica idéntica de computeSaldoCajaChica del lado materiales
-// (D:\apps-sogrub\app-materiales\js\services\db.js).
-// Reglas:
-//   - Depósitos transferencia SUMAN al saldo conciliado.
-//   - Depósitos efectivo NO afectan (informativos).
-//   - Gastos aprobados restan. Reportados y rechazados no afectan.
-function _computeSaldoCajaChica(movimientos) {
+// (D:\apps-sogrub\app-materiales\js\services\db.js), generalizada a fondos.
+// Cada movimiento pertenece a un fondo: 'transferencia' (default, ausente)
+// o 'efectivo' (campo m.fondo). Cada fondo lleva su propio saldo conciliado.
+// Reglas por fondo:
+//   - transferencia: depósitos transferencia SUMAN; depósitos efectivo NO
+//     afectan (informativos, legacy).
+//   - efectivo: TODO depósito suma (siempre es billete físico).
+//   - Depósitos cuentan solo con estado='aprobado' (sin estado = aprobado,
+//     legacy). Los 'solicitado' van a pendiente; 'rechazado' a rechazado.
+//     Igual que computeSaldoCajaChica del lado materiales.
+//   - Gastos aprobados restan (del fondo al que pertenecen).
+//     Reportados y rechazados no afectan.
+function _computeSaldoCajaChica(movimientos, fondo = 'transferencia') {
   let saldo = 0, totalDepositadoTransfer = 0, totalDepositadoEfectivo = 0;
   let totalGastadoAprobado = 0, totalReportadoPendiente = 0, totalRechazado = 0;
   let countDepositosTransfer = 0, countDepositosEfectivo = 0;
   let countAprobados = 0, countReportados = 0, countRechazados = 0;
   for (const m of Object.values(movimientos || {})) {
+    if (_fondoDeMovCC(m) !== fondo) continue;
     const monto = Number(m.monto) || 0;
     if (m.tipo === 'deposito') {
       const metodo = m.metodoDeposito || 'transferencia';
-      if (metodo === 'efectivo') {
+      const estadoDep = m.estado || 'aprobado';   // legacy default
+      // En el fondo efectivo todo depósito cuenta; el "efectivo informativo"
+      // solo existe en el fondo transferencia.
+      if (fondo === 'transferencia' && metodo === 'efectivo') {
         totalDepositadoEfectivo += monto; countDepositosEfectivo++;
-      } else {
+      } else if (estadoDep === 'aprobado') {
         saldo += monto; totalDepositadoTransfer += monto; countDepositosTransfer++;
+      } else if (estadoDep === 'rechazado') {
+        totalRechazado += monto; countRechazados++;
+      } else {   // solicitado — esperando aprobación del contador
+        totalReportadoPendiente += monto; countReportados++;
       }
     } else if (m.tipo === 'gasto') {
       if (m.estado === 'aprobado') { saldo -= monto; totalGastadoAprobado += monto; countAprobados++; }
@@ -394,6 +441,63 @@ function _abrirModalDepositarCC(obraId, obraNombre, proyectoId, proyecto) {
           ? `Depositado ${formatMXN(monto)} · ${res.folio}`
           : `Depositado ${formatMXN(monto)} (efectivo, no afecta saldo)`;
         showToast(msg, 'success');
+      } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+      }
+    }
+  });
+}
+
+// Depósito al FONDO EFECTIVO: siempre billete físico. Sale de la caja física
+// de SOGRUB (arqueo) → egreso en sogrub_efectivo_movimientos + egreso espejo
+// del proyecto. Folio CC, igual que el fondo transferencia.
+function _abrirModalDepositarCCEfectivo(obraId, obraNombre, proyectoId, proyecto) {
+  const saldoCajaFisica = (typeof calcSaldoEfectivo === 'function') ? calcSaldoEfectivo() : null;
+  const body = document.createElement('div');
+  body.style.cssText = 'display:flex;flex-direction:column;gap:14px';
+  body.innerHTML = `
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label" for="cce-dep-monto">Monto ($)</label>
+        <input type="number" id="cce-dep-monto" class="form-input" placeholder="0.00" min="0.01" step="0.01" autofocus>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="cce-dep-fecha">Fecha</label>
+        <input type="date" id="cce-dep-fecha" class="form-input" value="${todayISO()}">
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="cce-dep-comentario">Comentario <span class="text-dim">(opcional)</span></label>
+      <input type="text" id="cce-dep-comentario" class="form-input" placeholder="p.ej. fondo inicial en efectivo, reposición…">
+    </div>
+    <p class="text-muted text-sm" style="line-height:1.5;margin:0">
+      💵 El billete sale de la <b>caja física de SOGRUB</b>${saldoCajaFisica != null ? ` (saldo actual: <b>${formatMXN(saldoCajaFisica)}</b>)` : ''}
+      y baja también la caja del proyecto. Mifel no se toca — si el efectivo aún está en el banco,
+      primero haz el <b>retiro de Mifel</b> en la pestaña Efectivo.
+    </p>
+  `;
+
+  openModal({
+    title: `💵 Depositar efectivo en caja chica · ${obraNombre}`,
+    body,
+    confirmText: 'Depositar',
+    onConfirm: async () => {
+      const valid = validateFields([
+        { el: body.querySelector('#cce-dep-monto'), msg: 'Ingresa un monto válido' },
+        { el: body.querySelector('#cce-dep-fecha'), msg: 'Selecciona una fecha' },
+      ]);
+      if (!valid) return;
+
+      const monto = parseFloat(body.querySelector('#cce-dep-monto').value);
+      const fecha = body.querySelector('#cce-dep-fecha').value;
+      const comentario = body.querySelector('#cce-dep-comentario').value.trim();
+
+      try {
+        const res = await _depositarCajaChicaDesdeBitacora({
+          obraId, obraNombre, monto, fecha, comentario, fondo: 'efectivo'
+        });
+        closeModal();
+        showToast(`Depositado ${formatMXN(monto)} al fondo efectivo · ${res.folio}`, 'success');
       } catch (err) {
         showToast('Error: ' + err.message, 'error');
       }
@@ -497,11 +601,17 @@ async function _reabrirFilaCC(movCajaChicaId, obraId) {
       const movSnap = await _dbRef(`/shared/cajaChica/${obraId}/movimientos/${movCajaChicaId}`).get();
       const mov = movSnap.val();
       if (mov?.asentadoBancarioId) {
-        deleteItem('sogrub_movimientos', mov.asentadoBancarioId);
+        // Fondo efectivo → el egreso vive en la caja física, no en Mifel.
+        deleteItem(_fondoDeMovCC(mov) === 'efectivo' ? KEYS.EFECTIVO_MOV : 'sogrub_movimientos', mov.asentadoBancarioId);
+      }
+      if (mov?.asentadoProyectoMovId) {
+        deleteItem('sogrub_proy_movimientos', mov.asentadoProyectoMovId);
       }
       await _dbRef(`/shared/cajaChica/${obraId}/movimientos/${movCajaChicaId}`).update({
+        estado: 'solicitado',
         asentadoAt: null,
         asentadoBancarioId: null,
+        asentadoProyectoMovId: null,
         folioBancario: null,
         pendienteAsentar: true,
         actualizadoAt: Date.now()
@@ -522,7 +632,11 @@ async function _borrarFilaCC(movCajaChicaId, obraId) {
     const mov = movSnap.val();
     // Si tiene asentamientos contables, borrarlos también
     if (mov?.asentadoBancarioId) {
-      deleteItem('sogrub_movimientos', mov.asentadoBancarioId);
+      // Fondo efectivo → el egreso vive en la caja física, no en Mifel.
+      deleteItem(_fondoDeMovCC(mov) === 'efectivo' ? KEYS.EFECTIVO_MOV : 'sogrub_movimientos', mov.asentadoBancarioId);
+    }
+    if (mov?.asentadoProyectoMovId) {
+      deleteItem('sogrub_proy_movimientos', mov.asentadoProyectoMovId);
     }
     if (mov?.buzonItemId) {
       const buzonItem = (await _dbRef(`/shared/buzon/${mov.buzonItemId}`).get()).val();

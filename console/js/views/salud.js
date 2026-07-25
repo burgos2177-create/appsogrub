@@ -3,7 +3,7 @@ import { setState } from '../state/store.js?v=1';
 import { navigate } from '../state/router.js?v=1';
 import { renderShell } from './shell.js?v=1';
 import { loadEcosystem } from '../services/data.js?v=1';
-import { runChecks, countBySeverity } from '../services/checks.js?v=1';
+import { runChecks, countBySeverity } from '../services/checks.js?v=2';
 import { marcarHuerfano, normalizarHuerfano } from '../services/fixes.js?v=1';
 
 const SEV_LABEL = { error: 'Errores', warn: 'Advertencias', info: 'Informativos' };
