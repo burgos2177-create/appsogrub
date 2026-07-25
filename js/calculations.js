@@ -138,6 +138,39 @@ function ejecutarRetiroEfectivo(monto, concepto, fecha) {
 }
 
 // =====================================================
+// Ingreso de efectivo a Mifel (doble registro) — inverso del retiro
+//   Efectivo: egreso (sogrub_efectivo_movimientos, tipo='ingreso_mifel', monto −)
+//   Mifel: ingreso (sogrub_movimientos, tipo='ingreso_efectivo', monto +, sin
+//          metodo_pago → cuenta como electrónico en calcSaldoMifel).
+// Ligados por retiro_ref para poder borrarlos juntos.
+// =====================================================
+function ejecutarIngresoMifel(monto, concepto, fecha) {
+  const ref = generateId();
+  const conceptoFinal = concepto || 'Ingreso de efectivo a Mifel';
+
+  const movMifel = addItem(KEYS.MOVIMIENTOS, {
+    fecha,
+    monto:       Math.abs(monto),
+    concepto:    conceptoFinal,
+    status:      'Pagado',
+    tipo:        'ingreso_efectivo',
+    proyecto_id: null,
+    retiro_ref:  ref,
+  });
+
+  const movEfectivo = addItem(KEYS.EFECTIVO_MOV, {
+    fecha,
+    monto:      -Math.abs(monto),
+    concepto:   conceptoFinal,
+    tipo:       'ingreso_mifel',
+    origen:     'mifel',
+    retiro_ref: ref,
+  });
+
+  return { movMifel, movEfectivo };
+}
+
+// =====================================================
 // REGLA 3 — Saldo caja de un proyecto
 // abono_cliente + transferencia_sogrub − gastos pagados
 // =====================================================
@@ -167,6 +200,33 @@ function calcSaldoCajaProyecto(proyectoId) {
     .reduce((acc, m) => acc + Math.abs(m.monto), 0);
 
   return abonos + transferencias - gastosPagados - depositosCajaChica;
+}
+
+// =====================================================
+// REGLA 3B — Desglose del saldo de caja: electrónico vs efectivo
+// El saldo total (REGLA 3) se parte según el metodo_pago de los movimientos:
+//   efectivo   = cobros en efectivo − gastos pagados en efectivo (excl. caja chica)
+//   electrónico = total − efectivo (todo lo demás: transferencias SOGRUB, cobros
+//                y gastos por transferencia, depósitos a caja chica, etc.)
+// Se define el electrónico como residuo para garantizar que ambos sumen el total
+// exacto de calcSaldoCajaProyecto, sin importar casos borde.
+// =====================================================
+function calcSaldoCajaProyectoDesglose(proyectoId) {
+  const movs = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
+    .filter(m => m.proyecto_id === proyectoId);
+  const esEfectivo = m => m.metodo_pago === 'efectivo';
+
+  const efIn = movs
+    .filter(m => m.tipo === 'abono_cliente' && esEfectivo(m))
+    .reduce((acc, m) => acc + Math.abs(m.monto), 0);
+
+  const efOut = movs
+    .filter(m => m.tipo === 'gasto' && m.status === 'Pagado' && !m.paga_de_caja_chica && esEfectivo(m))
+    .reduce((acc, m) => acc + Math.abs(m.monto), 0);
+
+  const efectivo = efIn - efOut;
+  const total    = calcSaldoCajaProyecto(proyectoId);
+  return { total, efectivo, electronico: total - efectivo };
 }
 
 // =====================================================

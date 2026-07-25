@@ -28,6 +28,7 @@ function renderEfectivo() {
   toolbar.innerHTML = `
     <button class="btn btn-primary"   id="btn-efec-mov">＋ Movimiento en efectivo</button>
     <button class="btn btn-secondary" id="btn-efec-retiro">⇄ Retiro de Mifel</button>
+    <button class="btn btn-secondary" id="btn-efec-ingreso">⇄ Ingreso a Mifel</button>
     <div class="toolbar-spacer"></div>
     <div class="toolbar-filters">
       <select class="filter-select" id="efec-filter-mes">
@@ -38,7 +39,7 @@ function renderEfectivo() {
         <option value="todos">Todos</option>
         <option value="ingreso">Ingresos</option>
         <option value="egreso">Egresos</option>
-        <option value="retiro">Retiros de Mifel</option>
+        <option value="retiro">Traspasos Mifel ⇄</option>
       </select>
     </div>
   `;
@@ -48,6 +49,7 @@ function renderEfectivo() {
   toolbar.querySelector('#efec-filter-tipo').value = _efectivoState.tipo;
   toolbar.querySelector('#btn-efec-mov').addEventListener('click', () => abrirModalEfectivo());
   toolbar.querySelector('#btn-efec-retiro').addEventListener('click', () => abrirModalRetiroEfectivo());
+  toolbar.querySelector('#btn-efec-ingreso').addEventListener('click', () => abrirModalIngresoMifel());
   toolbar.querySelector('#efec-filter-mes').addEventListener('change', e => {
     _efectivoState.mes = e.target.value; refreshEfectivoTable();
   });
@@ -241,10 +243,11 @@ function refreshEfectivoTable() {
 
   let movs = [...propios, ...deProyectos, ...deEmpresa];
   if (_efectivoState.mes) movs = movs.filter(m => m.fecha && m.fecha.startsWith(_efectivoState.mes));
+  const _esTraspaso = m => m.tipo === 'retiro' || m.tipo === 'ingreso_mifel';
   if (_efectivoState.tipo !== 'todos') {
     movs = _efectivoState.tipo === 'retiro'
-      ? movs.filter(m => m.tipo === 'retiro')
-      : movs.filter(m => (m.monto >= 0 ? 'ingreso' : 'egreso') === _efectivoState.tipo && m.tipo !== 'retiro');
+      ? movs.filter(_esTraspaso)
+      : movs.filter(m => (m.monto >= 0 ? 'ingreso' : 'egreso') === _efectivoState.tipo && !_esTraspaso(m));
   }
   movs = [...movs].sort((a, b) => (b.fecha ?? '').localeCompare(a.fecha ?? ''));
 
@@ -263,6 +266,7 @@ function refreshEfectivoTable() {
 
   const _efecTipoBadge = (m) => {
     if (m.tipo === 'retiro') return '<span class="badge badge-info badge-no-dot">⇄ Retiro Mifel</span>';
+    if (m.tipo === 'ingreso_mifel') return '<span class="badge badge-info badge-no-dot">⇄ Ingreso Mifel</span>';
     const base = m.monto >= 0
       ? '<span class="badge badge-success badge-no-dot">Ingreso</span>'
       : '<span class="badge badge-danger badge-no-dot">Egreso</span>';
@@ -296,8 +300,8 @@ function refreshEfectivoTable() {
                     ? `<button class="btn btn-ghost btn-icon btn-ver-proy-efec" data-proy="${m.proyecto_id}" title="Ver en el proyecto (se gestiona ahí)">🏗️→</button>`
                     : m._source === 'empresa'
                     ? `<span class="text-dim" style="font-size:11px" title="Egreso de empresa pagado en efectivo · se gestiona en Caja SOGRUB / Buzón">🔒 empresa</span>`
-                    : m.tipo === 'retiro'
-                      ? `<span class="text-dim" style="font-size:11px" title="Los retiros se gestionan borrando la fila (baja también de Mifel)">🔗 ligado</span>
+                    : _esTraspaso(m)
+                      ? `<span class="text-dim" style="font-size:11px" title="Los traspasos se gestionan borrando la fila (ajusta también Mifel)">🔗 ligado</span>
                          <button class="btn btn-ghost btn-icon btn-del-efec" data-id="${m.id}" title="Eliminar">🗑️</button>`
                       : `<button class="btn btn-ghost btn-icon btn-edit-efec" data-id="${m.id}" title="Editar">✏️</button>
                          <button class="btn btn-ghost btn-icon btn-del-efec" data-id="${m.id}" title="Eliminar">🗑️</button>`}
@@ -449,21 +453,71 @@ function abrirModalRetiroEfectivo() {
   });
 }
 
+// Ingreso de efectivo a Mifel (inverso del retiro): baja el efectivo y sube Mifel.
+function abrirModalIngresoMifel() {
+  const body = document.createElement('div');
+  body.style.cssText = 'display:flex;flex-direction:column;gap:14px';
+  body.innerHTML = `
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label" for="ing-fecha">Fecha</label>
+        <input type="date" id="ing-fecha" class="form-input" value="${todayISO()}">
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="ing-monto">Monto ($)</label>
+        <input type="number" id="ing-monto" class="form-input" placeholder="0.00" min="0.01" step="0.01">
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="ing-concepto">Concepto</label>
+      <input type="text" id="ing-concepto" class="form-input" value="Ingreso de efectivo a Mifel">
+    </div>
+    <p class="text-muted text-sm">
+      Baja el saldo de efectivo (egreso) y sube Mifel (ingreso electrónico) en un solo paso.
+    </p>
+  `;
+
+  openModal({
+    title: '⇄ Ingreso de efectivo a Mifel',
+    body,
+    confirmText: 'Depositar',
+    onConfirm: () => {
+      const fecha    = body.querySelector('#ing-fecha').value;
+      const monto    = parseFloat(body.querySelector('#ing-monto').value);
+      const concepto = body.querySelector('#ing-concepto').value.trim();
+
+      const valid = validateFields([
+        { el: body.querySelector('#ing-fecha'), msg: 'Selecciona una fecha' },
+        { el: body.querySelector('#ing-monto'), msg: 'Ingresa un monto mayor a 0' },
+      ]);
+      if (!valid) return;
+
+      const saldoEfec = calcSaldoEfectivo();
+      if (monto > saldoEfec && !confirm(`El monto ($${monto.toLocaleString('es-MX',{minimumFractionDigits:2})}) supera el saldo en efectivo ($${saldoEfec.toLocaleString('es-MX',{minimumFractionDigits:2})}). ¿Continuar de todas formas?`)) return;
+
+      ejecutarIngresoMifel(monto, concepto, fecha);
+      showToast('Ingreso registrado (efectivo → Mifel)', 'success');
+      closeModal();
+      _refreshEfectivoTodo();
+    },
+  });
+}
+
 // =====================================================
 // ELIMINAR MOVIMIENTO EN EFECTIVO
 // (si es un retiro ligado, borra también la contraparte en Mifel)
 // =====================================================
 function confirmarEliminarEfectivo(id) {
   const mov = getItem(KEYS.EFECTIVO_MOV, id);
-  const esRetiro = mov?.tipo === 'retiro' && mov?.retiro_ref;
+  const esTraspaso = (mov?.tipo === 'retiro' || mov?.tipo === 'ingreso_mifel') && mov?.retiro_ref;
   openConfirmModal({
     title:   'Eliminar movimiento',
-    message: esRetiro
-      ? `¿Eliminar este retiro? Se borrará también el egreso correspondiente en Mifel.`
+    message: esTraspaso
+      ? `¿Eliminar este traspaso? Se borrará también el movimiento correspondiente en Mifel.`
       : `¿Eliminar "${mov?.concepto ?? 'este movimiento'}"? Esta acción no se puede deshacer.`,
     confirmText: 'Eliminar',
     onConfirm: () => {
-      if (esRetiro) {
+      if (esTraspaso) {
         // Borrar la contraparte en Mifel con el mismo retiro_ref
         const mifelMov = (getCollection(KEYS.MOVIMIENTOS) ?? []).find(m => m.retiro_ref === mov.retiro_ref);
         if (mifelMov) deleteItem(KEYS.MOVIMIENTOS, mifelMov.id);

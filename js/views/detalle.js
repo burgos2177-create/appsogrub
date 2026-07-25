@@ -107,6 +107,7 @@ function renderDetalle(proyectoId) {
 // =====================================================
 function renderDetalleKPIs(proyectoId, proyecto) {
   const saldoCaja        = calcSaldoCajaProyecto(proyectoId);
+  const saldoDesg        = calcSaldoCajaProyectoDesglose(proyectoId);
   const totalCobrado     = calcTotalCobradoCliente(proyectoId);
   const ivaCobrado       = calcIVACobradoCliente(proyectoId);
   const totalGastado     = calcTotalGastadoPagado(proyectoId);
@@ -126,7 +127,20 @@ function renderDetalleKPIs(proyectoId, proyecto) {
   grid.className = 'detalle-kpi-grid mb-24';
   grid.id = 'detalle-kpi-grid';
   grid.innerHTML = `
-    ${detalleKPI('💰', 'Saldo en caja',       formatMXN(saldoCaja),     saldoCaja >= 0 ? 'text-success' : 'text-danger')}
+    <div class="kpi-card">
+      <div class="kpi-label">💰 Saldo en caja</div>
+      <div class="kpi-value ${saldoCaja >= 0 ? 'text-success' : 'text-danger'}" style="font-size:20px">${formatMXN(saldoCaja)}</div>
+      <div class="kpi-sub" style="display:flex;flex-direction:column;gap:3px;margin-top:4px">
+        <div style="display:flex;justify-content:space-between">
+          <span>💳 Electrónico</span>
+          <strong style="font-variant-numeric:tabular-nums">${formatMXN(saldoDesg.electronico)}</strong>
+        </div>
+        <div style="display:flex;justify-content:space-between">
+          <span>💵 Efectivo</span>
+          <strong style="font-variant-numeric:tabular-nums">${formatMXN(saldoDesg.efectivo)}</strong>
+        </div>
+      </div>
+    </div>
     <div class="kpi-card">
       <div class="kpi-label">📥 Total cobrado</div>
       <div class="kpi-value text-success" style="font-size:20px">${formatMXN(totalCobrado)}</div>
