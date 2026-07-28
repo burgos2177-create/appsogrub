@@ -212,6 +212,7 @@ function tipoBadge(tipo, proyectoNombre = '') {
     'transferencia_sogrub':  { cls: 'badge-info',    label: 'De SOGRUB' },
     'deposito_caja_chica':   { cls: 'badge-warning', label: '💰 Depósito caja chica' },
     'retiro_efectivo':       { cls: 'badge-warning', label: '💵 Retiro a efectivo' },
+    'ingreso_efectivo':      { cls: 'badge-info',    label: '⇄ Ingreso de efectivo' },
   };
   const def = map[tipo] ?? { cls: 'badge-muted', label: tipo };
   return `<span class="badge ${def.cls}">${def.label}</span>`;

@@ -223,7 +223,12 @@ function ejecutarRetiroEfectivo(monto, concepto, fecha) {
 //          metodo_pago → cuenta como electrónico en calcSaldoMifel).
 // Ligados por retiro_ref para poder borrarlos juntos.
 // =====================================================
-function ejecutarIngresoMifel(monto, concepto, fecha) {
+// Si se pasa proyectoId, el efectivo era comprometido a esa obra: sigue
+// comprometido, sólo cambia de efectivo a electrónico. Se etiqueta proyecto_id
+// en ambos movimientos; el desglose de la obra (calcSaldoCajaProyectoDesglose)
+// corre ese monto de efectivo → electrónico sin cambiar el total (comprometido
+// y disponible quedan igual; el saldo de Mifel sube y el de efectivo baja).
+function ejecutarIngresoMifel(monto, concepto, fecha, proyectoId = null) {
   const ref = generateId();
   const conceptoFinal = concepto || 'Ingreso de efectivo a Mifel';
 
@@ -233,7 +238,7 @@ function ejecutarIngresoMifel(monto, concepto, fecha) {
     concepto:    conceptoFinal,
     status:      'Pagado',
     tipo:        'ingreso_efectivo',
-    proyecto_id: null,
+    proyecto_id: proyectoId || null,
     retiro_ref:  ref,
   });
 
@@ -243,6 +248,7 @@ function ejecutarIngresoMifel(monto, concepto, fecha) {
     concepto:   conceptoFinal,
     tipo:       'ingreso_mifel',
     origen:     'mifel',
+    proyecto_id: proyectoId || null,
     retiro_ref: ref,
   });
 
@@ -303,7 +309,15 @@ function calcSaldoCajaProyectoDesglose(proyectoId) {
     .filter(m => m.tipo === 'gasto' && m.status === 'Pagado' && !m.paga_de_caja_chica && esEfectivo(m))
     .reduce((acc, m) => acc + Math.abs(m.monto), 0);
 
-  const efectivo = efIn - efOut;
+  // Traspasos efectivo↔Mifel asignados a esta obra (viven en EFECTIVO_MOV).
+  // Ajustan sólo el split, no el total (por eso el electrónico es el residuo):
+  //   ingreso_mifel (monto −): efectivo de la obra pasó a electrónico → efectivo −
+  //   retiro        (monto +): electrónico de la obra pasó a efectivo  → efectivo +
+  const traspasos = (getCollection(KEYS.EFECTIVO_MOV) ?? [])
+    .filter(m => m.proyecto_id === proyectoId && (m.tipo === 'ingreso_mifel' || m.tipo === 'retiro'))
+    .reduce((acc, m) => acc + (Number(m.monto) || 0), 0);
+
+  const efectivo = efIn - efOut + traspasos;
   const total    = calcSaldoCajaProyecto(proyectoId);
   return { total, efectivo, electronico: total - efectivo };
 }

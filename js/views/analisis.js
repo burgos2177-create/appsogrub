@@ -174,7 +174,7 @@ function _aAllMovs() {
     _tieneFactura: !!(m.factura_drive_url || m.factura_xml_url || m.factura_nombre || m.factura_xml_nombre),
     // Transferencias internas y retiros a efectivo son movimientos internos:
     // mueven dinero entre cajas propias, no son ingreso/egreso real.
-    _interno:      m.tipo === 'transferencia_proyecto' || m.tipo === 'retiro_efectivo',
+    _interno:      m.tipo === 'transferencia_proyecto' || m.tipo === 'retiro_efectivo' || m.tipo === 'ingreso_efectivo',
     _abs:          Math.abs(m.monto ?? 0),
   }));
 

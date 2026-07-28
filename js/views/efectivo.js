@@ -790,6 +790,10 @@ function abrirModalRetiroEfectivo() {
 
 // Ingreso de efectivo a Mifel (inverso del retiro): baja el efectivo y sube Mifel.
 function abrirModalIngresoMifel() {
+  const proyectosActivos = (getCollection(KEYS.PROYECTOS) ?? [])
+    .filter(p => p.estado === 'activo')
+    .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+
   const body = document.createElement('div');
   body.style.cssText = 'display:flex;flex-direction:column;gap:14px';
   body.innerHTML = `
@@ -802,6 +806,14 @@ function abrirModalIngresoMifel() {
         <label class="form-label" for="ing-monto">Monto ($)</label>
         <input type="number" id="ing-monto" class="form-input" placeholder="0.00" min="0.01" step="0.01">
       </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="ing-proyecto">¿Es efectivo comprometido a una obra? (opcional)</label>
+      <select id="ing-proyecto" class="form-input">
+        <option value="">No — efectivo general de SOGRUB</option>
+        ${proyectosActivos.map(p => `<option value="${p.id}">${p.nombre}</option>`).join('')}
+      </select>
+      <p class="text-muted text-sm" style="margin-top:4px">Si eliges una obra, esos $ siguen comprometidos a ella: su saldo pasa de efectivo a electrónico sin cambiar el total ni el disponible.</p>
     </div>
     <div class="form-group">
       <label class="form-label" for="ing-concepto">Concepto</label>
@@ -817,9 +829,10 @@ function abrirModalIngresoMifel() {
     body,
     confirmText: 'Depositar',
     onConfirm: () => {
-      const fecha    = body.querySelector('#ing-fecha').value;
-      const monto    = parseFloat(body.querySelector('#ing-monto').value);
-      const concepto = body.querySelector('#ing-concepto').value.trim();
+      const fecha      = body.querySelector('#ing-fecha').value;
+      const monto      = parseFloat(body.querySelector('#ing-monto').value);
+      let   concepto   = body.querySelector('#ing-concepto').value.trim();
+      const proyectoId = body.querySelector('#ing-proyecto').value || null;
 
       const valid = validateFields([
         { el: body.querySelector('#ing-fecha'), msg: 'Selecciona una fecha' },
@@ -830,8 +843,15 @@ function abrirModalIngresoMifel() {
       const saldoEfec = calcSaldoEfectivo();
       if (monto > saldoEfec && !confirm(`El monto ($${monto.toLocaleString('es-MX',{minimumFractionDigits:2})}) supera el saldo en efectivo ($${saldoEfec.toLocaleString('es-MX',{minimumFractionDigits:2})}). ¿Continuar de todas formas?`)) return;
 
-      ejecutarIngresoMifel(monto, concepto, fecha);
-      showToast('Ingreso registrado (efectivo → Mifel)', 'success');
+      if (proyectoId) {
+        const proy = getItem(KEYS.PROYECTOS, proyectoId);
+        const efObra = calcSaldoCajaProyectoDesglose(proyectoId).efectivo;
+        if (monto > efObra + 0.005 && !confirm(`La obra "${proy?.nombre ?? ''}" tiene $${efObra.toLocaleString('es-MX',{minimumFractionDigits:2})} en efectivo. Vas a pasar $${monto.toLocaleString('es-MX',{minimumFractionDigits:2})}: su efectivo quedará en negativo. ¿Continuar?`)) return;
+        if (concepto === 'Ingreso de efectivo a Mifel' && proy?.nombre) concepto = `Ingreso de efectivo a Mifel · ${proy.nombre}`;
+      }
+
+      ejecutarIngresoMifel(monto, concepto, fecha, proyectoId);
+      showToast(proyectoId ? 'Ingreso registrado (efectivo → Mifel, comprometido a la obra)' : 'Ingreso registrado (efectivo → Mifel)', 'success');
       closeModal();
       _refreshEfectivoTodo();
     },
