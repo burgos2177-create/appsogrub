@@ -188,14 +188,17 @@ function _aAllMovs() {
     _abs:          Math.abs(m.monto ?? 0),
   }));
 
-  // Caja de efectivo (movimientos propios). Los retiros son internos (Mifel→efectivo).
+  // Caja de efectivo (movimientos propios). Los traspasos efectivo↔Mifel son
+  // internos (mueven dinero entre cuentas propias, no son ingreso/egreso real):
+  //   retiro       = Mifel → efectivo
+  //   ingreso_mifel = efectivo → Mifel
   const movEfec = _fbArr(getCollection(KEYS.EFECTIVO_MOV)).map(m => ({
     ...m,
     _src:          'efectivo',
     _srcLabel:     'Efectivo',
     _proyNombre:   '',
     _tieneFactura: false,
-    _interno:      m.tipo === 'retiro',
+    _interno:      m.tipo === 'retiro' || m.tipo === 'ingreso_mifel',
     _abs:          Math.abs(m.monto ?? 0),
   }));
 
