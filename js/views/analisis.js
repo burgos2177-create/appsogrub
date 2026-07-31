@@ -172,9 +172,12 @@ function _aAllMovs() {
     _srcLabel:     'Caja SOGRUB',
     _proyNombre:   m.proyecto_id ? (proyMap[m.proyecto_id]?.nombre ?? '') : '',
     _tieneFactura: !!(m.factura_drive_url || m.factura_xml_url || m.factura_nombre || m.factura_xml_nombre),
-    // Transferencias internas y retiros a efectivo son movimientos internos:
-    // mueven dinero entre cajas propias, no son ingreso/egreso real.
-    _interno:      m.tipo === 'transferencia_proyecto' || m.tipo === 'retiro_efectivo' || m.tipo === 'ingreso_efectivo',
+    // Transferencias internas, retiros/ingresos a efectivo y depósitos a caja
+    // chica son movimientos internos: mueven dinero entre cajas/fondos propios,
+    // no son ingreso/egreso real. El gasto real de caja chica se cuenta aparte
+    // (tipo='gasto' al aprobar el ticket); contar también el depósito duplica.
+    _interno:      m.tipo === 'transferencia_proyecto' || m.tipo === 'retiro_efectivo'
+                || m.tipo === 'ingreso_efectivo' || m.tipo === 'deposito_caja_chica',
     _abs:          Math.abs(m.monto ?? 0),
   }));
 
@@ -198,7 +201,7 @@ function _aAllMovs() {
     _srcLabel:     'Efectivo',
     _proyNombre:   '',
     _tieneFactura: false,
-    _interno:      m.tipo === 'retiro' || m.tipo === 'ingreso_mifel',
+    _interno:      m.tipo === 'retiro' || m.tipo === 'ingreso_mifel' || m.tipo === 'deposito_caja_chica',
     _abs:          Math.abs(m.monto ?? 0),
   }));
 
