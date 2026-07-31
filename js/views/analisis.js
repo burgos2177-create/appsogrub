@@ -1335,7 +1335,7 @@ function _aCategorias(movs) {
   } else {
     const provData = {};
     provRows.forEach(([p,d])=>{ provData[p]=d.total; });
-    provCard.innerHTML += renderBarChart(provData);
+    provCard.innerHTML += renderBarChart(provData, { collapseAfter: 15 });
   }
   wrap.appendChild(provCard);
 

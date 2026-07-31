@@ -258,7 +258,8 @@ function categoriaBadge(cat) {
 // HORIZONTAL BAR CHART (CSS-based)
 // data = { label: value, ... }
 // =====================================================
-function renderBarChart(data, { colorVar = '--accent', title = '' } = {}) {
+let _barChartSeq = 0;
+function renderBarChart(data, { colorVar = '--accent', title = '', collapseAfter = null } = {}) {
   const entries = Object.entries(data).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
   if (entries.length === 0) return '<p class="text-muted text-sm" style="padding:8px 0">Sin datos.</p>';
 
@@ -267,24 +268,36 @@ function renderBarChart(data, { colorVar = '--accent', title = '' } = {}) {
 
   const colors = ['#1a9fd4', '#4caf82', '#e0a752', '#e05252', '#9b59b6', '#3498db', '#e67e22', '#1abc9c'];
 
-  return `
-    ${title ? `<div class="chart-title">${title}</div>` : ''}
-    <div class="bar-chart">
-      ${entries.map(([label, val], i) => {
-        const pct = max > 0 ? (val / max) * 100 : 0;
-        const pctTotal = total > 0 ? ((val / total) * 100).toFixed(1) : '0';
-        const color = colors[i % colors.length];
-        return `
+  const rowHTML = ([label, val], i) => {
+    const pct = max > 0 ? (val / max) * 100 : 0;
+    const pctTotal = total > 0 ? ((val / total) * 100).toFixed(1) : '0';
+    const color = colors[i % colors.length];
+    return `
           <div class="bar-chart-row">
             <span class="bar-chart-label">${label}</span>
             <div class="bar-chart-track">
               <div class="bar-chart-fill" style="width:${pct}%;background:${color}"></div>
             </div>
             <span class="bar-chart-value">${formatMXN(val)} <span class="text-dim">(${pctTotal}%)</span></span>
-          </div>
-        `;
-      }).join('')}
+          </div>`;
+  };
+
+  // ¿Colapsar? Muestra las primeras N filas y esconde el resto tras "Ver más".
+  const limite = Number.isInteger(collapseAfter) && collapseAfter > 0 ? collapseAfter : null;
+  const colapsa = limite && entries.length > limite;
+  const visibles = colapsa ? entries.slice(0, limite) : entries;
+  const ocultas  = colapsa ? entries.slice(limite) : [];
+  const uid = 'bc' + (++_barChartSeq);
+  const restantes = ocultas.length;
+
+  return `
+    ${title ? `<div class="chart-title">${title}</div>` : ''}
+    <div class="bar-chart">
+      ${visibles.map(rowHTML).join('')}
+      ${colapsa ? `<div class="bar-chart" id="${uid}-more" style="display:none;margin:0">${ocultas.map((e, i) => rowHTML(e, i + limite)).join('')}</div>` : ''}
     </div>
+    ${colapsa ? `<button type="button" id="${uid}-btn" class="btn btn-ghost btn-sm" style="margin-top:10px"
+        onclick="(function(){var m=document.getElementById('${uid}-more'),b=document.getElementById('${uid}-btn'),abierto=m.style.display!=='none';m.style.display=abierto?'none':'flex';b.textContent=abierto?'Ver más (${restantes})':'Ver menos';})()">Ver más (${restantes})</button>` : ''}
   `;
 }
 

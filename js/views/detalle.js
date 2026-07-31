@@ -435,7 +435,7 @@ function refreshDetalleCharts(proyectoId) {
       </div>
       <div class="card">
         <h3 class="section-title" style="margin-bottom:12px">Gasto por Proveedor</h3>
-        ${renderBarChart(porProveedor, { title: '' })}
+        ${renderBarChart(porProveedor, { title: '', collapseAfter: 15 })}
       </div>
     </div>
   `;
