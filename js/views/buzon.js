@@ -178,8 +178,11 @@ async function _reconciliarBuzon() {
 function _actualizarBadgeBuzon() {
   const badge = document.getElementById('buzon-badge');
   if (!badge) return;
+  // Sólo cuenta trabajo realmente pendiente de aprobar y visible:
+  //  · excluye los items ocultos (requisiciones placeholder en $0 sin folio),
+  //  · excluye huérfanos (no son "pendiente de aprobar"; tienen su propia pestaña).
   const n = Object.values(_buzon.items).filter(i =>
-    ['recibido', 'pendiente', 'en_revision', 'huerfano'].includes(i?.estado)
+    !_esItemOculto(i) && ['recibido', 'pendiente', 'en_revision'].includes(i?.estado)
   ).length;
   badge.style.display = n > 0 ? '' : 'none';
   badge.textContent = n;
