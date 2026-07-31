@@ -461,10 +461,13 @@ function _aCalcRunning(allMovs) {
       }
     }
 
-    // ── Comprometido (saldos positivos de proyectos activos) ──
+    // ── Comprometido (saldo NETO de proyectos activos, incl. negativos) ──
+    // Los saldos negativos también son dinero comprometido con la obra, así el
+    // "libre" no se altera por nóminas/gastos comprometidos (Mifel baja y
+    // comprometido baja igual). Coherente con calcDineroComprometido.
     let comprometido = 0;
     for (const [id, bal] of Object.entries(projCash)) {
-      if (activeSet.has(id) && bal > 0) comprometido += bal;
+      if (activeSet.has(id)) comprometido += bal;
     }
 
     m._runSaldoMifel    = saldoMifel;

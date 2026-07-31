@@ -330,10 +330,13 @@ function calcDineroComprometido() {
   const proyectos = (getCollection(KEYS.PROYECTOS) ?? [])
     .filter(p => p.estado === 'activo');
 
-  return proyectos.reduce((acc, p) => {
-    const saldo = calcSaldoCajaProyecto(p.id);
-    return acc + (saldo > 0 ? saldo : 0);
-  }, 0);
+  // Se suma el saldo NETO de cada obra, incluyendo los negativos. Un saldo
+  // negativo (la obra gastó/nominó más de lo que se le ha fondeado) sigue siendo
+  // dinero comprometido con esa obra —no un gasto libre de SOGRUB—, así que
+  // debe restar de "comprometido" para que el "libre de compromisos" NO se altere:
+  // Mifel baja por la nómina y comprometido baja igual → el libre queda estable.
+  // (Antes se pisaba a 0 el negativo, y por eso el libre absorbía esas nóminas.)
+  return proyectos.reduce((acc, p) => acc + calcSaldoCajaProyecto(p.id), 0);
 }
 
 // =====================================================
