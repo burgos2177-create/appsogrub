@@ -50,6 +50,7 @@ function renderDetalle(proyectoId) {
   subNav.className = 'detalle-sub-nav';
   subNav.innerHTML = `
     <button class="detalle-sub-tab${_detalleState.activeTab === 'movimientos' ? ' active' : ''}" data-tab="movimientos">Movimientos</button>
+    <button class="detalle-sub-tab${_detalleState.activeTab === 'analisis' ? ' active' : ''}" data-tab="analisis">📊 Análisis</button>
     <button class="detalle-sub-tab${_detalleState.activeTab === 'presupuesto' ? ' active' : ''}" data-tab="presupuesto">Presupuesto OPUS</button>
     <button class="detalle-sub-tab${_detalleState.activeTab === 'caja_chica' ? ' active' : ''}" data-tab="caja_chica">💰 Caja chica</button>
   `;
@@ -65,6 +66,11 @@ function renderDetalle(proyectoId) {
     if (_detalleState.activeTab === 'caja_chica' && tab !== 'caja_chica' &&
         typeof _detenerCajaChica === 'function') {
       _detenerCajaChica(proyectoId);
+    }
+    // Liberar instancias de Chart.js del tab de análisis al salir
+    if (_detalleState.activeTab === 'analisis' && tab !== 'analisis' &&
+        typeof destroyAnalisisObraCharts === 'function') {
+      destroyAnalisisObraCharts();
     }
     _detalleState.activeTab = tab;
     subNav.querySelectorAll('.detalle-sub-tab').forEach(b =>
@@ -82,6 +88,11 @@ function renderDetalle(proyectoId) {
       tableWrap.id = 'detalle-table-wrap';
       contentArea.appendChild(tableWrap);
       refreshDetalleTable(proyectoId);
+    } else if (tab === 'analisis') {
+      const aoWrap = document.createElement('div');
+      aoWrap.id = 'analisis-obra-tab-wrap';
+      contentArea.appendChild(aoWrap);
+      renderAnalisisObraTab(proyectoId);
     } else if (tab === 'presupuesto') {
       const presWrap = document.createElement('div');
       presWrap.id = 'presupuesto-tab-wrap';
