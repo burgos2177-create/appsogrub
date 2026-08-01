@@ -26,14 +26,30 @@ function renderDashboard() {
   // ---- KPI Cards ----
   const saldoMifel      = calcSaldoMifel();
   const saldoGlobal     = calcSaldoGlobal();
+  const saldoEfectivo   = calcSaldoEfectivo();
+  const totalFondos     = (getConfig().fondos_inversion ?? []).reduce((a, f) => a + (f.monto ?? 0), 0);
   const comprometido    = calcDineroComprometido();
   const disponibleReal  = calcDisponibleReal();
+
+  const _globalRow = (etiqueta, valor) => `
+    <div style="display:flex;justify-content:space-between">
+      <span>${etiqueta}</span>
+      <strong style="font-variant-numeric:tabular-nums">${formatMXN(valor)}</strong>
+    </div>`;
 
   const kpiGrid = document.createElement('div');
   kpiGrid.className = 'kpi-grid';
   kpiGrid.innerHTML = `
     ${kpiCard('💳', 'Saldo Mifel',               saldoMifel,     'Cuenta principal SOGRUB')}
-    ${kpiCard('🌐', 'Saldo Global',               saldoGlobal,    'Mifel + fondos + efectivo')}
+    <div class="kpi-card">
+      <div class="kpi-label">🌐 Saldo Global</div>
+      <div class="kpi-value ${saldoGlobal >= 0 ? 'text-success' : 'text-danger'}">${formatMXN(saldoGlobal)}</div>
+      <div class="kpi-sub" style="display:flex;flex-direction:column;gap:3px;margin-top:4px">
+        ${_globalRow('💳 Mifel', saldoMifel)}
+        ${_globalRow('💵 Efectivo', saldoEfectivo)}
+        ${_globalRow('🏦 Fondos', totalFondos)}
+      </div>
+    </div>
     <div class="kpi-card">
       <div class="kpi-label">🔒 Comprometido en proyectos</div>
       <div class="kpi-value text-warning">${formatMXN(comprometido)}</div>
