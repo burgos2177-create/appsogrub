@@ -28,6 +28,7 @@ bitácora), no de Mifel.
 | Retiro Mifel → efectivo (bitácora) | ↓ | ↑ | — | — |
 | **Depósito al fondo efectivo** | — | ↓ | ↓ | ↑ |
 | **Gasto pagado del fondo efectivo** | — | — | — | ↓ |
+| **Devolución del fondo → SOGRUB** | — | ↑ | ↑ | ↓ |
 
 El dinero baja **una sola vez** (al depositar). El gasto aprobado genera el
 contable (`paga_de_caja_chica:true`, `fondo_caja:'efectivo'`, status Pagado,
@@ -91,6 +92,37 @@ proyecto, y sella `estado:'aprobado'` + `asentadoAt`/`asentadoBancarioId`/
 `folioBancario` en el espejo. El depósito solicitado desde campo NO cuenta al
 saldo hasta ese `estado:'aprobado'`; los depósitos hechos por el contador
 desde bitácora nacen aprobados y cuentan de inmediato.
+
+### 2-bis. Devolución de efectivo al fondo de SOGRUB (2026-08-02)
+
+El almacenista entrega el efectivo que custodia (típicamente para deshacerse de
+monedas y cambio) y se le repone con billetes nuevos. Lo registra el contador
+desde bitácora (tab Caja chica → fondo efectivo → **⇄ Cambio / devolución**);
+las apps de campo solo necesitan **leerlo bien**.
+
+```js
+// /shared/cajaChica/{obraId}/movimientos/{movId}
+{ tipo:'gasto', estado:'aprobado', fondo:'efectivo', esDevolucion:true,
+  monto, fecha, comentario, autor, origen:'bitacora', createdAt,
+  asentadoAt, asentadoBancarioId, asentadoProyectoMovId, folioBancario }
+```
+
+⚠ **Va como `tipo:'gasto'` a propósito.** La fórmula de saldo de arriba solo
+entiende `deposito` y `gasto`; un tipo nuevo quedaría invisible y el saldo de
+cada app derivaría. Como gasto aprobado resta correctamente **sin cambiar una
+línea** en materiales, indirectos ni consola.
+
+Lo único que conviene portar (opcional, cosmético): si `esDevolucion === true`,
+mostrarlo como traspaso (⇄ Devolución) y **no sumarlo al total gastado** — no es
+un costo, es billete que regresó a la caja de SOGRUB. El saldo ya sale bien sin
+hacer nada.
+
+Del lado bitácora genera folio **CC**, un ingreso a la caja física
+(`sogrub_efectivo_movimientos`, `tipo:'devolucion_caja_chica'`, monto positivo)
+y un ingreso espejo en `sogrub_proy_movimientos` con el mismo tipo, que devuelve
+el monto a la caja del proyecto. **Es el inverso exacto del depósito**: una
+devolución y un depósito del mismo monto se cancelan en todas las cajas — eso es
+un "cambio de billetes" y deja los dos arqueos cuadrados.
 
 ### 3. `gasto_oc` pagado con caja chica (materiales)
 

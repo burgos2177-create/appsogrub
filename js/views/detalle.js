@@ -508,6 +508,7 @@ function refreshDetalleTable(proyectoId) {
       <option value="abono_cliente">Abonos cliente</option>
       <option value="transferencia_sogrub">De SOGRUB</option>
       <option value="deposito_caja_chica">Depósito caja chica</option>
+      <option value="devolucion_caja_chica">Devolución caja chica</option>
     </select>
     <select class="filter-select" id="dt-filter-categoria">
       <option value="Todas">Todas las categorías</option>

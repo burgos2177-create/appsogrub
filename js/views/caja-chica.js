@@ -139,6 +139,10 @@ function _renderCajaChicaContenido(proyectoId, proyecto) {
       ${_kpiCajaChica('Reportado pendiente', formatMXN(sums.totalReportadoPendiente),
         `${sums.countReportados} esperan aprobación`,
         sums.totalReportadoPendiente > 0 ? 'var(--accent)' : null)}
+      ${sums.totalDevuelto > 0
+        ? _kpiCajaChica('Devuelto a SOGRUB', formatMXN(sums.totalDevuelto),
+            `${sums.countDevoluciones} devoluciones · no es gasto`)
+        : ''}
       ${sums.totalRechazado > 0
         ? _kpiCajaChica('Rechazado', formatMXN(sums.totalRechazado), `${sums.countRechazados} rechazados`)
         : ''}
@@ -194,6 +198,7 @@ function _renderCajaChicaContenido(proyectoId, proyecto) {
       <h3 style="margin:0">Caja chica · ${proyecto.nombre}</h3>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn btn-primary" id="cc-btn-depositar">＋ Depositar${esEfectivo ? ' efectivo' : ''}</button>
+        ${esEfectivo ? `<button class="btn btn-secondary" id="cc-btn-cambio" title="Recoger el efectivo del fondo y reponerlo con otros billetes">⇄ Cambio / devolución</button>` : ''}
         <button class="btn btn-secondary btn-sm" id="cc-btn-umbral">⚙ Umbral de alerta</button>
       </div>
     </div>
@@ -218,6 +223,8 @@ function _renderCajaChicaContenido(proyectoId, proyecto) {
   root.querySelector('#cc-btn-depositar').addEventListener('click', () => esEfectivo
     ? _abrirModalDepositarCCEfectivo(obraId, proyecto.nombre, proyectoId, proyecto)
     : _abrirModalDepositarCC(obraId, proyecto.nombre, proyectoId, proyecto));
+  root.querySelector('#cc-btn-cambio')?.addEventListener('click', () =>
+    _abrirModalCambioCCEfectivo(obraId, proyecto.nombre, sums.saldo));
   root.querySelector('#cc-btn-umbral').addEventListener('click', () =>
     _abrirModalUmbralCC(obraId, umbral, proyectoId, proyecto));
 
@@ -256,16 +263,24 @@ function _kpiCajaChica(label, value, sub, color) {
 
 function _filaMovimientoCC(obraId, movId, m) {
   const isDeposito = m.tipo === 'deposito';
-  const isReportado = m.tipo === 'gasto' && m.estado === 'reportado';
-  const isAprobado = m.tipo === 'gasto' && m.estado === 'aprobado';
-  const isRechazado = m.tipo === 'gasto' && m.estado === 'rechazado';
+  // Devolución de efectivo a SOGRUB: viaja como gasto aprobado (para que la
+  // fórmula de saldo de las apps de campo la reste sin cambios), pero no es un
+  // costo — es un traspaso, y se muestra como tal.
+  const esDevolucion = !!m.esDevolucion;
+  const isReportado = m.tipo === 'gasto' && m.estado === 'reportado' && !esDevolucion;
+  const isAprobado = m.tipo === 'gasto' && m.estado === 'aprobado' && !esDevolucion;
+  const isRechazado = m.tipo === 'gasto' && m.estado === 'rechazado' && !esDevolucion;
 
-  const tipoCell = isDeposito
+  const tipoCell = esDevolucion
+    ? `<span class="badge badge-info">⇄ Devolución</span>`
+    : isDeposito
     ? `<span class="badge badge-success">⬆ Depósito</span>`
     : `<span class="badge badge-danger">⬇ Gasto</span>`;
 
   const sufAsentado = m.asentadoAt ? ' · asentada' : (m.pendienteAsentar ? ' · pendiente asentar' : '');
-  const estadoCell = isDeposito
+  const estadoCell = esDevolucion
+    ? `<span class="badge badge-info" title="El efectivo regresó a la caja física de SOGRUB y la caja del proyecto recuperó el monto">💵 → SOGRUB${sufAsentado}</span>`
+    : isDeposito
     ? (_fondoDeMovCC(m) === 'efectivo'
         ? `<span class="badge badge-warning">💵 Fondo efectivo${sufAsentado}</span>`
         : m.metodoDeposito === 'efectivo'
@@ -276,8 +291,8 @@ function _filaMovimientoCC(obraId, movId, m) {
     : isRechazado ? `<span class="badge badge-danger">✕ Rechazado</span>`
     : `<span class="text-muted">${m.estado || '—'}</span>`;
 
-  const montoColor = isDeposito ? 'amount-positive' : (isAprobado ? 'amount-negative' : 'text-muted');
-  const montoSign = isDeposito ? '+' : (isAprobado ? '−' : '');
+  const montoColor = isDeposito ? 'amount-positive' : (isAprobado || esDevolucion ? 'amount-negative' : 'text-muted');
+  const montoSign = isDeposito ? '+' : (isAprobado || esDevolucion ? '−' : '');
   const fecha = m.fecha ? new Date(m.fecha).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
 
   // Comentario y ref a recepción (si aplica)
@@ -332,6 +347,7 @@ function _filaMovimientoCC(obraId, movId, m) {
 function _computeSaldoCajaChica(movimientos, fondo = 'transferencia') {
   let saldo = 0, totalDepositadoTransfer = 0, totalDepositadoEfectivo = 0;
   let totalGastadoAprobado = 0, totalReportadoPendiente = 0, totalRechazado = 0;
+  let totalDevuelto = 0, countDevoluciones = 0;
   let countDepositosTransfer = 0, countDepositosEfectivo = 0;
   let countAprobados = 0, countReportados = 0, countRechazados = 0;
   for (const m of Object.values(movimientos || {})) {
@@ -352,7 +368,14 @@ function _computeSaldoCajaChica(movimientos, fondo = 'transferencia') {
         totalReportadoPendiente += monto; countReportados++;
       }
     } else if (m.tipo === 'gasto') {
-      if (m.estado === 'aprobado') { saldo -= monto; totalGastadoAprobado += monto; countAprobados++; }
+      if (m.estado === 'aprobado') {
+        saldo -= monto;
+        // Las devoluciones de efectivo a SOGRUB viajan como gasto aprobado
+        // (así restan del saldo en las 4 apps sin cambiar su fórmula), pero
+        // no son un costo: se contabilizan aparte para no inflar "gastado".
+        if (m.esDevolucion) { totalDevuelto += monto; countDevoluciones++; }
+        else { totalGastadoAprobado += monto; countAprobados++; }
+      }
       else if (m.estado === 'reportado') { totalReportadoPendiente += monto; countReportados++; }
       else if (m.estado === 'rechazado') { totalRechazado += monto; countRechazados++; }
     }
@@ -362,6 +385,7 @@ function _computeSaldoCajaChica(movimientos, fondo = 'transferencia') {
     totalDepositadoTransfer, totalDepositadoEfectivo,
     totalDepositado: totalDepositadoTransfer + totalDepositadoEfectivo,
     totalGastadoAprobado, totalReportadoPendiente, totalRechazado,
+    totalDevuelto, countDevoluciones,
     countDepositosTransfer, countDepositosEfectivo,
     countDepositos: countDepositosTransfer + countDepositosEfectivo,
     countAprobados, countReportados, countRechazados
@@ -499,6 +523,143 @@ function _abrirModalDepositarCCEfectivo(obraId, obraNombre, proyectoId, proyecto
         closeModal();
         showToast(`Depositado ${formatMXN(monto)} al fondo efectivo · ${res.folio}`, 'success');
       } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+      }
+    }
+  });
+}
+
+// Cambio de billetes / devolución del FONDO EFECTIVO.
+// El almacenista entrega el efectivo que trae (típicamente monedas y cambio
+// acumulado) y se le repone con billetes nuevos. Son dos operaciones inversas
+// que se pueden usar juntas o por separado:
+//   Entrego → devolución: caja física SOGRUB ↑, caja proyecto ↑, fondo ↓
+//   Recibo  → depósito:   caja física SOGRUB ↓, caja proyecto ↓, fondo ↑
+// A la par (mismo monto) el neto es cero en todas las cajas: solo cambian los
+// billetes físicos, y tanto el arqueo de SOGRUB como el del fondo cuadran.
+function _abrirModalCambioCCEfectivo(obraId, obraNombre, saldoActual) {
+  const saldoCajaFisica = (typeof calcSaldoEfectivo === 'function') ? calcSaldoEfectivo() : null;
+  const saldoDefault = saldoActual > 0 ? saldoActual.toFixed(2) : '';
+
+  const body = document.createElement('div');
+  body.style.cssText = 'display:flex;flex-direction:column;gap:14px';
+  body.innerHTML = `
+    <p class="text-muted text-sm" style="margin:0;line-height:1.5">
+      Saldo actual del fondo: <b style="color:var(--text)">${formatMXN(saldoActual)}</b>.
+      Deja un campo en blanco si solo quieres hacer una de las dos operaciones.
+    </p>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label" for="cce-cambio-entrego">⬅ Entrego a SOGRUB ($)</label>
+        <input type="number" id="cce-cambio-entrego" class="form-input" placeholder="0.00" min="0" step="0.01"
+          value="${saldoDefault}" autofocus>
+        <span class="text-dim" style="font-size:11px">Efectivo que devuelve la obra (regresa al arqueo de SOGRUB).</span>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="cce-cambio-recibo">➡ Recibo de SOGRUB ($)</label>
+        <input type="number" id="cce-cambio-recibo" class="form-input" placeholder="0.00" min="0" step="0.01"
+          value="${saldoDefault}">
+        <span class="text-dim" style="font-size:11px">Billetes nuevos que se entregan al fondo.</span>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label" for="cce-cambio-fecha">Fecha</label>
+        <input type="date" id="cce-cambio-fecha" class="form-input" value="${todayISO()}">
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="cce-cambio-comentario">Comentario <span class="text-dim">(opcional)</span></label>
+        <input type="text" id="cce-cambio-comentario" class="form-input" placeholder="p.ej. cambio de monedas por billetes">
+      </div>
+    </div>
+    <div id="cce-cambio-preview" style="padding:12px 14px;background:var(--surface2);border-radius:var(--radius);font-size:13px;line-height:1.7"></div>
+  `;
+
+  const _num = (sel) => {
+    const v = parseFloat(body.querySelector(sel)?.value);
+    return isNaN(v) || v < 0 ? 0 : v;
+  };
+
+  const _refrescarPreview = () => {
+    const entrego = _num('#cce-cambio-entrego');
+    const recibo  = _num('#cce-cambio-recibo');
+    const prev    = body.querySelector('#cce-cambio-preview');
+    if (!prev) return;
+
+    if (entrego === 0 && recibo === 0) {
+      prev.innerHTML = '<span class="text-muted">Captura al menos un monto.</span>';
+      return;
+    }
+
+    const saldoFinal = saldoActual - entrego + recibo;
+    const netoSogrub = entrego - recibo;   // + entra a la caja física, − sale
+    const fila = (etiqueta, valor, color) => `
+      <div style="display:flex;justify-content:space-between;gap:16px">
+        <span class="text-muted">${etiqueta}</span>
+        <strong style="font-variant-numeric:tabular-nums${color ? `;color:${color}` : ''}">${valor}</strong>
+      </div>`;
+
+    const alerta = entrego > saldoActual + 0.001
+      ? `<div style="margin-top:8px;color:var(--warning)">⚠ Estás devolviendo más de lo que registra el fondo (${formatMXN(saldoActual)}). El saldo quedará negativo — revisa si faltan gastos por reportar.</div>`
+      : '';
+
+    prev.innerHTML = `
+      ${fila('Saldo del fondo después', formatMXN(saldoFinal), saldoFinal < 0 ? 'var(--danger)' : null)}
+      ${fila('Efecto en la caja física de SOGRUB',
+             `${netoSogrub >= 0 ? '+' : '−'}${formatMXN(Math.abs(netoSogrub))}`,
+             netoSogrub === 0 ? 'var(--text-muted)' : (netoSogrub > 0 ? 'var(--success)' : 'var(--danger)'))}
+      ${saldoCajaFisica != null ? fila('Caja física de SOGRUB después', formatMXN(saldoCajaFisica + netoSogrub)) : ''}
+      ${netoSogrub === 0 && entrego > 0
+        ? '<div style="margin-top:8px;color:var(--success)">✔ Cambio a la par: ningún saldo se mueve, solo cambian los billetes. El arqueo sigue cuadrando.</div>'
+        : ''}
+      ${alerta}
+    `;
+  };
+
+  setTimeout(() => {
+    ['#cce-cambio-entrego', '#cce-cambio-recibo'].forEach(sel =>
+      body.querySelector(sel)?.addEventListener('input', _refrescarPreview));
+    _refrescarPreview();
+  }, 0);
+
+  openModal({
+    title: `⇄ Cambio / devolución de efectivo · ${obraNombre}`,
+    body,
+    confirmText: 'Registrar',
+    onConfirm: async () => {
+      const entrego = _num('#cce-cambio-entrego');
+      const recibo  = _num('#cce-cambio-recibo');
+      const fecha   = body.querySelector('#cce-cambio-fecha').value;
+      const comentario = body.querySelector('#cce-cambio-comentario').value.trim();
+
+      if (entrego === 0 && recibo === 0) {
+        showToast('Captura cuánto entrega la obra o cuánto recibe.', 'warning');
+        return;
+      }
+      if (!fecha) { showToast('Selecciona una fecha', 'warning'); return; }
+
+      const notas = [];
+      try {
+        // Primero la devolución: el billete entra a la caja de SOGRUB antes de
+        // volver a salir, para que el arqueo nunca quede momentáneamente corto.
+        if (entrego > 0) {
+          const res = await _devolverCajaChicaEfectivoDesdeBitacora({
+            obraId, obraNombre, monto: entrego, fecha,
+            comentario: comentario || (recibo > 0 ? 'Cambio de efectivo · entrega del fondo' : 'Devolución de efectivo a SOGRUB')
+          });
+          notas.push(`devuelto ${formatMXN(entrego)} · ${res.folio}`);
+        }
+        if (recibo > 0) {
+          const res = await _depositarCajaChicaDesdeBitacora({
+            obraId, obraNombre, monto: recibo, fecha, fondo: 'efectivo',
+            comentario: comentario || (entrego > 0 ? 'Cambio de efectivo · reposición del fondo' : 'Depósito al fondo efectivo')
+          });
+          notas.push(`repuesto ${formatMXN(recibo)} · ${res.folio}`);
+        }
+        closeModal();
+        showToast(notas.join(' · '), 'success');
+      } catch (err) {
+        console.error('[CajaChica cambio]', err);
         showToast('Error: ' + err.message, 'error');
       }
     }

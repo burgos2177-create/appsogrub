@@ -211,6 +211,7 @@ function tipoBadge(tipo, proyectoNombre = '') {
     'abono_cliente':         { cls: 'badge-success', label: 'Abono cliente' },
     'transferencia_sogrub':  { cls: 'badge-info',    label: 'De SOGRUB' },
     'deposito_caja_chica':   { cls: 'badge-warning', label: '💰 Depósito caja chica' },
+    'devolucion_caja_chica': { cls: 'badge-info',    label: '⇄ Devolución caja chica' },
     'retiro_efectivo':       { cls: 'badge-warning', label: '💵 Retiro a efectivo' },
     'ingreso_efectivo':      { cls: 'badge-info',    label: '⇄ Ingreso de efectivo' },
   };

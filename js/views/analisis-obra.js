@@ -125,6 +125,10 @@ function _aoSeries(proyectoId, gran) {
       }
     } else if (m.tipo === 'deposito_caja_chica' && m.status === 'Pagado') {
       s.deltaSaldo[i] -= abs;
+    } else if (m.tipo === 'devolucion_caja_chica' && m.status === 'Pagado') {
+      // El fondo de efectivo devolvió billete a SOGRUB: la caja del proyecto
+      // recupera el monto (inverso del depósito).
+      s.deltaSaldo[i] += abs;
     }
   }
 

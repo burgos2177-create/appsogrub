@@ -2797,6 +2797,94 @@ async function _depositarCajaChicaDesdeBitacora({ obraId, obraNombre, monto, fec
   return { movCajaChicaId, mifelMovId: null, folio: null };
 }
 
+// Devolución del FONDO EFECTIVO → caja física de SOGRUB. Es el inverso exacto
+// del depósito: el billete que custodiaba la obra regresa al arqueo de SOGRUB
+// y la caja del proyecto recupera el monto.
+//
+//   caja física SOGRUB ↑ · caja del proyecto ↑ · fondo efectivo de la obra ↓
+//
+// Uso típico: el almacenista entrega el fondo (monedas/cambio acumulado) y se
+// le repone con billetes nuevos. Devolución + depósito del mismo monto = cambio
+// puro, neutro en todos los saldos, que deja el arqueo cuadrado.
+//
+// Representación en /shared/cajaChica: `tipo:'gasto', estado:'aprobado'` con
+// marcador `esDevolucion:true`. NO es un tipo nuevo a propósito: la fórmula de
+// saldo replicada en las apps de campo (materiales, indirectos, consola) solo
+// entiende 'deposito' y 'gasto', así que un tipo propio quedaría invisible y
+// sus saldos derivarían. Como gasto aprobado, resta correctamente en las 4 apps
+// sin tocar una línea allá. No genera contable de gasto — no es un costo, es un
+// traspaso entre cajas propias.
+async function _devolverCajaChicaEfectivoDesdeBitacora({ obraId, obraNombre, monto, fecha, comentario }) {
+  if (!obraId) throw new Error('obraId requerido');
+  const importe = Number(monto) || 0;
+  if (importe <= 0) throw new Error('Monto inválido');
+  const fechaMs  = fecha ? new Date(fecha + 'T12:00').getTime() : Date.now();
+  const fechaISO = fecha || new Date().toISOString().slice(0, 10);
+
+  const proyectoId = await _resolverProyectoIdPorObra(obraId);
+
+  // 1) Salida del fondo en el ledger compartido (source of truth del saldo)
+  const movRef = _dbRef(`/shared/cajaChica/${obraId}/movimientos`).push();
+  await movRef.set({
+    tipo: 'gasto',
+    estado: 'aprobado',
+    fondo: 'efectivo',
+    esDevolucion: true,
+    monto: importe,
+    fecha: fechaMs,
+    comentario: comentario || 'Devolución de efectivo a SOGRUB',
+    autor: { uid: _currentUser?.uid || '', email: _currentUser?.email || '' },
+    origen: 'bitacora',
+    createdAt: Date.now()
+  });
+  const movCajaChicaId = movRef.key;
+
+  // 2) Ingreso a la caja física de SOGRUB (el billete vuelve al arqueo)
+  const folio = await _generarFolio('CC');
+  const concepto = `[${folio}] Devolución caja chica${obraNombre ? ' · ' + obraNombre : ''} · EFECTIVO${comentario ? ' · ' + comentario.slice(0, 60) : ''}`;
+
+  const createdEfec = addItem(KEYS.EFECTIVO_MOV, {
+    fecha:    fechaISO,
+    monto:    Math.abs(importe),
+    concepto,
+    status:   'Pagado',
+    tipo:     'devolucion_caja_chica',
+    proyecto_id: proyectoId || null,
+    obraId,
+    movimiento_caja_chica_id: movCajaChicaId,
+    fondo_caja: 'efectivo',
+  });
+
+  // 3) Ingreso espejo en la caja del proyecto (revierte el egreso del depósito)
+  let createdProy = null;
+  if (proyectoId) {
+    createdProy = addItem('sogrub_proy_movimientos', {
+      proyecto_id: proyectoId,
+      obraId,
+      fecha:    fechaISO,
+      monto:    Math.abs(importe),
+      concepto,
+      status:   'Pagado',
+      tipo:     'devolucion_caja_chica',
+      movimiento_caja_chica_id: movCajaChicaId,
+      sogrub_movimiento_id: createdEfec.id,
+      metodo_pago: 'efectivo',
+      fondo_caja:  'efectivo',
+    });
+  }
+
+  // Se sellan los mismos campos que un depósito asentado para que borrar la
+  // fila desde la tabla revierta ambos contables (_borrarFilaCC ya los lee).
+  await _dbRef(`/shared/cajaChica/${obraId}/movimientos/${movCajaChicaId}`).update({
+    asentadoAt: Date.now(),
+    asentadoBancarioId: createdEfec.id,
+    asentadoProyectoMovId: createdProy?.id || null,
+    folioBancario: folio
+  });
+
+  return { movCajaChicaId, efectivoMovId: createdEfec.id, proyMovId: createdProy?.id || null, folio };
+}
+
 // ─── Proveedor ─────────────────────────────────────────────────────────────
 
 function _findOrCreateProveedor(nombre, extras = {}) {

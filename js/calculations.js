@@ -284,7 +284,14 @@ function calcSaldoCajaProyecto(proyectoId) {
     .filter(m => m.tipo === 'deposito_caja_chica' && m.status === 'Pagado')
     .reduce((acc, m) => acc + Math.abs(m.monto), 0);
 
-  return abonos + transferencias - gastosPagados - depositosCajaChica;
+  // Devoluciones del fondo efectivo de caja chica → el billete regresa a la
+  // caja física de SOGRUB y el proyecto recupera el monto que bajó al depositar.
+  // Inverso exacto del depósito: una devolución del mismo monto lo neutraliza.
+  const devolucionesCajaChica = movs
+    .filter(m => m.tipo === 'devolucion_caja_chica' && m.status === 'Pagado')
+    .reduce((acc, m) => acc + Math.abs(m.monto), 0);
+
+  return abonos + transferencias - gastosPagados - depositosCajaChica + devolucionesCajaChica;
 }
 
 // =====================================================

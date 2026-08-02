@@ -177,7 +177,8 @@ function _aAllMovs() {
     // no son ingreso/egreso real. El gasto real de caja chica se cuenta aparte
     // (tipo='gasto' al aprobar el ticket); contar también el depósito duplica.
     _interno:      m.tipo === 'transferencia_proyecto' || m.tipo === 'retiro_efectivo'
-                || m.tipo === 'ingreso_efectivo' || m.tipo === 'deposito_caja_chica',
+                || m.tipo === 'ingreso_efectivo' || m.tipo === 'deposito_caja_chica'
+                || m.tipo === 'devolucion_caja_chica',
     _abs:          Math.abs(m.monto ?? 0),
   }));
 
@@ -201,7 +202,8 @@ function _aAllMovs() {
     _srcLabel:     'Efectivo',
     _proyNombre:   '',
     _tieneFactura: false,
-    _interno:      m.tipo === 'retiro' || m.tipo === 'ingreso_mifel' || m.tipo === 'deposito_caja_chica',
+    _interno:      m.tipo === 'retiro' || m.tipo === 'ingreso_mifel'
+                || m.tipo === 'deposito_caja_chica' || m.tipo === 'devolucion_caja_chica',
     _abs:          Math.abs(m.monto ?? 0),
   }));
 
@@ -378,6 +380,9 @@ function _aTipoLabel(m) {
   if (m._src === 'sogrub') return tipoBadge(m.tipo, m._proyNombre);
   if (m._src === 'efectivo') {
     if (m.tipo === 'retiro') return '<span class="badge badge-info">⇄ Retiro Mifel</span>';
+    if (m.tipo === 'ingreso_mifel') return '<span class="badge badge-info">⇄ Ingreso Mifel</span>';
+    if (m.tipo === 'deposito_caja_chica') return '<span class="badge badge-warning">💵 → Caja chica obra</span>';
+    if (m.tipo === 'devolucion_caja_chica') return '<span class="badge badge-info">💵 ← Devolución de obra</span>';
     return (m.monto ?? 0) >= 0
       ? '<span class="badge badge-success">💵 Ingreso efectivo</span>'
       : '<span class="badge badge-danger">💵 Egreso efectivo</span>';
