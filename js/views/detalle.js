@@ -574,7 +574,7 @@ function renderDetalleTableOnly(proyectoId, wrap) {
     movs = movs.filter(m => m.status === _detalleState.filtroStatus);
   }
 
-  movs = [...movs].sort((a, b) => b.fecha.localeCompare(a.fecha));
+  movs = sortByFechaDesc(movs);
 
   const tableWrap = document.createElement('div');
   tableWrap.id = 'detalle-data-table';

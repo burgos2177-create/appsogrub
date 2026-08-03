@@ -163,7 +163,16 @@ function _renderCajaChicaContenido(proyectoId, proyecto) {
 
   // ─── Tabla (solo movimientos del fondo activo) ───
   const ids = Object.keys(movimientos).filter(id => _fondoDeMovCC(movimientos[id]) === fondo);
-  ids.sort((a, b) => (movimientos[b].fecha || movimientos[b].createdAt || 0) - (movimientos[a].fecha || movimientos[a].createdAt || 0));
+  // Más reciente arriba. `fecha` es el día a mediodía en ms, así que todos los
+  // movimientos de un mismo día empatan: desempata createdAt (instante real de
+  // captura) y, en su defecto, la push key —cronológica— en orden inverso.
+  ids.sort((a, b) => {
+    const A = movimientos[a], B = movimientos[b];
+    const dif = (Number(B.fecha) || Number(B.createdAt) || 0) - (Number(A.fecha) || Number(A.createdAt) || 0);
+    if (dif !== 0) return dif;
+    const difCreado = (Number(B.createdAt) || 0) - (Number(A.createdAt) || 0);
+    return difCreado !== 0 ? difCreado : String(b).localeCompare(String(a));
+  });
 
   const tableHTML = ids.length === 0
     ? `<div class="empty-state" style="margin-top:16px">

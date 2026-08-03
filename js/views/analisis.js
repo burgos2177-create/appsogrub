@@ -207,8 +207,7 @@ function _aAllMovs() {
     _abs:          Math.abs(m.monto ?? 0),
   }));
 
-  return [...movSOGRUB, ...movProy, ...movEfec]
-    .sort((a, b) => (b.fecha ?? '').localeCompare(a.fecha ?? ''));
+  return sortByFechaDesc([...movSOGRUB, ...movProy, ...movEfec]);
 }
 
 // =====================================================

@@ -580,7 +580,7 @@ function refreshEfectivoTable() {
       ? movs.filter(_esTraspaso)
       : movs.filter(m => (m.monto >= 0 ? 'ingreso' : 'egreso') === _efectivoState.tipo && !_esTraspaso(m));
   }
-  movs = [...movs].sort((a, b) => (b.fecha ?? '').localeCompare(a.fecha ?? ''));
+  movs = sortByFechaDesc(movs);
 
   container.innerHTML = '';
 

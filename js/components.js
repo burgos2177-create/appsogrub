@@ -16,6 +16,24 @@ function formatMXN(amount) {
   }).format(amount);
 }
 
+// Orden para tablas de movimientos: lo más reciente arriba.
+//
+// Las fechas se guardan como 'YYYY-MM-DD' (sin hora), así que dentro de un
+// mismo día no desempatan y un sort estable deja el orden de la colección —
+// que es cronológico ascendente, porque addItem hace push al final. Resultado:
+// el movimiento recién capturado quedaba hasta abajo de su día, pegado al día
+// anterior. Aquí se invierte ese desempate: a igual fecha, el índice más alto
+// (capturado después) va primero, y lo nuevo entra por arriba.
+function sortByFechaDesc(movs) {
+  return movs
+    .map((m, i) => ({ m, i }))
+    .sort((a, b) => {
+      const cmp = String(b.m.fecha ?? '').localeCompare(String(a.m.fecha ?? ''));
+      return cmp !== 0 ? cmp : b.i - a.i;
+    })
+    .map(x => x.m);
+}
+
 function formatDate(dateStr) {
   if (!dateStr) return '—';
   const [year, month, day] = dateStr.split('-').map(Number);

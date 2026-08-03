@@ -77,7 +77,7 @@ function refreshCajaTable() {
   }
 
   // Ordenar por fecha desc
-  movs = [...movs].sort((a, b) => b.fecha.localeCompare(a.fecha));
+  movs = sortByFechaDesc(movs);
 
   const proyectos = getCollection(KEYS.PROYECTOS) ?? [];
 
