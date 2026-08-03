@@ -18,6 +18,51 @@ const _CONC_TOL  = 0.02;   // tolerancia de importe (centavos por redondeo de IV
 const _CONC_DIAS = 8;      // ventana de fechas para dar por buena una pareja
 
 // =====================================================
+// DINERO DE TERCEROS
+// Por la cuenta pasa dinero que no es de SOGRUB (de un socio, de un cliente
+// que la usa de puente). Esos cargos jamás van a estar en la bitácora, así
+// que marcarlos evita perseguirlos cada mes. Un cargo puede ser MIXTO: parte
+// gasto de SOGRUB y parte ajeno — se guarda solo el monto ajeno y el resto
+// sigue entrando al emparejado normal.
+//
+// Vive en localStorage (preferencia local de conciliación, no dato contable).
+// La llave es el folio del banco, que es único por movimiento.
+// =====================================================
+const _LS_CONC_AJENOS = 'sogrub_conc_ajenos';
+
+function _concKeyBanco(m) {
+  return m.folioBanco ? `f:${m.folioBanco}` : `d:${m.fecha}|${m.monto}`;
+}
+
+function _concLeerAjenos() {
+  try { return JSON.parse(localStorage.getItem(_LS_CONC_AJENOS) || '{}') || {}; }
+  catch { return {}; }
+}
+
+function _concGuardarAjenos(mapa) {
+  try { localStorage.setItem(_LS_CONC_AJENOS, JSON.stringify(mapa)); }
+  catch { /* modo privado: se pierde al recargar, no es crítico */ }
+}
+
+// Separa cada movimiento del banco en su parte de SOGRUB y su parte ajena.
+// Devuelve { paraEmparejar, terceros } — `terceros` guarda el movimiento
+// original con el monto ajeno, para poder listarlo y sumarlo aparte.
+function _concAplicarAjenos(banco) {
+  const mapa = _concLeerAjenos();
+  const paraEmparejar = [], terceros = [];
+  for (const m of banco) {
+    const ajeno = Number(mapa[_concKeyBanco(m)]) || 0;
+    if (!ajeno) { paraEmparejar.push(m); continue; }
+    const signo = Math.sign(m.monto) || 1;
+    const montoAjeno = signo * Math.min(Math.abs(ajeno), Math.abs(m.monto));
+    terceros.push({ ...m, monto: montoAjeno, montoOriginal: m.monto });
+    const resto = m.monto - montoAjeno;
+    if (Math.abs(resto) > _CONC_TOL) paraEmparejar.push({ ...m, monto: resto, _parcial: true });
+  }
+  return { paraEmparejar, terceros };
+}
+
+// =====================================================
 // PARSEO DEL CSV DE MIFEL
 // =====================================================
 
@@ -258,6 +303,10 @@ function _concGrupoCero(items) {
 // VISTA
 // =====================================================
 
+// Último CSV cargado, para poder re-pintar al marcar dinero de terceros
+// sin pedirte que lo vuelvas a subir.
+let _concUltimoCSV = '';
+
 function renderConciliacionCard() {
   const card = document.createElement('div');
   card.className = 'card mt-24';
@@ -328,15 +377,20 @@ function _concPintarResultado(texto) {
   const cont = document.getElementById('conc-resultado');
   if (!cont) return;
 
+  _concUltimoCSV = texto;
+
   const { saldoBanco, movs: banco } = parseEstadoCuentaMifel(texto);
   const desde = banco[0].fecha, hasta = banco[banco.length - 1].fecha;
   const todo  = _concLedgerApp();
+
+  // Se aparta lo que ya marcaste como dinero de terceros antes de emparejar.
+  const { paraEmparejar, terceros } = _concAplicarAjenos(banco);
 
   // Para emparejar se ensancha la ventana: un movimiento capturado un par de
   // días antes del corte puede ser el que el banco cobró ya dentro del periodo.
   const app = todo.filter(m => m.fecha >= _concCorrerFecha(desde, -_CONC_DIAS)
                             && m.fecha <= _concCorrerFecha(hasta,  _CONC_DIAS));
-  const r   = conciliarMifel(banco, app);
+  const r   = conciliarMifel(paraEmparejar, app);
 
   const sum = arr => arr.reduce((a, m) => a + m.monto, 0);
 
@@ -355,6 +409,11 @@ function _concPintarResultado(texto) {
   const soloAppNeto   = sum(r.soloApp);
   const difFolios     = r.difImporte.reduce((a, d) => a - d.dif, 0);   // banco cobró de más → resta
 
+  // El dinero de terceros salió del banco durante el periodo, así que estaba
+  // en el saldo al inicio: se resta del arrastre para dejar el error real.
+  const tercerosNeto = sum(terceros);
+  const errorReal    = arrastre + tercerosNeto;
+
   const fila = (etiqueta, valor, tip, resaltar) => `
     <div style="display:flex;justify-content:space-between;gap:16px${resaltar ? ';border-top:1px solid var(--border);margin-top:6px;padding-top:6px' : ''}"
          ${tip ? `title="${tip}"` : ''}>
@@ -362,11 +421,11 @@ function _concPintarResultado(texto) {
       <strong style="font-variant-numeric:tabular-nums${valor < 0 ? ';color:var(--danger)' : ''}">${formatMXN(valor)}</strong>
     </div>`;
 
-  const tabla = (filas, vacio) => !filas
+  const tabla = (filas, vacio, conAcciones) => !filas
     ? `<div class="text-sm text-muted" style="padding:10px 0">${vacio || ''}</div>`
     : `<div class="table-wrapper" style="margin-top:8px">
          <table class="data-table">
-           <thead><tr><th>Fecha</th><th>Concepto</th><th>Origen</th><th>Monto</th></tr></thead>
+           <thead><tr><th>Fecha</th><th>Concepto</th><th>Origen</th><th>Monto</th>${conAcciones ? '<th></th>' : ''}</tr></thead>
            <tbody>${filas}</tbody>
          </table>
        </div>`;
@@ -374,9 +433,11 @@ function _concPintarResultado(texto) {
   const filasBanco = r.soloBanco.map(m => `
     <tr>
       <td class="text-muted">${formatDate(m.fecha)}</td>
-      <td>${m.concepto || '—'}</td>
+      <td>${m.concepto || '—'}${m._parcial ? ' <span class="badge badge-muted badge-no-dot" style="font-size:10px">resto tras apartar lo ajeno</span>' : ''}</td>
       <td class="text-muted text-sm">${m.folioBanco || '—'}</td>
       <td class="${m.monto >= 0 ? 'amount-positive' : 'amount-negative'} font-mono">${formatMXN(m.monto)}</td>
+      <td><button class="btn btn-ghost btn-sm conc-ajeno" data-key="${_concKeyBanco(m)}" data-monto="${Math.abs(m.monto)}"
+            title="Marcar total o parcialmente como dinero que no es de SOGRUB">🚫 Ajeno</button></td>
     </tr>`).join('');
 
   const filasApp = r.soloApp.map(m => `
@@ -401,6 +462,16 @@ function _concPintarResultado(texto) {
       <td>${(d.app.concepto || '—').slice(0, 50)}</td>
       <td class="text-muted text-sm">${d.dias} días de diferencia</td>
       <td class="font-mono">${formatMXN(d.app.monto)}</td>
+    </tr>`).join('');
+
+  const filasTerceros = terceros.map(m => `
+    <tr>
+      <td class="text-muted">${formatDate(m.fecha)}</td>
+      <td>${m.concepto || '—'}${Math.abs(m.montoOriginal) - Math.abs(m.monto) > _CONC_TOL
+            ? ` <span class="text-dim" style="font-size:11px">(de ${formatMXN(Math.abs(m.montoOriginal))} en el banco)</span>` : ''}</td>
+      <td class="text-muted text-sm">${m.folioBanco || '—'}</td>
+      <td class="font-mono text-muted">${formatMXN(m.monto)}</td>
+      <td><button class="btn btn-ghost btn-sm conc-desajeno" data-key="${_concKeyBanco(m)}" title="Ya no es dinero de terceros">↺</button></td>
     </tr>`).join('');
 
   const filasNeutros = r.neutros.map(g => `
@@ -428,7 +499,9 @@ function _concPintarResultado(texto) {
           ${fila(`Solo en el banco (${r.soloBanco.length})`, soloBancoNeto, 'Movimientos del banco que la app no tiene')}
           ${fila(`Solo en la app (${r.soloApp.length})`, soloAppNeto, 'Registrados en la app que el banco nunca cobró')}
           ${r.difImporte.length ? fila(`Importes distintos (${r.difImporte.length})`, difFolios, 'Mismo folio, monto que no coincide') : ''}
+          ${terceros.length ? fila(`Dinero de terceros (${terceros.length})`, tercerosNeto, 'Marcado a mano: no es de SOGRUB y nunca va a estar en la bitácora') : ''}
           ${fila('Arrastre anterior al periodo', arrastre, 'Diferencia que ya venía antes del primer movimiento del estado de cuenta', true)}
+          ${terceros.length ? fila('Error real por explicar', errorReal, 'Arrastre menos el dinero de terceros que salió en el periodo') : ''}
         </div>
       </div>
     </div>
@@ -443,7 +516,7 @@ function _concPintarResultado(texto) {
       ${tabla(filasDif)}` : ''}
 
     <h4 style="margin:18px 0 0">📥 Solo en el banco — falta registrarlos</h4>
-    ${tabla(filasBanco, '✓ Nada pendiente: todo lo que cobró el banco está en la app.')}
+    ${tabla(filasBanco, '✓ Nada pendiente: todo lo que cobró el banco está en la app.', true)}
 
     <h4 style="margin:18px 0 0">📤 Solo en la app — el banco nunca los cobró</h4>
     ${tabla(filasApp, '✓ Nada de más: todo lo registrado salió del banco.')}
@@ -452,6 +525,10 @@ function _concPintarResultado(texto) {
       <h4 style="margin:18px 0 0">📅 Mismo importe con otra fecha — solo hay que corregir el día</h4>
       ${tabla(filasDesfase)}` : ''}
 
+    ${terceros.length ? `
+      <h4 style="margin:18px 0 0">🚫 Dinero de terceros — no es de SOGRUB</h4>
+      ${tabla(filasTerceros, '', true)}` : ''}
+
     ${r.neutros.length ? `
       <h4 style="margin:18px 0 0">🔁 Se cancelan entre sí — no requieren acción</h4>
       ${tabla(filasNeutros)}` : ''}
@@ -459,8 +536,39 @@ function _concPintarResultado(texto) {
     <p class="text-muted text-sm" style="margin-top:16px;line-height:1.55">
       El emparejado usa el folio CP/CC cuando viene en la descripción del banco, y si no,
       el importe exacto dentro de ±${_CONC_DIAS} días — incluyendo sumas de 2 o 3 movimientos
-      cuando un lado lo registró partido. Si el <b>arrastre</b> no es cero, la diferencia
-      nació antes de este estado de cuenta: baja un periodo más largo para ubicarla.
+      cuando un lado lo registró partido. Con <b>🚫 Ajeno</b> apartas lo que no es de SOGRUB
+      (total o una parte, si el cargo viene mezclado); queda guardado y ya no vuelve a
+      aparecer en las siguientes conciliaciones. Si el <b>arrastre</b> no es cero, la
+      diferencia nació antes de este estado de cuenta: baja un periodo más largo para ubicarla.
     </p>
   `;
+
+  // ---- Marcar / desmarcar dinero de terceros ----
+  cont.querySelectorAll('.conc-ajeno').forEach(btn =>
+    btn.addEventListener('click', () => {
+      const total = Number(btn.dataset.monto) || 0;
+      const txt = prompt(
+        `¿Cuánto de este movimiento NO es de SOGRUB?\n\n` +
+        `Importe en el banco: ${formatMXN(total)}\n` +
+        `Déjalo así si todo es ajeno, o escribe solo la parte ajena.`,
+        total.toFixed(2)
+      );
+      if (txt === null) return;
+      const monto = parseFloat(String(txt).replace(/[$,\s]/g, ''));
+      if (isNaN(monto) || monto <= 0) { showToast('Monto inválido', 'warning'); return; }
+      const mapa = _concLeerAjenos();
+      mapa[btn.dataset.key] = Math.min(monto, total);
+      _concGuardarAjenos(mapa);
+      _concPintarResultado(_concUltimoCSV);
+    })
+  );
+
+  cont.querySelectorAll('.conc-desajeno').forEach(btn =>
+    btn.addEventListener('click', () => {
+      const mapa = _concLeerAjenos();
+      delete mapa[btn.dataset.key];
+      _concGuardarAjenos(mapa);
+      _concPintarResultado(_concUltimoCSV);
+    })
+  );
 }
