@@ -176,6 +176,26 @@ function _concFolio(texto) {
 const _concDias = (a, b) =>
   Math.abs((new Date(a + 'T12:00') - new Date(b + 'T12:00')) / 86400000);
 
+// Palabras comparables de una descripción: sin acentos, en minúsculas y
+// recortadas a 5 letras, para que 'Servicios contables' y 'Contabilidad' se
+// reconozcan (conta == conta) sin exigir que digan lo mismo. El banco y la
+// bitácora casi nunca escriben igual el concepto.
+function _concTokens(texto) {
+  return new Set(String(texto || '')
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(t => t.length >= 5)
+    .map(t => t.slice(0, 5)));
+}
+
+function _concAfinidad(textoA, textoB) {
+  const a = _concTokens(textoA), b = _concTokens(textoB);
+  let n = 0;
+  for (const t of a) if (b.has(t)) n++;
+  return n;
+}
+
 // Subconjunto de 2 a 4 elementos que sume `objetivo`. Cubre dos casos reales:
 // una compra que un lado registró partida y el otro en un solo cargo, y los
 // reembolsos agrupados (una transferencia que paga varias cosas de golpe).
@@ -221,14 +241,24 @@ function conciliarMifel(bancoMovs, appMovs) {
     else pares.push({ banco: [b], app: [a], via: 'folio' });
   }
 
-  // Fase 1 — 1:1 por importe exacto, la fecha más cercana gana.
+  // Fase 1 — 1:1 por importe exacto. Cuando varios candidatos empatan en
+  // importe (dos cargos de $2,000 la misma semana), gana el que comparte
+  // palabras con la descripción del banco; sin eso, el más cercano en fecha.
+  //
+  // Nota: el 1:1 va antes que las sumas a propósito. Se probó posponer los
+  // empates sin afinidad para que las sumas tuvieran primera opción, y salió
+  // peor: los combos se llevaron movimientos que ya tenían una pareja exacta
+  // buena. Un importe idéntico dentro de la ventana es mejor evidencia que
+  // una suma, aunque los conceptos no se parezcan.
   for (const b of banco) {
     if (b._usado) continue;
     let mejor = null;
     for (const a of app) {
       if (a._usado || Math.abs(a.monto - b.monto) > _CONC_TOL) continue;
       const d = _concDias(a.fecha, b.fecha);
-      if (d <= _CONC_DIAS && (!mejor || d < mejor.d)) mejor = { a, d };
+      if (d > _CONC_DIAS) continue;
+      const af = _concAfinidad(a.concepto, b.concepto);
+      if (!mejor || af > mejor.af || (af === mejor.af && d < mejor.d)) mejor = { a, d, af };
     }
     if (mejor) {
       b._usado = mejor.a._usado = true;
