@@ -64,6 +64,10 @@ function showToast(message, type = 'info', duration = 3000) {
 // =====================================================
 
 let _modalResolve = null;
+// ¿El usuario ya capturó algo en el modal abierto? Lo marca la interacción real
+// (ver initModalSystem); asignar .value por código no dispara input/change, así
+// que los valores precargados no cuentan como captura.
+let _modalSucio = false;
 
 function openModal({ title, body, confirmText = 'Confirmar', cancelText = 'Cancelar', onConfirm, large = false }) {
   const overlay   = document.getElementById('modal-overlay');
@@ -75,6 +79,7 @@ function openModal({ title, body, confirmText = 'Confirmar', cancelText = 'Cance
   titleEl.textContent = title;
   bodyEl.innerHTML    = '';
   footerEl.innerHTML  = '';
+  _modalSucio         = false;
 
   if (typeof body === 'string') {
     bodyEl.innerHTML = body;
@@ -107,6 +112,10 @@ function openModal({ title, body, confirmText = 'Confirmar', cancelText = 'Cance
   document.getElementById('modal-close-btn').focus();
 }
 
+// Cierre incondicional. Lo usan los flujos que ya terminaron (guardar, aprobar,
+// etc.), así que NUNCA debe preguntar nada: el trabajo ya se guardó.
+// Para el cierre pedido por el usuario (click fuera, ✕, Escape) ver
+// requestCloseModal, que sí protege lo capturado.
 function closeModal() {
   const overlay = document.getElementById('modal-overlay');
   overlay.classList.add('hidden');
@@ -116,6 +125,48 @@ function closeModal() {
   clearValidation(body);
   body.innerHTML   = '';
   footer.innerHTML = '';
+  const aviso = document.getElementById('modal-descartar');
+  if (aviso) aviso.remove();
+  _modalSucio = false;
+}
+
+// Cierre pedido por el usuario. Si ya capturó algo, pregunta antes de perderlo;
+// si el formulario sigue intacto, cierra sin fricción.
+function requestCloseModal() {
+  const overlay = document.getElementById('modal-overlay');
+  if (!overlay || overlay.classList.contains('hidden')) return;
+  if (!_modalSucio) return closeModal();
+  if (document.getElementById('modal-descartar')) return;   // ya se está preguntando
+  _confirmarDescartarModal();
+}
+
+// Aviso dibujado ENCIMA del modal (no lo reemplaza) para que, si el usuario
+// elige seguir editando, encuentre todo exactamente como lo dejó.
+// A propósito no se usa confirm() nativo: el navegador lo suprime tras varios
+// diálogos en la misma sesión y el aviso simplemente no aparecería.
+function _confirmarDescartarModal() {
+  const overlay = document.getElementById('modal-overlay');
+  const capa = document.createElement('div');
+  capa.id = 'modal-descartar';
+  capa.style.cssText = 'position:absolute;top:0;right:0;bottom:0;left:0;display:flex;' +
+    'align-items:center;justify-content:center;background:rgba(0,0,0,.6);z-index:10;padding:20px';
+  capa.innerHTML = `
+    <div class="modal-card" style="max-width:400px;padding:24px">
+      <h3 style="margin:0 0 10px">¿Descartar lo capturado?</h3>
+      <p class="text-muted" style="line-height:1.6;margin:0 0 20px">
+        Si sales ahora se perderá la información que escribiste en este formulario.
+      </p>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn btn-danger" id="modal-descartar-si">Descartar</button>
+        <button class="btn btn-primary" id="modal-descartar-no">Seguir editando</button>
+      </div>
+    </div>`;
+  // Un click dentro del aviso no debe llegar al overlay (dispararía otro cierre).
+  capa.addEventListener('click', (e) => e.stopPropagation());
+  overlay.appendChild(capa);
+  capa.querySelector('#modal-descartar-si').addEventListener('click', () => closeModal());
+  capa.querySelector('#modal-descartar-no').addEventListener('click', () => capa.remove());
+  capa.querySelector('#modal-descartar-no').focus();   // la opción segura queda enfocada
 }
 
 function openConfirmModal({ title, message, confirmText = 'Eliminar', onConfirm }) {
@@ -176,15 +227,22 @@ function clearValidation(container) {
 function initModalSystem() {
   const overlay  = document.getElementById('modal-overlay');
   const closeBtn = document.getElementById('modal-close-btn');
+  const bodyEl   = document.getElementById('modal-body');
 
-  closeBtn.addEventListener('click', closeModal);
+  // Se registran UNA sola vez: el overlay es un singleton que se reusa en cada
+  // openModal (si se registraran ahí, los listeners se irían acumulando).
+  bodyEl.addEventListener('input',  () => { _modalSucio = true; });
+  bodyEl.addEventListener('change', () => { _modalSucio = true; });
+
+  // Las tres vías de cierre a petición del usuario pasan por el aviso.
+  closeBtn.addEventListener('click', requestCloseModal);
 
   overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) closeModal();
+    if (e.target === overlay) requestCloseModal();
   });
 
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') closeModal();
+    if (e.key === 'Escape') requestCloseModal();
   });
 }
 

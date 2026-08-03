@@ -7,7 +7,7 @@ import { renderSalud } from './views/salud.js?v=1';
 import { renderObraLinks } from './views/obralinks.js?v=1';
 import { renderObras } from './views/obras.js?v=1';
 import { renderUsuarios } from './views/usuarios.js?v=1';
-import { h, mount } from './util/dom.js?v=1';
+import { h, mount } from './util/dom.js?v=2';
 
 route('/',          () => renderMapa());
 route('/salud',     () => renderSalud());

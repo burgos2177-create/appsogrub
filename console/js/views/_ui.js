@@ -1,4 +1,4 @@
-import { h } from '../util/dom.js?v=1';
+import { h } from '../util/dom.js?v=2';
 
 // Mapea el estado de un item (buzón / caja chica / OC / proyecto) a una clase
 // de color de .tag. Convención del tema: ok=verde, warn=amarillo, danger=rojo.
