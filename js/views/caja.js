@@ -52,6 +52,9 @@ function renderCaja() {
   tableContainer.id = 'caja-table-container';
   root.appendChild(tableContainer);
 
+  // ---- Conciliación con el estado de cuenta (colapsable) ----
+  root.appendChild(renderConciliacionCard());
+
   // ---- Config saldo inicial (colapsable) ----
   root.appendChild(renderConfigSaldo());
 
