@@ -764,6 +764,10 @@ function abrirModalRetiroEfectivo() {
     <p class="text-muted text-sm">
       Baja el saldo de Mifel (egreso) y sube el efectivo (ingreso) en un solo paso.
     </p>
+    <p class="text-sm" style="color:var(--warning);line-height:1.5;margin:0">
+      ⚠ Es un movimiento <b>físico</b>: regístralo solo si el billete realmente
+      salió del banco y entró a la caja. Si no, el arqueo quedará con faltante.
+    </p>
   `;
 
   openModal({
@@ -822,6 +826,12 @@ function abrirModalIngresoMifel() {
     </div>
     <p class="text-muted text-sm">
       Baja el saldo de efectivo (egreso) y sube Mifel (ingreso electrónico) en un solo paso.
+    </p>
+    <p class="text-sm" style="color:var(--warning);line-height:1.5;margin:0">
+      ⚠ Es un movimiento <b>físico</b>: regístralo solo si de verdad depositaste
+      el billete en el banco. No sirve para corregir el reparto
+      electrónico/efectivo de una obra — si nadie llevó el dinero, el arqueo
+      quedará con sobrante.
     </p>
   `;
 
