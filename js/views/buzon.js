@@ -76,7 +76,32 @@ const _buzon = {
   subscribed: false,
   linksSubscribed: false,
   migrated:   false,
+  filtroTipo: 'todos',   // tipo seleccionado en el dropdown
+  filtroModo: 'solo',    // 'solo' = mostrar ese tipo · 'excepto' = todos menos ese
 };
+
+// El filtro de tipo sobrevive recargas: el contador suele trabajar varios días
+// con la misma vista (p. ej. "todo menos nóminas") y re-elegirlo cada vez
+// estorba. Se guarda en localStorage, no en RTDB: es preferencia de vista local.
+const _LS_BUZON_FILTRO = 'sogrub_buzon_filtro_tipo';
+
+function _cargarFiltroBuzon() {
+  try {
+    const raw = localStorage.getItem(_LS_BUZON_FILTRO);
+    if (!raw) return;
+    const { tipo, modo } = JSON.parse(raw) || {};
+    if (typeof tipo === 'string') _buzon.filtroTipo = tipo;
+    if (modo === 'solo' || modo === 'excepto') _buzon.filtroModo = modo;
+  } catch { /* preferencia corrupta: se ignora y queda el default */ }
+}
+
+function _guardarFiltroBuzon() {
+  try {
+    localStorage.setItem(_LS_BUZON_FILTRO,
+      JSON.stringify({ tipo: _buzon.filtroTipo, modo: _buzon.filtroModo }));
+  } catch { /* modo privado / cuota llena: el filtro sigue funcionando en memoria */ }
+}
+_cargarFiltroBuzon();
 
 // Resuelve proyectoId para un item del buzón. Items de estimaciones lo traen
 // directo en el payload (item.proyectoId); items de materiales (gasto/depósito
@@ -215,11 +240,22 @@ function renderBuzon() {
     : all;
 
   // Filtro por tipo (dropdown), independiente de la pestaña de estado.
+  // El modo decide si el tipo elegido se muestra o se esconde:
+  //   'solo'    → únicamente ese tipo
+  //   'excepto' → todos los demás (útil para sacar de la vista lo ya revisado,
+  //               p. ej. ver todo el buzón menos las nóminas)
   if (!_buzon.filtroTipo) _buzon.filtroTipo = 'todos';
+  if (_buzon.filtroModo !== 'excepto') _buzon.filtroModo = 'solo';
+  const excluyendo = _buzon.filtroTipo !== 'todos' && _buzon.filtroModo === 'excepto';
   // Tipos presentes en los items visibles (para poblar el dropdown).
   const tiposPresentes = [...new Set(all.map(i => i.tipo).filter(Boolean))].sort();
-  if (_buzon.filtroTipo !== 'todos') {
-    filtered = filtered.filter(i => i.tipo === _buzon.filtroTipo);
+  // Si el tipo guardado ya no existe en el buzón, el filtro se vuelve inerte
+  // en vez de dejar la vista vacía sin explicación.
+  const tipoVigente = _buzon.filtroTipo !== 'todos' && tiposPresentes.includes(_buzon.filtroTipo);
+  if (tipoVigente) {
+    filtered = excluyendo
+      ? filtered.filter(i => i.tipo !== _buzon.filtroTipo)
+      : filtered.filter(i => i.tipo === _buzon.filtroTipo);
   }
 
   root.innerHTML = '';
@@ -283,17 +319,48 @@ function renderBuzon() {
         <option value="todos" ${_buzon.filtroTipo === 'todos' ? 'selected' : ''}>Todos los tipos (${tabCounts[activeTab.key] ?? all.length})</option>
         ${tiposPresentes.map(t => `<option value="${t}" ${_buzon.filtroTipo === t ? 'selected' : ''}>${_tipoLabelCorto(t)}</option>`).join('')}
       </select>
-      ${_buzon.filtroTipo !== 'todos' ? `<button id="bz-filtro-clear" style="padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:transparent;color:var(--text-muted);font-size:12px;cursor:pointer">✕ Limpiar</button>` : ''}
+      ${_buzon.filtroTipo !== 'todos' ? `
+        <div style="display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden" role="group"
+             title="Solo: muestra únicamente ese tipo · Excepto: muestra todos los demás">
+          ${['solo', 'excepto'].map(modo => {
+            const activo = _buzon.filtroModo === modo;
+            return `<button class="bz-filtro-modo" data-modo="${modo}" style="
+              padding:5px 12px;border:none;cursor:pointer;font-size:12px;white-space:nowrap;
+              background:${activo ? 'var(--accent)' : 'transparent'};
+              color:${activo ? '#08121a' : 'var(--text-muted)'};
+              font-weight:${activo ? 600 : 400}">
+              ${modo === 'solo' ? 'Solo este' : 'Todos menos este'}
+            </button>`;
+          }).join('')}
+        </div>
+        <button id="bz-filtro-clear" style="padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:transparent;color:var(--text-muted);font-size:12px;cursor:pointer">✕ Limpiar</button>
+        <span style="font-size:11px;color:var(--text-muted)">
+          ${!tipoVigente
+            ? `⚠ No hay items de <b>${_tipoLabelCorto(_buzon.filtroTipo)}</b> en el buzón — filtro sin efecto.`
+            : excluyendo
+              ? `Ocultando <b>${_tipoLabelCorto(_buzon.filtroTipo)}</b> · ${filtered.length} visibles`
+              : `${filtered.length} visibles`}
+          · el filtro se recuerda
+        </span>
+      ` : ''}
     </div>`;
   root.appendChild(header);
   header.querySelectorAll('.bz-tab').forEach(b =>
     b.addEventListener('click', () => { _buzon.tab = b.dataset.tab; renderBuzon(); })
   );
   header.querySelector('#bz-filtro-tipo')?.addEventListener('change', (e) => {
-    _buzon.filtroTipo = e.target.value; renderBuzon();
+    _buzon.filtroTipo = e.target.value;
+    _guardarFiltroBuzon(); renderBuzon();
   });
+  header.querySelectorAll('.bz-filtro-modo').forEach(b =>
+    b.addEventListener('click', () => {
+      _buzon.filtroModo = b.dataset.modo;
+      _guardarFiltroBuzon(); renderBuzon();
+    })
+  );
   header.querySelector('#bz-filtro-clear')?.addEventListener('click', () => {
-    _buzon.filtroTipo = 'todos'; renderBuzon();
+    _buzon.filtroTipo = 'todos'; _buzon.filtroModo = 'solo';
+    _guardarFiltroBuzon(); renderBuzon();
   });
 
   // ── Empty ──
@@ -310,8 +377,19 @@ function renderBuzon() {
     };
     const empty = document.createElement('div');
     empty.style.cssText = 'text-align:center;padding:60px 20px;color:var(--text-muted);border:1px dashed var(--border);border-radius:8px;margin-top:12px';
-    empty.innerHTML = `<div style="font-size:32px;opacity:.5;margin-bottom:8px">📥</div><div>${msgs[_buzon.tab] || 'Sin items.'}</div>`;
+    // Si hay un filtro de tipo puesto, decirlo: si no, parece que la pestaña
+    // está vacía cuando en realidad el filtro (que persiste entre sesiones)
+    // se está comiendo los items.
+    empty.innerHTML = tipoVigente
+      ? `<div style="font-size:32px;opacity:.5;margin-bottom:8px">🔍</div>
+         <div>Nada que mostrar con el filtro <b>${excluyendo ? 'Todos menos' : 'Solo'} ${_tipoLabelCorto(_buzon.filtroTipo)}</b>.</div>
+         <button id="bz-empty-clear" style="margin-top:12px;padding:6px 14px;border:1px solid var(--border);border-radius:6px;background:transparent;color:var(--accent);font-size:12px;cursor:pointer">✕ Quitar filtro</button>`
+      : `<div style="font-size:32px;opacity:.5;margin-bottom:8px">📥</div><div>${msgs[_buzon.tab] || 'Sin items.'}</div>`;
     root.appendChild(empty);
+    empty.querySelector('#bz-empty-clear')?.addEventListener('click', () => {
+      _buzon.filtroTipo = 'todos'; _buzon.filtroModo = 'solo';
+      _guardarFiltroBuzon(); renderBuzon();
+    });
     return;
   }
 
