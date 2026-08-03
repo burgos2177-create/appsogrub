@@ -30,11 +30,20 @@ function renderDashboard() {
   const totalFondos     = (getConfig().fondos_inversion ?? []).reduce((a, f) => a + (f.monto ?? 0), 0);
   const comprometido    = calcDineroComprometido();
   const disponibleReal  = calcDisponibleReal();
+  const dispDesg        = calcDisponibleDesglose();
 
   const _globalRow = (etiqueta, valor) => `
     <div style="display:flex;justify-content:space-between">
       <span>${etiqueta}</span>
       <strong style="font-variant-numeric:tabular-nums">${formatMXN(valor)}</strong>
+    </div>`;
+
+  // Fila del disponible por forma: en rojo si sale negativa (esa caja tiene
+  // comprometido más de lo que hay).
+  const _libreRow = (etiqueta, valor, tip) => `
+    <div style="display:flex;justify-content:space-between" title="${tip}">
+      <span>${etiqueta}</span>
+      <strong style="font-variant-numeric:tabular-nums${valor < 0 ? ';color:var(--danger)' : ''}">${formatMXN(valor)}</strong>
     </div>`;
 
   const kpiGrid = document.createElement('div');
@@ -60,7 +69,21 @@ function renderDashboard() {
         </button>
       </div>
     </div>
-    ${kpiCard('✅', 'Disponible real',             disponibleReal, 'Mifel + efectivo libre de compromisos')}
+    <div class="kpi-card">
+      <div class="kpi-label">✅ Disponible real</div>
+      <div class="kpi-value ${disponibleReal >= 0 ? 'text-success' : 'text-danger'}">${formatMXN(disponibleReal)}</div>
+      <div class="kpi-sub" style="display:flex;flex-direction:column;gap:3px;margin-top:4px">
+        ${_libreRow('💳 Electrónico libre', dispDesg.electronico,
+          `Mifel ${formatMXN(saldoMifel)} − ${formatMXN(dispDesg.compElectronico)} comprometido electrónico`)}
+        ${_libreRow('💵 Efectivo libre', dispDesg.efectivo,
+          `Caja física ${formatMXN(saldoEfectivo)} − ${formatMXN(dispDesg.compEfectivo)} comprometido en efectivo`)}
+        ${dispDesg.efectivo < 0 || dispDesg.electronico < 0 ? `
+          <div style="color:var(--warning);font-size:10px;line-height:1.4;margin-top:2px"
+               title="El total libre está bien; lo que no cuadra es de qué caja se dice que salió el dinero. Revisa cobros marcados como efectivo que entraron por transferencia (o al revés) y traspasos efectivo↔Mifel sin vincular a su obra.">
+            ⚠ Una mitad sale negativa: el total cuadra, pero el reparto electrónico/efectivo no.
+          </div>` : ''}
+      </div>
+    </div>
   `;
   root.appendChild(kpiGrid);
 

@@ -324,7 +324,20 @@ function calcSaldoCajaProyectoDesglose(proyectoId) {
     .filter(m => m.proyecto_id === proyectoId && (m.tipo === 'ingreso_mifel' || m.tipo === 'retiro'))
     .reduce((acc, m) => acc + (Number(m.monto) || 0), 0);
 
-  const efectivo = efIn - efOut + traspasos;
+  // Movimientos del fondo EFECTIVO de caja chica (metodo_pago='efectivo'):
+  // el billete sale de la obra al depositar y regresa al devolver, así que
+  // mueven la mitad de efectivo del saldo, no la electrónica. Sin esto el
+  // efectivo de la obra queda inflado por todo lo que tenga en el fondo (el
+  // residuo se lo comía el electrónico) y podía llegar a superar la caja
+  // física de toda la empresa. El depósito del fondo TRANSFERENCIA sí sale de
+  // Mifel: ese sigue absorbiéndolo el electrónico como residuo, y por eso no
+  // entra aquí.
+  const cajaChicaEfectivo = movs
+    .filter(m => esEfectivo(m) && m.status === 'Pagado' &&
+      (m.tipo === 'deposito_caja_chica' || m.tipo === 'devolucion_caja_chica'))
+    .reduce((acc, m) => acc + (m.tipo === 'devolucion_caja_chica' ? 1 : -1) * Math.abs(m.monto), 0);
+
+  const efectivo = efIn - efOut + traspasos + cajaChicaEfectivo;
   const total    = calcSaldoCajaProyecto(proyectoId);
   return { total, efectivo, electronico: total - efectivo };
 }
@@ -359,6 +372,40 @@ function calcDineroComprometido() {
 // =====================================================
 function calcDisponibleReal() {
   return calcSaldoMifel() + calcSaldoEfectivo() - calcDineroComprometido();
+}
+
+// =====================================================
+// REGLA 5B — Disponible libre partido por forma de dinero
+//   electrónico = Mifel        − Σ saldo electrónico de proyectos activos
+//   efectivo    = caja física  − Σ saldo efectivo de proyectos activos
+// La suma de ambos es exactamente calcDisponibleReal(): el total siempre
+// cuadra aunque una mitad no.
+//
+// Para qué: el disponible global puede verse sano y aun así estar mal
+// repartido. Si el efectivo libre sale NEGATIVO, las obras tienen asignado
+// más billete del que existe en la caja física — señal de que hay cobros
+// marcados como efectivo que en realidad entraron por transferencia (o al
+// revés), o de un traspaso efectivo↔Mifel sin vincular a su obra. El dinero
+// total está bien; lo que está mal es de qué caja se dice que salió.
+// =====================================================
+function calcDisponibleDesglose() {
+  const proyectos = (getCollection(KEYS.PROYECTOS) ?? [])
+    .filter(p => p.estado === 'activo');
+
+  let compElectronico = 0, compEfectivo = 0;
+  for (const p of proyectos) {
+    const d = calcSaldoCajaProyectoDesglose(p.id);
+    compElectronico += d.electronico;
+    compEfectivo    += d.efectivo;
+  }
+
+  const electronico = calcSaldoMifel()    - compElectronico;
+  const efectivo    = calcSaldoEfectivo() - compEfectivo;
+  return {
+    electronico, efectivo,
+    total: electronico + efectivo,
+    compElectronico, compEfectivo,
+  };
 }
 
 // =====================================================
