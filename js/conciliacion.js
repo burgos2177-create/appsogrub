@@ -176,20 +176,28 @@ function _concFolio(texto) {
 const _concDias = (a, b) =>
   Math.abs((new Date(a + 'T12:00') - new Date(b + 'T12:00')) / 86400000);
 
-// Subconjunto de 2 o 3 elementos que sume `objetivo` (una compra que un lado
-// registró partida y el otro en un solo cargo).
+// Subconjunto de 2 a 4 elementos que sume `objetivo`. Cubre dos casos reales:
+// una compra que un lado registró partida y el otro en un solo cargo, y los
+// reembolsos agrupados (una transferencia que paga varias cosas de golpe).
+// El tamaño 4 solo se intenta con pocos candidatos: con muchos, la
+// probabilidad de que cuatro importes sumen el objetivo por casualidad deja de
+// ser despreciable y saldrían parejas falsas.
 function _concCombo(items, objetivo) {
   const n = items.length;
   if (n < 2 || n > 28) return null;
-  for (let i = 0; i < n; i++)
-    for (let j = i + 1; j < n; j++) {
-      if (Math.abs(items[i].monto + items[j].monto - objetivo) <= _CONC_TOL)
-        return [items[i], items[j]];
-      for (let k = j + 1; k < n; k++)
-        if (Math.abs(items[i].monto + items[j].monto + items[k].monto - objetivo) <= _CONC_TOL)
-          return [items[i], items[j], items[k]];
+  const max = n <= 18 ? 4 : 3;
+  const acc = [];
+  const buscar = (desde, suma) => {
+    if (acc.length >= 2 && Math.abs(suma - objetivo) <= _CONC_TOL) return true;
+    if (acc.length >= max || desde >= n) return false;
+    for (let i = desde; i < n; i++) {
+      acc.push(items[i]);
+      if (buscar(i + 1, suma + items[i].monto)) return true;
+      acc.pop();
     }
-  return null;
+    return false;
+  };
+  return buscar(0, 0) ? [...acc] : null;
 }
 
 function conciliarMifel(bancoMovs, appMovs) {
