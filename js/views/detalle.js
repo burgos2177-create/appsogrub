@@ -628,7 +628,7 @@ function renderDetalleTableOnly(proyectoId, wrap) {
                 <td>${m.concepto || '—'}</td>
                 <td>${m.tipo === 'gasto' ? categoriaBadge(m.categoria) + (m.categoria === 'Indirecto' && m.indirecto_ambito ? ` <span class="badge badge-muted badge-no-dot" style="font-size:10px">${m.indirecto_ambito === 'campo' ? '🚧 Campo' : '🏢 Oficina'}</span>` : '') + (m.paga_de_caja_chica ? ` <span class="badge badge-warning" style="font-size:10px" title="Pagado con caja chica${m.fondo_caja === 'efectivo' ? ' (fondo efectivo)' : ''} · no descuenta saldo del proyecto (ya bajó al depositar)">${m.fondo_caja === 'efectivo' ? '💵 caja chica efectivo' : '💰 caja chica'}</span>` : '') : '—'}</td>
                 <td class="text-muted">${m.subcontratista || '—'}</td>
-                <td>${tipoBadge(m.tipo)}${(m.tipo === 'gasto' || m.tipo === 'abono_cliente') ? ` <span class="badge badge-muted badge-no-dot" style="font-size:10px" title="Forma de pago">${m.metodo_pago === 'efectivo' ? '💵 Efectivo' : '🏦 Transf.'}</span>` : ''}</td>
+                <td>${tipoBadge(m.tipo)}${((m.tipo === 'gasto' || m.tipo === 'abono_cliente') && !m.paga_de_caja_chica) ? ` <span class="badge badge-muted badge-no-dot" style="font-size:10px" title="Forma de pago">${m.metodo_pago === 'efectivo' ? '💵 Efectivo' : '🏦 Transf.'}</span>` : ''}</td>
                 <td class="${colorMonto} font-mono">${formatMXN(m.monto)}</td>
                 <td>${ivaLabel}${facturaIcon}</td>
                 <td>${statusBadge(m.status)}</td>
