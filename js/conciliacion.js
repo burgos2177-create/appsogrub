@@ -284,7 +284,10 @@ function conciliarMifel(bancoMovs, appMovs) {
   // falte o sobre, es que está registrado con otra fecha.
   const desfases = [];
   for (const b of [...soloBanco]) {
-    const a = soloApp.find(x => Math.abs(x.monto - b.monto) <= _CONC_TOL);
+    // Se limita a un mes: más allá, dos importes iguales son casualidad y
+    // acabaríamos emparejando movimientos que no tienen relación.
+    const a = soloApp.find(x => Math.abs(x.monto - b.monto) <= _CONC_TOL
+                             && _concDias(x.fecha, b.fecha) <= 30);
     if (!a) continue;
     desfases.push({ banco: b, app: a, dias: Math.round(_concDias(a.fecha, b.fecha)) });
     soloBanco = soloBanco.filter(x => x !== b);
@@ -295,13 +298,21 @@ function conciliarMifel(bancoMovs, appMovs) {
 }
 
 // Busca un subconjunto de 2 o 3 movimientos que sume cero (cargo + devolución).
+// Solo dentro de una ventana corta: una devolución llega en días, no en meses,
+// y sin ese límite tres importes cualesquiera acaban sumando cero por
+// casualidad y se agrupan movimientos que no tienen nada que ver.
+const _CONC_DIAS_CERO = 15;
+
 function _concGrupoCero(items) {
   const n = items.length;
+  const cerca = (...g) => g.every(x => _concDias(x.fecha, g[0].fecha) <= _CONC_DIAS_CERO);
   for (let i = 0; i < n; i++)
     for (let j = i + 1; j < n; j++) {
-      if (Math.abs(items[i].monto + items[j].monto) <= _CONC_TOL) return [items[i], items[j]];
+      if (Math.abs(items[i].monto + items[j].monto) <= _CONC_TOL && cerca(items[i], items[j]))
+        return [items[i], items[j]];
       for (let k = j + 1; k < n; k++)
-        if (Math.abs(items[i].monto + items[j].monto + items[k].monto) <= _CONC_TOL)
+        if (Math.abs(items[i].monto + items[j].monto + items[k].monto) <= _CONC_TOL
+            && cerca(items[i], items[j], items[k]))
           return [items[i], items[j], items[k]];
     }
   return null;
@@ -530,7 +541,7 @@ function _concPintarResultado(texto) {
     ${tabla(filasApp, '✓ Nada de más: todo lo registrado salió del banco.')}
 
     ${r.desfases.length ? `
-      <h4 style="margin:18px 0 0">📅 Mismo importe con otra fecha — solo hay que corregir el día</h4>
+      <h4 style="margin:18px 0 0">📅 Posible desfase de fecha — mismo importe, otro día (revisa antes de dar por buena la pareja)</h4>
       ${tabla(filasDesfase)}` : ''}
 
     ${terceros.length ? `
