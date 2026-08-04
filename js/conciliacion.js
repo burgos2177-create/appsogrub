@@ -448,7 +448,8 @@ function _concPintarResultado(texto) {
   //   saldo de la app al corte = saldo de hoy − lo posterior al corte
   //   arrastre = (banco − app) al corte − Σ banco del periodo + Σ app del periodo
   const saldoAppHoy   = calcSaldoMifel();
-  const saldoAppCorte = saldoAppHoy - sum(todo.filter(m => m.fecha > hasta));
+  const posteriores   = todo.filter(m => m.fecha > hasta);
+  const saldoAppCorte = saldoAppHoy - sum(posteriores);
   const sumaBancoPer  = sum(banco);
   const sumaAppPer    = sum(todo.filter(m => m.fecha >= desde && m.fecha <= hasta));
 
@@ -537,9 +538,22 @@ function _concPintarResultado(texto) {
         <div class="text-muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">Saldos</div>
         <div style="display:flex;flex-direction:column;gap:4px;font-size:13px">
           ${fila('Estado de cuenta', saldoBanco ?? 0)}
-          ${fila('Saldo Mifel en la app', saldoAppCorte,
-            saldoAppCorte !== saldoAppHoy ? `Saldo al ${formatDate(hasta)} (hoy va en ${formatMXN(saldoAppHoy)})` : '')}
+          ${fila(`Saldo Mifel en la app${posteriores.length ? ` <span class="text-dim" style="font-size:11px">al ${formatDate(hasta)}</span>` : ''}`,
+            saldoAppCorte,
+            posteriores.length ? `Hoy va en ${formatMXN(saldoAppHoy)}` : '')}
           ${fila('Diferencia', diferencia, 'Positiva = el banco tiene más que la app', true)}
+          ${posteriores.length ? `
+            <div style="margin-top:8px;padding:8px 10px;background:var(--surface2);border-left:3px solid var(--warning);border-radius:var(--radius);font-size:11px;line-height:1.5;color:var(--text-muted)">
+              ⚠ Hay <b>${posteriores.length}</b> movimiento(s) en la app con fecha posterior al corte
+              del estado de cuenta (${formatDate(hasta)}), por ${formatMXN(sum(posteriores))}. Se
+              descuentan para comparar contra el mismo día. Si en realidad el banco ya los cobró
+              dentro del periodo, corrígeles la fecha:
+              <div style="margin-top:5px">
+                ${posteriores.slice(0, 5).map(m =>
+                  `· ${formatDate(m.fecha)} — ${(m.concepto || '—').slice(0, 45)} <b>${formatMXN(m.monto)}</b>`).join('<br>')}
+                ${posteriores.length > 5 ? `<br>· y ${posteriores.length - 5} más` : ''}
+              </div>
+            </div>` : ''}
         </div>
       </div>
       <div class="card" style="margin:0;padding:16px">
