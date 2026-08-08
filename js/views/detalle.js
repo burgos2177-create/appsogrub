@@ -263,6 +263,9 @@ function renderDetalleKPIs(proyectoId, proyecto) {
             <div class="progress-fill ${cls}" style="width:${Math.min(avance, 100)}%"></div>
           </div>`
         : (() => {
+            // Las dos barras comparten color de base a propósito: miden lo
+            // mismo (% del contrato) y sólo la brecha lleva color, que es lo
+            // único que hay que interpretar.
             // Capital ejecutado = valor de venta de lo ya producido, sobre el
             // mismo contrato que el gastado, para que las dos barras comparen.
             const ejec  = (trade.vEjec / (proyecto.presupuesto_contrato || 1)) * 100;
@@ -271,7 +274,10 @@ function renderDetalleKPIs(proyectoId, proyecto) {
             const ancho = Math.min(Math.abs(brecha), 100 - base);
             const color = brecha >= 0 ? 'var(--success)' : 'var(--danger)';
             return `
-        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:5px">
+        <div class="progress-bar" style="margin-top:4px;height:8px">
+          <div class="progress-fill" style="width:${Math.min(avance, 100)}%;background:var(--text-muted);opacity:.55"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:8px">
           <span style="font-size:11px;color:var(--text-muted)"
                 title="Valor de venta de la obra ya ejecutada (dato de estimaciones), como % del contrato.">
             🏗️ Capital ejecutado
