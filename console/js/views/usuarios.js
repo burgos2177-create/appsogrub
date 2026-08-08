@@ -1,4 +1,4 @@
-import { h, modal, toast } from '../util/dom.js?v=1';
+import { h, modal, toast } from '../util/dom.js?v=2';
 import { renderShell } from './shell.js?v=1';
 import { listUsers, listObras, ROLES, setUserRole, upsertProfile, setObraAsignada, createUser } from '../services/users.js?v=1';
 

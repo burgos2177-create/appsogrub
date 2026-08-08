@@ -1,4 +1,4 @@
-import { h, mount } from '../util/dom.js?v=1';
+import { h, mount } from '../util/dom.js?v=2';
 import { state } from '../state/store.js?v=1';
 import { logout } from '../services/auth.js?v=1';
 import { navigate, currentPath } from '../state/router.js?v=1';
