@@ -17,6 +17,7 @@ App web para el contador de SOGRUB. Sister apps: **app-estimaciones** (ingeniero
 | `/shared/catalogos/{obraId}/conceptos` | estimaciones | Solo lectura — usado para mapear `desglose_presupuesto`. |
 | `/shared/buzon/{itemId}` | cualquier app | Bus de aprobación cross-app. |
 | `/shared/obraLinks/{obraId}` | admin | Mapa `obraId → proyectoId` para resolver el proyecto contable a partir de la obra de campo. |
+| `/shared/avanceObra/{obraId}` | estimaciones | Solo lectura. Avance ejecutado a precio de catálogo — habilita la utilidad realizada (ver abajo). |
 | `/shared/cajaChica/{obraId}/{meta,movimientos}` | **materiales** y **esta app** | Ledger de caja chica por obra (saldo conciliado vive aquí, no en el ledger del proyecto). |
 
 ## Buzón cross-app — máquina de estados B1-B8
@@ -150,6 +151,50 @@ Comparado con `D:\apps-sogrub\app-materiales\CLAUDE.md` decisión #11:
 - ✓ Campo `origen` en cada movimiento de caja chica: `'materiales'` o `'bitacora'`. Útil para audit.
 
 Si en algún punto se cambia el modelo (cuenta separada por obra, IVA distinto, etc.), avisar a materiales para alinear.
+
+## Utilidad realizada vs flotante — la obra leída como un trade (2026-08-04)
+
+**El problema que resuelve:** bitácora sola no puede calcular utilidad. Lo único que tiene es
+`cobrado − gastado`, que es **flujo de caja**: el anticipo del cliente lo infla porque es dinero
+recibido por obra que todavía no se ejecuta. En Cimentación Ocaso ese número daba $271,146 (42.3%)
+cuando la utilidad realmente ganada era $5,741 (1.5%).
+
+El dato que faltaba lo publica **app-estimaciones** en `/shared/avanceObra/{obraId}`:
+`ejecutadoCatalogoSubtotal` = valor de **venta** de la obra ya ejecutada, a precio de catálogo y
+sin IVA. Se lee vía búsqueda inversa en `/shared/obraLinks` (`cargarAvanceObra` en
+`js/calculations.js`, cache en `_avanceObraCache`). Si el nodo no existe, la lectura sale
+"pendiente" en vez de inventar un número.
+
+**Fórmulas** (`calcLecturaTrade`, todo SIN IVA — el IVA es pass-through, no utilidad):
+
+```
+V_ejec      = ejecutadoCatalogoSubtotal        C_incurrido = gastado (pagado)
+V_contrato  = contratoSubtotal                 C_presup    = directo + ind. oficina + ind. campo
+
+Utilidad esperada (target)  = V_contrato − C_presup
+PnL realizado (ya ganado)   = V_ejec − C_incurrido
+PnL flotante (por ganar)    = Utilidad esperada − PnL realizado
+Margen realizado %          = PnL realizado / V_ejec          ← el margen honesto a la fecha
+Efectivo flotante cliente   = netoCobrado − V_ejec            ← en caja pero aún no es tuyo
+```
+
+Invariante: `PnL realizado + PnL flotante = Utilidad esperada`. Se muestra como línea de
+verificación en la tarjeta.
+
+**Dónde se ve:**
+- Detalle → KPI 📈 Utilidad: *Realizada* (V_ejec − gastado), *Esperada* (obra completa) y
+  *Flujo de caja* etiquetado explícitamente como "cobrado − gastado", ya no como utilidad.
+- Detalle → tab 📊 Análisis: tarjeta **📉 Lectura como trade** con PnL realizado, margen
+  realizado, PnL flotante, utilidad esperada y efectivo flotante del cliente.
+- La curva de acumulados trae una tercera línea, *Ejecutado a catálogo*: la brecha contra
+  gastado es el PnL realizado; la brecha contra cobrado es el anticipo aún no ganado.
+
+**Caveat de costos:** el realizado asume que lo gastado corresponde a lo ejecutado. Material
+comprado para obra futura lo hunde temporalmente (es inventario) y se recupera al instalarlo; el
+flotante lo absorbe, así que la utilidad esperada no se mueve. Va como nota al pie en la tarjeta.
+
+`updatedAt` del nodo se muestra como "hace X" — el dato se refresca cuando el ingeniero abre el
+RESUMEN en estimaciones, así que puede venir viejo.
 
 ## Estructura de archivos
 

@@ -210,6 +210,102 @@ function _aoKPIs(proyectoId) {
 }
 
 // =====================================================
+// TARJETA "LECTURA COMO TRADE"
+// Separa lo ganado de verdad (posición cerrada) de lo que todavía está por
+// materializarse (posición abierta). El anticipo del cliente NO es utilidad:
+// es efectivo flotante que se gana ejecutando.
+// =====================================================
+function _aoHaceCuanto(ms) {
+  const t = Number(ms);
+  if (!Number.isFinite(t) || t <= 0) return '';
+  const min = Math.floor((Date.now() - t) / 60000);
+  if (min < 1)    return 'hace un momento';
+  if (min < 60)   return `hace ${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 24)     return `hace ${h} h`;
+  const d = Math.floor(h / 24);
+  return d === 1 ? 'hace 1 día' : `hace ${d} días`;
+}
+
+function _aoTradeCard(proyectoId) {
+  const t = calcLecturaTrade(proyectoId);
+  const card = document.createElement('div');
+  card.className = 'card mb-24';
+
+  if (!t.tieneAvance) {
+    card.innerHTML = `
+      <h3 class="section-title" style="margin-bottom:6px">📉 Lectura como trade</h3>
+      <p class="text-muted text-sm" style="line-height:1.55;margin:0">
+        Pendiente: falta el avance de obra que publica la app de estimaciones
+        (<code>/shared/avanceObra</code>). Sin el valor de venta de lo ya ejecutado
+        no se puede separar la utilidad realizada del anticipo del cliente, y lo
+        único que se puede medir es flujo de caja.
+        ${t.obraId ? '' : '<br>Esta obra tampoco tiene vínculo en <code>/shared/obraLinks</code>.'}
+      </p>`;
+    return card;
+  }
+
+  const M = (v) => formatMXN(v);
+  const signo = (v) => v >= 0 ? 'text-success' : 'text-danger';
+
+  const bloque = (etiqueta, valor, sub, clase, grande) => `
+    <div style="flex:1;min-width:150px">
+      <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">${etiqueta}</div>
+      <div class="${clase || ''}" style="font-size:${grande ? 22 : 16}px;font-weight:700;font-variant-numeric:tabular-nums">${valor}</div>
+      ${sub ? `<div class="text-muted" style="font-size:11px;margin-top:2px;line-height:1.35">${sub}</div>` : ''}
+    </div>`;
+
+  card.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin-bottom:14px">
+      <h3 class="section-title" style="margin:0">📉 Lectura como trade</h3>
+      <span class="text-muted" style="font-size:11px">
+        Avance ejecutado ${t.avanceEjecutado !== null ? t.avanceEjecutado.toFixed(1) + '%' : '—'}
+        ${t.updatedAt ? ` · dato de estimaciones ${_aoHaceCuanto(t.updatedAt)}` : ''}
+      </span>
+    </div>
+
+    <div style="display:flex;gap:20px;flex-wrap:wrap;padding-bottom:14px;border-bottom:1px solid var(--border)">
+      ${bloque('✅ PnL realizado <span style="text-transform:none;letter-spacing:0">(ya ganado)</span>',
+        M(t.pnlRealizado),
+        `${M(t.vEjec)} ejecutado − ${M(t.cIncurrido)} gastado`, signo(t.pnlRealizado), true)}
+      ${bloque('Margen realizado',
+        t.margenRealizado !== null ? t.margenRealizado.toFixed(1) + '%' : '—',
+        t.margenEsperado !== null ? `esperado ${t.margenEsperado.toFixed(1)}%` : '', signo(t.pnlRealizado), true)}
+    </div>
+
+    <div style="display:flex;gap:20px;flex-wrap:wrap;padding:14px 0;border-bottom:1px solid var(--border)">
+      ${bloque('⏳ PnL flotante <span style="text-transform:none;letter-spacing:0">(por materializar)</span>',
+        M(t.pnlFlotante),
+        'lo que queda por ganar al terminar la obra', signo(t.pnlFlotante))}
+      ${bloque('🎯 Utilidad esperada',
+        M(t.utilidadEsperada),
+        `${M(t.vContrato)} contrato − ${M(t.cPresup)} costo presupuestado`, signo(t.utilidadEsperada))}
+    </div>
+
+    <div style="padding-top:14px">
+      ${bloque('💧 Efectivo flotante del cliente',
+        M(t.efectivoFlotante),
+        `${M(t.netoCobrado)} cobrado neto − ${M(t.vEjec)} ejecutado · dinero en tu caja que <b>aún no es tuyo</b>: se gana ejecutando`,
+        t.efectivoFlotante > 0 ? 'text-warning' : 'text-muted')}
+    </div>
+
+    <div style="margin-top:14px;padding:10px 12px;background:var(--surface2);border-radius:var(--radius);font-size:11px;color:var(--text-muted);line-height:1.55">
+      <div>✔ ${M(t.pnlRealizado)} realizado + ${M(t.pnlFlotante)} flotante = ${M(t.utilidadEsperada)} esperada</div>
+      <div style="margin-top:6px">
+        El <b>flujo de caja</b> (cobrado − gastado) de esta obra va en <b>${M(t.flujoCaja)}</b>, pero eso
+        no es utilidad: ${M(Math.max(0, t.efectivoFlotante))} de ese dinero es anticipo por obra que
+        todavía no ejecutas.
+      </div>
+      <div style="margin-top:6px">
+        El realizado asume que lo gastado corresponde a lo ejecutado. Si compraste material para obra
+        futura, se ve bajo temporalmente (es inventario) y se recupera al instalarlo — el flotante lo absorbe.
+      </div>
+    </div>
+  `;
+  return card;
+}
+
+// =====================================================
 // LECTURA FINANCIERA (insights automáticos)
 // =====================================================
 function _aoInsights(proyectoId, k) {
@@ -223,14 +319,21 @@ function _aoInsights(proyectoId, k) {
     push('ok', `El cliente va fondeando el gasto: lo cobrado supera lo gastado por <strong>${formatMXN(k.flujoNeto)}</strong>.`);
   }
 
-  // 2. Margen real vs planeado
-  if (k.margenReal !== null && k.margenPlan !== null) {
-    const diff = k.margenReal - k.margenPlan;
+  // 2. Margen REALIZADO vs esperado. Se compara contra lo ejecutado, no
+  // contra lo cobrado: el anticipo del cliente no es utilidad.
+  const t = calcLecturaTrade(proyectoId);
+  if (t.tieneAvance && t.margenRealizado !== null && t.margenEsperado !== null) {
+    const diff = t.margenRealizado - t.margenEsperado;
     if (diff < -5) {
-      push('warn', `El margen real a la fecha (<strong>${k.margenReal.toFixed(1)}%</strong>) va ${Math.abs(diff).toFixed(1)} pts abajo del planeado (${k.margenPlan.toFixed(1)}%). Ojo: puede ser timing de cobranza, pero si persiste al avanzar la obra, el costo está comiéndose la utilidad.`);
+      push('warn', `El margen <strong>realizado</strong> va en ${t.margenRealizado.toFixed(1)}% contra ${t.margenEsperado.toFixed(1)}% esperado — ${Math.abs(diff).toFixed(1)} pts abajo. De lo ejecutado (${formatMXN(t.vEjec)}) has ganado ${formatMXN(t.pnlRealizado)}. Si no es material comprado por adelantado, el costo se está comiendo la utilidad.`);
     } else {
-      push('ok', `El margen real a la fecha (<strong>${k.margenReal.toFixed(1)}%</strong>) va en línea o mejor que el planeado (${k.margenPlan.toFixed(1)}%).`);
+      push('ok', `El margen <strong>realizado</strong> (${t.margenRealizado.toFixed(1)}%) va en línea o mejor que el esperado (${t.margenEsperado.toFixed(1)}%).`);
     }
+    if (t.efectivoFlotante > 0) {
+      push('info', `De tu caja, <strong>${formatMXN(t.efectivoFlotante)}</strong> es anticipo del cliente por obra que aún no ejecutas: es dinero recibido, no ganado. Lo conviertes en utilidad ejecutando.`);
+    }
+  } else if (!t.tieneAvance) {
+    push('info', `Sin el avance de estimaciones solo se puede medir flujo de caja. La "utilidad" que ves como cobrado − gastado incluye el anticipo del cliente y sobrestima lo ganado.`);
   }
 
   // 3. Runway de caja
@@ -293,6 +396,7 @@ function renderAnalisisObraTab(proyectoId) {
   }
 
   const k = _aoKPIs(proyectoId);
+  const trade = calcLecturaTrade(proyectoId);
   const proyecto = getItem(KEYS.PROYECTOS, proyectoId);
 
   // ---- Toolbar de filtros ----
@@ -353,19 +457,26 @@ function renderAnalisisObraTab(proyectoId) {
       <div class="kpi-sub">lo que dura el saldo (${formatMXN(k.saldo)}) al ritmo actual</div>
     </div>
     <div class="kpi-card">
-      <div class="kpi-label">📐 Margen real a la fecha</div>
-      <div class="kpi-value ${k.margenReal === null ? 'text-muted' : k.margenReal >= 0 ? 'text-success' : 'text-danger'}" style="font-size:19px">
-        ${k.margenReal === null ? '—' : k.margenReal.toFixed(1) + '%'}
+      <div class="kpi-label">📐 Margen realizado</div>
+      <div class="kpi-value ${trade.margenRealizado === null ? 'text-muted' : trade.margenRealizado >= 0 ? 'text-success' : 'text-danger'}" style="font-size:19px">
+        ${trade.margenRealizado === null ? '—' : trade.margenRealizado.toFixed(1) + '%'}
       </div>
-      <div class="kpi-sub">${k.margenPlan !== null ? `planeado: ${k.margenPlan.toFixed(1)}%` : 'cobrado − gastado, sobre lo cobrado'}</div>
+      <div class="kpi-sub">${trade.tieneAvance
+        ? `${formatMXN(trade.pnlRealizado)} sobre lo ejecutado${trade.margenEsperado !== null ? ` · esperado ${trade.margenEsperado.toFixed(1)}%` : ''}`
+        : 'pendiente: falta el avance de estimaciones'}</div>
     </div>
     <div class="kpi-card">
-      <div class="kpi-label">⚖️ Cobrado − gastado</div>
+      <div class="kpi-label">⚖️ Flujo de caja <span style="font-weight:400;color:var(--text-muted)">(no es utilidad)</span></div>
       <div class="kpi-value ${k.flujoNeto >= 0 ? 'text-success' : 'text-danger'}" style="font-size:19px">${formatMXN(k.flujoNeto)}</div>
-      <div class="kpi-sub">${k.flujoNeto >= 0 ? 'el cliente fondea la obra' : 'financiado por SOGRUB'} · recibido de SOGRUB: ${formatMXN(k.sogrubNeto)}</div>
+      <div class="kpi-sub">${trade.tieneAvance && trade.efectivoFlotante > 0
+        ? `incluye ${formatMXN(trade.efectivoFlotante)} de anticipo aún no ganado`
+        : (k.flujoNeto >= 0 ? 'el cliente fondea la obra' : 'financiado por SOGRUB')} · de SOGRUB: ${formatMXN(k.sogrubNeto)}</div>
     </div>
   `;
   wrap.appendChild(kpis);
+
+  // ---- Lectura como trade (realizado vs flotante) ----
+  wrap.appendChild(_aoTradeCard(proyectoId));
 
   // ---- Lectura financiera ----
   const insights = _aoInsights(proyectoId, k);
@@ -407,7 +518,7 @@ function renderAnalisisObraTab(proyectoId) {
   grid.innerHTML = `
     ${_chartCard('ao-chart-caja', '💰 Evolución de la caja de la obra', 'Saldo disponible después de cada entrada y salida')}
     ${_chartCard('ao-chart-flujo', '⇄ Entradas vs salidas por periodo', 'Cobros al cliente y fondeo SOGRUB contra gasto ejecutado')}
-    ${_chartCard('ao-chart-acum', '📈 Curva cobrado vs gastado', 'Acumulados contra el monto del contrato — la brecha es la utilidad')}
+    ${_chartCard('ao-chart-acum', '📈 Curva cobrado vs gastado vs ejecutado', 'Ejecutado − gastado = utilidad realizada · cobrado − ejecutado = anticipo aún no ganado')}
     ${_chartCard('ao-chart-cat', '🧱 Composición del gasto por periodo', 'En qué se está yendo el dinero a lo largo del tiempo')}
   `;
   wrap.appendChild(grid);
@@ -504,6 +615,18 @@ function _aoBuildCharts(proyectoId, proyecto) {
       { label: 'Cobrado acumulado', data: s.cobradoAcum, borderColor: C.success, backgroundColor: C.success + '18', fill: 'origin', tension: 0.25, pointRadius: 0, borderWidth: 2 },
       { label: 'Gastado acumulado', data: s.gastadoAcum, borderColor: C.danger, backgroundColor: C.danger + '18', fill: 'origin', tension: 0.25, pointRadius: 0, borderWidth: 2 },
     ];
+    // Valor de venta de lo ya ejecutado. Estimaciones publica un solo dato
+    // (el acumulado de hoy), no una serie, así que va como línea de
+    // referencia: la brecha contra 'gastado' es el PnL realizado y la brecha
+    // contra 'cobrado' es el anticipo que todavía no se gana.
+    const trade = calcLecturaTrade(proyectoId);
+    if (trade.tieneAvance && trade.vEjec > 0) {
+      datasets.push({
+        label: 'Ejecutado a catálogo (hoy)',
+        data: s.labels.map(() => trade.vEjec),
+        borderColor: C.orange, borderDash: [8, 3], pointRadius: 0, borderWidth: 2,
+      });
+    }
     if (contrato > 0) {
       datasets.push({ label: 'Contrato', data: s.labels.map(() => contrato), borderColor: C.muted, borderDash: [6, 4], pointRadius: 0, borderWidth: 1.5 });
     }

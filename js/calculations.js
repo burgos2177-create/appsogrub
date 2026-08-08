@@ -496,6 +496,98 @@ function calcUtilidadEstimada(proyectoId) {
 }
 
 // =====================================================
+// AVANCE DE OBRA — lo publica app-estimaciones
+//
+// /shared/avanceObra/{obraId} trae el dato que a bitácora le faltaba para
+// medir utilidad de verdad: `ejecutadoCatalogoSubtotal`, el valor de VENTA
+// (a precio de catálogo, sin IVA) de la obra que YA se ejecutó. Sin ese
+// número, lo único que se puede calcular es cobrado − gastado, que es flujo
+// de caja y no utilidad: el anticipo del cliente lo infla.
+//
+// El vínculo proyecto↔obra sale de /shared/obraLinks por búsqueda inversa.
+// =====================================================
+const _avanceObraCache = {};   // proyectoId → { obraId, ...datos } | null
+
+function getAvanceObra(proyectoId) {
+  return _avanceObraCache[proyectoId] ?? null;
+}
+
+async function cargarAvanceObra(proyectoId, forzar = false) {
+  if (!forzar && _avanceObraCache[proyectoId] !== undefined) return _avanceObraCache[proyectoId];
+  try {
+    const links  = (await _dbRef('/shared/obraLinks').get()).val() || {};
+    const obraId = Object.entries(links).find(([, pid]) => String(pid) === String(proyectoId))?.[0];
+    if (!obraId) { _avanceObraCache[proyectoId] = null; return null; }
+
+    const val = (await _dbRef(`/shared/avanceObra/${obraId}`).get()).val();
+    _avanceObraCache[proyectoId] = val ? { obraId, ...val } : null;
+    return _avanceObraCache[proyectoId];
+  } catch (err) {
+    console.warn('[AvanceObra]', err);
+    // No se cachea el fallo: puede ser un corte de red y conviene reintentar.
+    return null;
+  }
+}
+
+// Costo presupuestado total = las tres bolsitas de gasto (directo + los dos
+// indirectos). No incluye financiamiento ni utilidad: eso es margen, no costo.
+function calcPresupuestoCostoTotal(proyectoId) {
+  const d = calcDesgloseContrato(getItem(KEYS.PROYECTOS, proyectoId) ?? {});
+  return d.costoDirecto + d.indOficina + d.indCampo;
+}
+
+// =====================================================
+// LECTURA TIPO "TRADE" — separa lo ganado de lo flotante
+//
+// La obra se lee como una posición: hay una parte cerrada (lo ejecutado, ya
+// ganado) y una abierta (lo que falta por ejecutar, todavía por materializar).
+//
+//   PnL realizado = venta de lo ejecutado − costo incurrido
+//   PnL flotante  = utilidad esperada − PnL realizado
+//   Efectivo flotante del cliente = cobrado neto − venta ejecutada
+//     → dinero que ya está en tu caja pero aún no es tuyo; se gana ejecutando.
+//
+// Todo SIN IVA: el IVA es un pass-through, no utilidad.
+//
+// Caveat de costos: el realizado asume que lo gastado corresponde a lo
+// ejecutado. Si se compró material para obra futura, el realizado se ve bajo
+// temporalmente (es inventario) y se recupera al instalarlo; el flotante lo
+// absorbe, así que la utilidad esperada no se mueve.
+// =====================================================
+function calcLecturaTrade(proyectoId) {
+  const avance   = getAvanceObra(proyectoId);
+  const d        = calcDesgloseContrato(getItem(KEYS.PROYECTOS, proyectoId) ?? {});
+
+  const cPresup     = d.costoDirecto + d.indOficina + d.indCampo;
+  const vContrato   = Number(avance?.contratoSubtotal) || d.contrato || 0;
+  const cIncurrido  = calcTotalGastadoPagado(proyectoId);
+  const netoCobrado = calcIVACobradoCliente(proyectoId).netoTotal;
+
+  const vEjecRaw    = Number(avance?.ejecutadoCatalogoSubtotal);
+  const tieneAvance = Number.isFinite(vEjecRaw);
+  const vEjec       = tieneAvance ? vEjecRaw : null;
+
+  const utilidadEsperada = vContrato - cPresup;
+  const pnlRealizado     = tieneAvance ? vEjec - cIncurrido : null;
+
+  return {
+    tieneAvance,
+    obraId:  avance?.obraId ?? null,
+    updatedAt: avance?.updatedAt ?? null,
+    vEjec, vContrato, cIncurrido, cPresup, netoCobrado,
+    utilidadEsperada,
+    pnlRealizado,
+    pnlFlotante:      tieneAvance ? utilidadEsperada - pnlRealizado : null,
+    margenRealizado:  (tieneAvance && vEjec > 0) ? (pnlRealizado / vEjec) * 100 : null,
+    margenEsperado:   vContrato > 0 ? (utilidadEsperada / vContrato) * 100 : null,
+    efectivoFlotante: tieneAvance ? netoCobrado - vEjec : null,
+    avanceEjecutado:  (tieneAvance && vContrato > 0) ? (vEjec / vContrato) * 100 : null,
+    // Cobrado − gastado. Es caja, NO utilidad: incluye el anticipo del cliente.
+    flujoCaja: netoCobrado - cIncurrido,
+  };
+}
+
+// =====================================================
 // REGLA 9 — Transferencia SOGRUB → Proyecto (doble registro)
 // =====================================================
 function ejecutarTransferenciaSOGRUB(proyectoId, monto, concepto, fecha) {

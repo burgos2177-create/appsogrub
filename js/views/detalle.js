@@ -18,6 +18,16 @@ function renderDetalle(proyectoId) {
     return;
   }
 
+  // ---- Avance de obra (app-estimaciones) ----
+  // Trae el valor de venta de lo ya ejecutado, sin el cual no se puede
+  // separar la utilidad realizada del anticipo del cliente. Llega async: al
+  // resolver se repintan los KPIs y, si está abierto, el tab de análisis.
+  cargarAvanceObra(proyectoId).then(() => {
+    if (_activeProyecto !== proyectoId) return;
+    refreshDetalleKPIs(proyectoId);
+    if (_detalleState.activeTab === 'analisis') renderAnalisisObraTab(proyectoId);
+  });
+
   // ---- Suscribir presupuesto OPUS en cuanto se abre el proyecto ----
   // (necesario para que buildGastoDesgloseSection tenga datos aunque el tab no se haya visitado)
   subscribePresupuesto(proyectoId, () => {
@@ -124,6 +134,7 @@ function renderDetalleKPIs(proyectoId, proyecto) {
   const totalGastado     = calcTotalGastadoPagado(proyectoId);
   const utilidadReal     = calcUtilidadReal(proyectoId);
   const utilidadEst      = calcUtilidadEstimada(proyectoId);
+  const trade            = calcLecturaTrade(proyectoId);
   const avance           = calcAvanceFinanciero(proyectoId);
   const avanceCobranza   = calcAvanceCobranza(proyectoId);
   const deudaPend        = calcDeudaPendiente(proyectoId);
@@ -204,12 +215,31 @@ function renderDetalleKPIs(proyectoId, proyecto) {
       <div class="kpi-label">📈 Utilidad</div>
       <div style="display:flex;flex-direction:column;gap:8px;margin-top:4px">
         <div>
-          <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:2px">Real a la fecha</div>
-          <div class="kpi-value ${utilidadReal >= 0 ? 'text-success' : 'text-danger'}" style="font-size:17px">${formatMXN(utilidadReal)}</div>
+          <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:2px"
+               title="Venta de lo ya ejecutado (a precio de catálogo, sin IVA) menos el costo incurrido. Esto es lo que de verdad has ganado.">
+            Realizada (lo ya ejecutado)
+          </div>
+          ${trade.tieneAvance ? `
+            <div class="kpi-value ${trade.pnlRealizado >= 0 ? 'text-success' : 'text-danger'}" style="font-size:17px">
+              ${formatMXN(trade.pnlRealizado)}
+              ${trade.margenRealizado !== null
+                ? `<span style="font-size:12px;color:var(--text-muted);font-weight:400"> · ${trade.margenRealizado.toFixed(1)}%</span>` : ''}
+            </div>`
+          : `<div class="text-muted" style="font-size:12px;line-height:1.4">Pendiente — requiere el avance de la app de estimaciones</div>`}
         </div>
         <div style="border-top:1px solid var(--border);padding-top:8px">
-          <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:2px">Estimada (100% contrato)</div>
-          <div class="kpi-value ${utilidadEst >= 0 ? 'text-success' : 'text-danger'}" style="font-size:17px">${formatMXN(utilidadEst)}</div>
+          <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:2px"
+               title="Contrato menos costo presupuestado. Es el objetivo de la obra si todo sale según lo planeado.">
+            Esperada (obra completa)
+          </div>
+          <div class="kpi-value ${trade.utilidadEsperada >= 0 ? 'text-success' : 'text-danger'}" style="font-size:17px">${formatMXN(trade.utilidadEsperada)}</div>
+        </div>
+        <div style="border-top:1px solid var(--border);padding-top:8px">
+          <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:2px"
+               title="Cobrado menos gastado. Es caja, no utilidad: incluye el anticipo del cliente por obra que todavía no ejecutas.">
+            Flujo de caja <span style="text-transform:none;letter-spacing:0">(cobrado − gastado)</span>
+          </div>
+          <div class="${utilidadReal >= 0 ? 'text-success' : 'text-danger'}" style="font-size:15px;font-weight:600">${formatMXN(utilidadReal)}</div>
         </div>
       </div>
     </div>
