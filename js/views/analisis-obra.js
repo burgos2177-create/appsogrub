@@ -65,6 +65,17 @@ function _aoNextBucket(key, gran) {
   return `${y}-${String(m).padStart(2, '0')}`;
 }
 
+// Último día que cubre un bucket, para saber qué foto del ejecutado aplica.
+function _aoFinBucket(key, gran) {
+  if (gran === 'semana') {
+    const d = new Date(key + 'T12:00');
+    d.setDate(d.getDate() + 6);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+  const [y, m] = key.split('-').map(Number);
+  return `${key}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`;
+}
+
 function _aoBucketLabel(key, gran) {
   if (gran === 'semana') {
     const d = new Date(key + 'T00:00:00');
@@ -536,8 +547,11 @@ function renderAnalisisObraTab(proyectoId) {
         ? `<b>Hoy:</b> ejecutado ${formatMXN(trade.vEjec)} − gastado ${formatMXN(trade.cIncurrido)} =
            <b class="${trade.pnlRealizado >= 0 ? 'text-success' : 'text-danger'}">${formatMXN(trade.pnlRealizado)}</b> de utilidad realizada ·
            cobrado − ejecutado = ${formatMXN(trade.efectivoFlotante)} de anticipo aún no ganado.
-           <span class="text-dim">La línea de ejecutado es plana porque estimaciones publica un solo
-           acumulado, el de hoy: las brechas solo se leen en el extremo derecho.</span>`
+           ${Object.keys(getAvanceHistorial(proyectoId)).length >= 2
+             ? `<span class="text-dim">La curva de ejecutado es escalonada: cada escalón es una lectura
+                del avance, y el valor se mantiene hasta la siguiente.</span>`
+             : `<span class="text-dim">La línea de ejecutado es plana porque todavía hay una sola
+                lectura del avance: por ahora la brecha solo se lee en el extremo derecho.</span>`}`
         : 'Ejecutado − gastado = utilidad realizada · cobrado − ejecutado = anticipo aún no ganado')}
     ${_chartCard('ao-chart-cat', '🧱 Composición del gasto por periodo', 'En qué se está yendo el dinero a lo largo del tiempo')}
   `;
@@ -635,12 +649,21 @@ function _aoBuildCharts(proyectoId, proyecto) {
       { label: 'Cobrado acumulado', data: s.cobradoAcum, borderColor: C.success, backgroundColor: C.success + '18', fill: 'origin', tension: 0.25, pointRadius: 0, borderWidth: 2 },
       { label: 'Gastado acumulado', data: s.gastadoAcum, borderColor: C.danger, backgroundColor: C.danger + '18', fill: 'origin', tension: 0.25, pointRadius: 0, borderWidth: 2 },
     ];
-    // Valor de venta de lo ya ejecutado. Estimaciones publica un solo dato
-    // (el acumulado de hoy), no una serie, así que va como línea de
-    // referencia: la brecha contra 'gastado' es el PnL realizado y la brecha
-    // contra 'cobrado' es el anticipo que todavía no se gana.
-    const trade = calcLecturaTrade(proyectoId);
-    if (trade.tieneAvance && trade.vEjec > 0) {
+    // Valor de venta de lo ya ejecutado. Estimaciones publica un solo dato (el
+    // acumulado de hoy), así que bitácora lo fotografía cada vez que lo lee: con
+    // dos o más fotos ya se puede dibujar la curva real, escalonada porque el
+    // valor se mantiene hasta la siguiente lectura. Con una sola foto se cae a
+    // la línea de referencia plana, que solo se lee en el extremo derecho.
+    const trade  = calcLecturaTrade(proyectoId);
+    const nFotos = Object.keys(getAvanceHistorial(proyectoId)).length;
+    if (trade.tieneAvance && nFotos >= 2) {
+      datasets.push({
+        label: 'Ejecutado a catálogo',
+        data: s.keys.map(k => avanceEjecutadoEnFecha(proyectoId, _aoFinBucket(k, _aoState.gran))),
+        borderColor: C.orange, backgroundColor: C.orange + '14',
+        stepped: true, spanGaps: false, pointRadius: 0, borderWidth: 2,
+      });
+    } else if (trade.tieneAvance && trade.vEjec > 0) {
       datasets.push({
         label: 'Ejecutado a catálogo (hoy)',
         data: s.labels.map(() => trade.vEjec),

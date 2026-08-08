@@ -507,9 +507,29 @@ function calcUtilidadEstimada(proyectoId) {
 // El vínculo proyecto↔obra sale de /shared/obraLinks por búsqueda inversa.
 // =====================================================
 const _avanceObraCache = {};   // proyectoId → { obraId, ...datos } | null
+const _avanceHistCache = {};   // proyectoId → { 'YYYY-MM-DD': ejecutadoCatalogoSubtotal }
 
 function getAvanceObra(proyectoId) {
   return _avanceObraCache[proyectoId] ?? null;
+}
+
+// Historial propio del ejecutado. Estimaciones publica un único acumulado —el
+// de hoy—, así que la única forma de tener la curva es fotografiarlo: cada vez
+// que se lee, se guarda el valor del día en /legacy/bitacora. No recupera el
+// pasado, pero de aquí en adelante la serie se construye sola.
+function getAvanceHistorial(proyectoId) {
+  return _avanceHistCache[proyectoId] ?? {};
+}
+
+// Último valor conocido en o antes de `fechaISO` (curva escalonada).
+function avanceEjecutadoEnFecha(proyectoId, fechaISO) {
+  const hist = getAvanceHistorial(proyectoId);
+  let mejor = null;
+  for (const f of Object.keys(hist).sort()) {
+    if (f > fechaISO) break;
+    mejor = Number(hist[f]);
+  }
+  return Number.isFinite(mejor) ? mejor : null;
 }
 
 async function cargarAvanceObra(proyectoId, forzar = false) {
@@ -524,6 +544,19 @@ async function cargarAvanceObra(proyectoId, forzar = false) {
     // que estimaciones aún no le publica el avance", y el mensaje debe decir cuál.
     const val = (await _dbRef(`/shared/avanceObra/${obraId}`).get()).val();
     _avanceObraCache[proyectoId] = val ? { obraId, ...val } : { obraId, sinDatos: true };
+
+    // Foto del día + historial acumulado (ver getAvanceHistorial).
+    const ejec = Number(val?.ejecutadoCatalogoSubtotal);
+    if (Number.isFinite(ejec)) {
+      const hoy = new Date().toISOString().slice(0, 10);
+      _dbRef(`sogrub_avance_historial/${proyectoId}/${hoy}`).set(ejec)
+        .catch(e => console.warn('[AvanceObra snapshot]', e));
+    }
+    try {
+      _avanceHistCache[proyectoId] =
+        (await _dbRef(`sogrub_avance_historial/${proyectoId}`).get()).val() || {};
+    } catch { _avanceHistCache[proyectoId] = {}; }
+
     return _avanceObraCache[proyectoId];
   } catch (err) {
     console.warn('[AvanceObra]', err);
