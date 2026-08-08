@@ -313,6 +313,23 @@ function _aoTradeCard(proyectoId) {
         t.efectivoFlotante > 0 ? 'text-warning' : 'text-muted')}
     </div>
 
+    ${(() => {
+      const v = avanceValidacionRaiz(proyectoId);
+      const abierta = avanceEstimacionAbierta(proyectoId);
+      const hist = getAvanceHistorial(proyectoId).filter(h => h.estado !== 'abierta');
+      if (!hist.length) return '';
+      return `
+        <div style="margin-top:14px;padding:10px 12px;border-radius:var(--radius);font-size:11px;line-height:1.55;
+             background:var(--surface2);border-left:3px solid ${v && !v.cuadra ? 'var(--warning)' : 'var(--success)'};color:var(--text-muted)">
+          <b>${hist.length}</b> estimación(es) cerrada(s) · última la #${hist[hist.length - 1].numero}
+          al ${formatDate(hist[hist.length - 1].fechaCierre)}
+          ${v ? (v.cuadra
+            ? ' · ✔ amarra con el acumulado del nodo'
+            : ` · ⚠ el acumulado del nodo (${M(v.raiz)}) difiere ${M(Math.abs(v.dif))} del último cierre (${M(v.ultimo.acumulado)}); revisa qué publicó estimaciones`) : ''}
+          ${abierta ? `<br>Hay una estimación en curso (#${abierta.numero}, ${M(abierta.acumulado)} acumulados) que <b>no</b> entra en la curva ni en el realizado: todavía no es valor cerrado.` : ''}
+        </div>`;
+    })()}
+
     <div style="margin-top:14px;padding:10px 12px;background:var(--surface2);border-radius:var(--radius);font-size:11px;color:var(--text-muted);line-height:1.55">
       <div>✔ ${M(t.pnlRealizado)} realizado + ${M(t.pnlFlotante)} flotante = ${M(t.utilidadEsperada)} esperada</div>
       <div style="margin-top:6px">
@@ -547,9 +564,9 @@ function renderAnalisisObraTab(proyectoId) {
         ? `<b>Hoy:</b> ejecutado ${formatMXN(trade.vEjec)} − gastado ${formatMXN(trade.cIncurrido)} =
            <b class="${trade.pnlRealizado >= 0 ? 'text-success' : 'text-danger'}">${formatMXN(trade.pnlRealizado)}</b> de utilidad realizada ·
            cobrado − ejecutado = ${formatMXN(trade.efectivoFlotante)} de anticipo aún no ganado.
-           ${Object.keys(getAvanceHistorial(proyectoId)).length >= 2
-             ? `<span class="text-dim">La curva de ejecutado es escalonada: cada escalón es una lectura
-                del avance, y el valor se mantiene hasta la siguiente.</span>`
+           ${avanceNumPuntos(proyectoId) >= 2
+             ? `<span class="text-dim">Cada escalón del ejecutado es una estimación cerrada; la
+                pendiente entre escalones es el ritmo al que se realiza la utilidad.</span>`
              : `<span class="text-dim">La línea de ejecutado es plana porque todavía hay una sola
                 lectura del avance: por ahora la brecha solo se lee en el extremo derecho.</span>`}`
         : 'Ejecutado − gastado = utilidad realizada · cobrado − ejecutado = anticipo aún no ganado')}
@@ -655,7 +672,7 @@ function _aoBuildCharts(proyectoId, proyecto) {
     // valor se mantiene hasta la siguiente lectura. Con una sola foto se cae a
     // la línea de referencia plana, que solo se lee en el extremo derecho.
     const trade  = calcLecturaTrade(proyectoId);
-    const nFotos = Object.keys(getAvanceHistorial(proyectoId)).length;
+    const nFotos = avanceNumPuntos(proyectoId);
     if (trade.tieneAvance && nFotos >= 2) {
       datasets.push({
         label: 'Ejecutado a catálogo',

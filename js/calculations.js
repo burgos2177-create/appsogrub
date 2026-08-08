@@ -507,33 +507,87 @@ function calcUtilidadEstimada(proyectoId) {
 // El vínculo proyecto↔obra sale de /shared/obraLinks por búsqueda inversa.
 // =====================================================
 const _avanceObraCache = {};   // proyectoId → { obraId, ...datos } | null
-const _avanceHistCache = {};   // proyectoId → { 'YYYY-MM-DD': ejecutadoCatalogoSubtotal }
+const _avanceHistCache = {};   // proyectoId → [ punto por estimación, ordenado ]
+const _avanceSnapsCache = {};  // proyectoId → { 'YYYY-MM-DD': valor }  (fallback propio)
 
 function getAvanceObra(proyectoId) {
   return _avanceObraCache[proyectoId] ?? null;
 }
 
-// Historial propio del ejecutado. Estimaciones publica un único acumulado —el
-// de hoy—, así que la única forma de tener la curva es fotografiarlo: cada vez
-// que se lee, se guarda el valor del día en /legacy/bitacora. No recupera el
-// pasado, pero de aquí en adelante la serie se construye sola.
+// Historial por estimación que publica estimaciones en
+// /shared/avanceObra/{obraId}/historial. Un punto por estimación, con el
+// ACUMULADO sin IVA a su fecha de corte.
 function getAvanceHistorial(proyectoId) {
-  return _avanceHistCache[proyectoId] ?? {};
+  return _avanceHistCache[proyectoId] ?? [];
 }
 
-// Último valor conocido en o antes de `fechaISO` (curva escalonada).
+function _normalizarHistorialAvance(raw) {
+  return Object.entries(raw || {})
+    .map(([id, h]) => ({
+      id,
+      numero:       Number(h?.numero) || 0,
+      estado:       h?.estado === 'abierta' ? 'abierta' : 'cerrada',
+      fechaCierre:  typeof h?.fechaCierre === 'string' ? h.fechaCierre.slice(0, 10) : null,
+      acumulado:    Number(h?.ejecutadoCatalogoSubtotal),
+      delPeriodo:   Number(h?.ejecutadoPeriodoSubtotal),
+      periodoDesde: h?.periodoDesde ?? null,
+      periodoHasta: h?.periodoHasta ?? null,
+      avancePct:    Number(h?.avancePct),
+    }))
+    .filter(h => h.fechaCierre && Number.isFinite(h.acumulado))
+    .sort((a, b) => (a.numero - b.numero) || a.fechaCierre.localeCompare(b.fechaCierre));
+}
+
+// Puntos utilizables para dibujar la curva. Se prefiere el historial de
+// estimaciones; si la obra todavía no lo tiene, se cae a las fotos diarias que
+// bitácora se guarda por su cuenta.
+function avanceNumPuntos(proyectoId) {
+  const cerradas = getAvanceHistorial(proyectoId).filter(h => h.estado !== 'abierta').length;
+  return cerradas || Object.keys(_avanceSnapsCache[proyectoId] ?? {}).length;
+}
+
+// Acumulado ejecutado vigente en `fechaISO` — da la curva escalonada: el valor
+// de una estimación se mantiene hasta que cierra la siguiente. Las estimaciones
+// 'abierta' se excluyen: todavía no son valor cerrado.
 function avanceEjecutadoEnFecha(proyectoId, fechaISO) {
   const hist = getAvanceHistorial(proyectoId);
   let mejor = null;
-  for (const f of Object.keys(hist).sort()) {
-    if (f > fechaISO) break;
-    mejor = Number(hist[f]);
+  if (hist.length) {
+    for (const h of hist) {
+      if (h.estado === 'abierta') continue;
+      if (h.fechaCierre <= fechaISO) mejor = h.acumulado;
+    }
+    return mejor;
+  }
+  const snaps = _avanceSnapsCache[proyectoId] ?? {};
+  for (const f of Object.keys(snaps).sort()) {
+    if (f <= fechaISO) mejor = Number(snaps[f]);
   }
   return Number.isFinite(mejor) ? mejor : null;
 }
 
-async function cargarAvanceObra(proyectoId, forzar = false) {
-  if (!forzar && _avanceObraCache[proyectoId] !== undefined) return _avanceObraCache[proyectoId];
+// El último punto cerrado del historial debe coincidir con el campo raíz
+// (misma definición). Si no amarran, algo se publicó a medias y conviene verlo
+// antes de creerle a la utilidad realizada.
+function avanceValidacionRaiz(proyectoId) {
+  const av   = getAvanceObra(proyectoId);
+  const hist = getAvanceHistorial(proyectoId).filter(h => h.estado !== 'abierta');
+  const raiz = Number(av?.ejecutadoCatalogoSubtotal);
+  if (!hist.length || !Number.isFinite(raiz)) return null;
+  const ultimo = hist[hist.length - 1];
+  const dif = raiz - ultimo.acumulado;
+  return { raiz, ultimo, dif, cuadra: Math.abs(dif) <= 1 };
+}
+
+// La estimación en curso, si estimaciones la publica.
+function avanceEstimacionAbierta(proyectoId) {
+  return getAvanceHistorial(proyectoId).find(h => h.estado === 'abierta') ?? null;
+}
+
+// Siempre relee: la llave del historial es el id de estimación y si reabren o
+// corrigen una, esos puntos se reescriben. Cachear la serie dejaría la curva
+// vieja en pantalla sin forma de saberlo.
+async function cargarAvanceObra(proyectoId) {
   try {
     const links  = (await _dbRef('/shared/obraLinks').get()).val() || {};
     const obraId = Object.entries(links).find(([, pid]) => String(pid) === String(proyectoId))?.[0];
@@ -544,18 +598,21 @@ async function cargarAvanceObra(proyectoId, forzar = false) {
     // que estimaciones aún no le publica el avance", y el mensaje debe decir cuál.
     const val = (await _dbRef(`/shared/avanceObra/${obraId}`).get()).val();
     _avanceObraCache[proyectoId] = val ? { obraId, ...val } : { obraId, sinDatos: true };
+    _avanceHistCache[proyectoId] = _normalizarHistorialAvance(val?.historial);
 
-    // Foto del día + historial acumulado (ver getAvanceHistorial).
+    // Fallback para obras que aún no traen historial: bitácora se guarda una
+    // foto diaria del acumulado. Con historial publicado ya no hace falta y no
+    // se escribe nada.
     const ejec = Number(val?.ejecutadoCatalogoSubtotal);
-    if (Number.isFinite(ejec)) {
+    if (!_avanceHistCache[proyectoId].length && Number.isFinite(ejec)) {
       const hoy = new Date().toISOString().slice(0, 10);
       _dbRef(`sogrub_avance_historial/${proyectoId}/${hoy}`).set(ejec)
         .catch(e => console.warn('[AvanceObra snapshot]', e));
+      try {
+        _avanceSnapsCache[proyectoId] =
+          (await _dbRef(`sogrub_avance_historial/${proyectoId}`).get()).val() || {};
+      } catch { _avanceSnapsCache[proyectoId] = {}; }
     }
-    try {
-      _avanceHistCache[proyectoId] =
-        (await _dbRef(`sogrub_avance_historial/${proyectoId}`).get()).val() || {};
-    } catch { _avanceHistCache[proyectoId] = {}; }
 
     return _avanceObraCache[proyectoId];
   } catch (err) {

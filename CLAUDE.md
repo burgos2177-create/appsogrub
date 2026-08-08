@@ -196,6 +196,26 @@ flotante lo absorbe, así que la utilidad esperada no se mueve. Va como nota al 
 `updatedAt` del nodo se muestra como "hace X" — el dato se refresca cuando el ingeniero abre el
 RESUMEN en estimaciones, así que puede venir viejo.
 
+**Historial por estimación (2026-08-08).** El nodo trae además
+`historial/{estimacionId} = { numero, estado:'cerrada'|'abierta', fechaCierre, periodoDesde,
+periodoHasta, ejecutadoCatalogoSubtotal (ACUMULADO sin IVA), ejecutadoPeriodoSubtotal, avancePct,
+updatedAt }`. Con eso la curva de *Ejecutado a catálogo* deja de ser una recta y se dibuja
+escalonada de verdad — un escalón por estimación semanal, y la pendiente entre escalones es el
+ritmo al que se realiza la utilidad.
+
+- `_normalizarHistorialAvance` ordena por `numero` y cae a `fechaCierre` si empatan.
+- Las `estado:'abierta'` se **excluyen** de la curva y del realizado: no son valor cerrado. Si
+  existe una, la tarjeta lo dice para que nadie la busque en la gráfica.
+- `avanceEjecutadoEnFecha` da el acumulado vigente en una fecha (el valor se mantiene hasta el
+  siguiente cierre); antes del primer cierre devuelve `null` para que la línea no arranque en cero.
+- `avanceValidacionRaiz` compara el último cierre contra el campo raíz —deben coincidir por
+  definición— y avisa en la tarjeta si no amarran.
+- **No se cachea la serie**: la llave es el id de estimación y al reabrir o corregir una se
+  reescriben esos puntos, así que `cargarAvanceObra` relee el nodo en cada apertura del proyecto.
+- Fallback para obras sin `historial`: bitácora guarda una foto diaria del acumulado en
+  `/legacy/bitacora/sogrub_avance_historial/{proyectoId}/{fecha}`. En cuanto la obra tiene
+  historial publicado deja de escribirlas y usa el de estimaciones.
+
 ## Estructura de archivos
 
 ```
