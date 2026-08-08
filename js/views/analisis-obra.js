@@ -235,13 +235,26 @@ function _aoTradeCard(proyectoId) {
   if (!t.tieneAvance) {
     card.innerHTML = `
       <h3 class="section-title" style="margin-bottom:6px">📉 Lectura como trade</h3>
-      <p class="text-muted text-sm" style="line-height:1.55;margin:0">
-        Pendiente: falta el avance de obra que publica la app de estimaciones
-        (<code>/shared/avanceObra</code>). Sin el valor de venta de lo ya ejecutado
-        no se puede separar la utilidad realizada del anticipo del cliente, y lo
-        único que se puede medir es flujo de caja.
-        ${t.obraId ? '' : '<br>Esta obra tampoco tiene vínculo en <code>/shared/obraLinks</code>.'}
-      </p>`;
+      <p class="text-muted text-sm" style="line-height:1.55;margin:0 0 10px">
+        Pendiente: sin el valor de venta de lo ya ejecutado no se puede separar la
+        utilidad realizada del anticipo del cliente, y lo único medible es flujo de caja.
+      </p>
+      ${t.obraId ? `
+        <div style="padding:10px 12px;background:var(--surface2);border-left:3px solid var(--accent);border-radius:var(--radius);font-size:12px;line-height:1.6;color:var(--text-muted)">
+          La obra <b>sí está vinculada</b> (<code>${t.obraId}</code>), pero estimaciones todavía
+          no publica su avance en <code>/shared/avanceObra/${t.obraId}</code>.
+          <div style="margin-top:6px">
+            <b>Cómo activarlo:</b> bitácora solo <i>lee</i> ese dato — lo escribe la app de
+            estimaciones. Pídele al ingeniero que abra la obra y entre al
+            <b>RESUMEN</b>: al hacerlo se publica el avance ejecutado y esta tarjeta se llena sola.
+          </div>
+        </div>`
+      : `
+        <div style="padding:10px 12px;background:var(--surface2);border-left:3px solid var(--warning);border-radius:var(--radius);font-size:12px;line-height:1.6;color:var(--text-muted)">
+          Este proyecto <b>no tiene obra vinculada</b> en <code>/shared/obraLinks</code>, así que
+          no hay de dónde leer el avance. El pareo se hace desde estimaciones
+          (Admin → Vincular obras ↔ proyectos) o desde la consola central.
+        </div>`}`;
     return card;
   }
 

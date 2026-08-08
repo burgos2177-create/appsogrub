@@ -519,8 +519,11 @@ async function cargarAvanceObra(proyectoId, forzar = false) {
     const obraId = Object.entries(links).find(([, pid]) => String(pid) === String(proyectoId))?.[0];
     if (!obraId) { _avanceObraCache[proyectoId] = null; return null; }
 
+    // Si hay vínculo pero todavía no hay nodo de avance, se conserva el obraId
+    // con `sinDatos`: no es lo mismo "obra sin parear" que "obra pareada a la
+    // que estimaciones aún no le publica el avance", y el mensaje debe decir cuál.
     const val = (await _dbRef(`/shared/avanceObra/${obraId}`).get()).val();
-    _avanceObraCache[proyectoId] = val ? { obraId, ...val } : null;
+    _avanceObraCache[proyectoId] = val ? { obraId, ...val } : { obraId, sinDatos: true };
     return _avanceObraCache[proyectoId];
   } catch (err) {
     console.warn('[AvanceObra]', err);
