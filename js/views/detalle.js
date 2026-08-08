@@ -252,12 +252,46 @@ function renderDetalleKPIs(proyectoId, proyecto) {
       <div class="kpi-sub">cobrado de ${formatMXN(proyecto.presupuesto_contrato)} contratados</div>
       <div style="margin-top:8px;border-top:1px solid var(--border);padding-top:6px">
         <div style="display:flex;justify-content:space-between;align-items:baseline">
-          <span style="font-size:11px;color:var(--text-muted)">Gasto ejecutado</span>
+          <span style="font-size:11px;color:var(--text-muted)"
+                title="Lo que la empresa ya tuvo que poner para sacar la obra adelante, como % del contrato.">
+            💸 Capital gastado
+          </span>
           <strong style="font-size:12px;font-variant-numeric:tabular-nums">${avance.toFixed(1)}%</strong>
         </div>
-        <div class="progress-bar" style="margin-top:4px;height:4px">
-          <div class="progress-fill ${cls}" style="width:${Math.min(avance,100)}%"></div>
+        ${!trade.tieneAvance ? `
+          <div class="progress-bar" style="margin-top:4px;height:6px">
+            <div class="progress-fill ${cls}" style="width:${Math.min(avance, 100)}%"></div>
+          </div>`
+        : (() => {
+            // Capital ejecutado = valor de venta de lo ya producido, sobre el
+            // mismo contrato que el gastado, para que las dos barras comparen.
+            const ejec  = (trade.vEjec / (proyecto.presupuesto_contrato || 1)) * 100;
+            const brecha = ejec - avance;                 // + produces más de lo que gastas
+            const base  = Math.max(0, Math.min(avance, ejec));
+            const ancho = Math.min(Math.abs(brecha), 100 - base);
+            const color = brecha >= 0 ? 'var(--success)' : 'var(--danger)';
+            return `
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:5px">
+          <span style="font-size:11px;color:var(--text-muted)"
+                title="Valor de venta de la obra ya ejecutada (dato de estimaciones), como % del contrato.">
+            🏗️ Capital ejecutado
+          </span>
+          <strong style="font-size:12px;font-variant-numeric:tabular-nums">${ejec.toFixed(1)}%</strong>
         </div>
+        <div class="progress-bar" style="margin-top:4px;height:8px;position:relative;overflow:hidden"
+             title="La barra llega hasta el menor de los dos; el tramo de color es la brecha entre ejecutado y gastado.">
+          <div style="position:absolute;inset:0 auto 0 0;width:${Math.min(base, 100)}%;background:var(--text-muted);opacity:.55"></div>
+          <div style="position:absolute;top:0;bottom:0;left:${Math.min(base, 100)}%;width:${ancho}%;background:${color}"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:4px">
+          <span style="font-size:10px;color:var(--text-muted)">
+            ${brecha >= 0 ? 'Produces más de lo que gastas' : 'Gastas más de lo que produces'}
+          </span>
+          <strong style="font-size:11px;font-variant-numeric:tabular-nums;color:${color}">
+            ${brecha >= 0 ? '+' : '−'}${Math.abs(brecha).toFixed(1)} pts
+          </strong>
+        </div>`;
+          })()}
       </div>
     </div>
     <div class="kpi-card" id="kpi-deuda-pendiente-${proyectoId}">
