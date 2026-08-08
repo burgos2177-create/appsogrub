@@ -531,7 +531,14 @@ function renderAnalisisObraTab(proyectoId) {
   grid.innerHTML = `
     ${_chartCard('ao-chart-caja', '💰 Evolución de la caja de la obra', 'Saldo disponible después de cada entrada y salida')}
     ${_chartCard('ao-chart-flujo', '⇄ Entradas vs salidas por periodo', 'Cobros al cliente y fondeo SOGRUB contra gasto ejecutado')}
-    ${_chartCard('ao-chart-acum', '📈 Curva cobrado vs gastado vs ejecutado', 'Ejecutado − gastado = utilidad realizada · cobrado − ejecutado = anticipo aún no ganado')}
+    ${_chartCard('ao-chart-acum', '📈 Curva cobrado vs gastado vs ejecutado',
+      trade.tieneAvance
+        ? `<b>Hoy:</b> ejecutado ${formatMXN(trade.vEjec)} − gastado ${formatMXN(trade.cIncurrido)} =
+           <b class="${trade.pnlRealizado >= 0 ? 'text-success' : 'text-danger'}">${formatMXN(trade.pnlRealizado)}</b> de utilidad realizada ·
+           cobrado − ejecutado = ${formatMXN(trade.efectivoFlotante)} de anticipo aún no ganado.
+           <span class="text-dim">La línea de ejecutado es plana porque estimaciones publica un solo
+           acumulado, el de hoy: las brechas solo se leen en el extremo derecho.</span>`
+        : 'Ejecutado − gastado = utilidad realizada · cobrado − ejecutado = anticipo aún no ganado')}
     ${_chartCard('ao-chart-cat', '🧱 Composición del gasto por periodo', 'En qué se está yendo el dinero a lo largo del tiempo')}
   `;
   wrap.appendChild(grid);
