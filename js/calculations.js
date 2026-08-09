@@ -681,6 +681,58 @@ function calcLecturaTrade(proyectoId) {
 }
 
 // =====================================================
+// VALOR GANADO (earned value) — el índice de costo honesto
+//
+// El ejecutado viene a precio de VENTA, así que ejecutado/gastado da un número
+// mayor a 1 que no es eficiencia: es el margen otra vez, con otro nombre. Para
+// medir si la obra hecha está costando lo presupuestado hay que valuar ese
+// ejecutado a COSTO, con la misma proporción costo/venta del presupuesto:
+//
+//   EV_costo = ejecutado × (costo presupuestado / contrato)
+//   CPI      = EV_costo / costo incurrido       CPI = 1 → exactamente en presupuesto
+//
+// De ahí sale la proyección a terminación, que es lo que de verdad interesa:
+// si el ritmo de costo se mantiene, ¿en cuánto acaba la obra y con qué utilidad?
+//
+//   Costo final estimado = costo presupuestado / CPI
+//   Utilidad proyectada  = contrato − costo final estimado
+//
+// No incluye SPI ni curva S: eso necesita el programa de obra (valor planeado),
+// que bitácora no tiene. Inventarlo sería medir contra una referencia falsa.
+// =====================================================
+function calcValorGanado(proyectoId) {
+  const t = calcLecturaTrade(proyectoId);
+  if (!t.tieneAvance || !(t.vContrato > 0) || !(t.cIncurrido > 0)) return null;
+
+  const factorCosto = t.cPresup / t.vContrato;
+  const evCosto     = t.vEjec * factorCosto;
+  const cpi         = evCosto / t.cIncurrido;
+  const costoFinal  = cpi > 0 ? t.cPresup / cpi : null;
+
+  return {
+    factorCosto, evCosto, cpi,
+    // + ahorro · − sobrecosto sobre la obra ya hecha
+    variacionCosto: evCosto - t.cIncurrido,
+    costoFinalEstimado: costoFinal,
+    utilidadProyectada: costoFinal !== null ? t.vContrato - costoFinal : null,
+    utilidadEsperada:   t.utilidadEsperada,
+    desvioUtilidad:     costoFinal !== null ? (t.vContrato - costoFinal) - t.utilidadEsperada : null,
+  };
+}
+
+// Producción por estimación: cuánto se ejecutó en cada periodo. Si estimaciones
+// no manda `ejecutadoPeriodoSubtotal`, se deriva de la diferencia de acumulados.
+function calcRitmoEjecucion(proyectoId) {
+  const hist = getAvanceHistorial(proyectoId).filter(h => h.estado !== 'abierta');
+  let previo = 0;
+  return hist.map(h => {
+    const delPeriodo = Number.isFinite(h.delPeriodo) ? h.delPeriodo : (h.acumulado - previo);
+    previo = h.acumulado;
+    return { numero: h.numero, fechaCierre: h.fechaCierre, delPeriodo, acumulado: h.acumulado };
+  });
+}
+
+// =====================================================
 // REGLA 9 — Transferencia SOGRUB → Proyecto (doble registro)
 // =====================================================
 function ejecutarTransferenciaSOGRUB(proyectoId, monto, concepto, fecha) {

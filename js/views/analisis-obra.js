@@ -347,6 +347,88 @@ function _aoTradeCard(proyectoId) {
 }
 
 // =====================================================
+// TARJETA "VALOR GANADO"
+// El índice de costo y la proyección a terminación. Deliberadamente sin SPI ni
+// curva S: eso necesita el programa de obra, que bitácora no tiene.
+// =====================================================
+function _aoValorGanadoCard(proyectoId) {
+  const vg = calcValorGanado(proyectoId);
+  if (!vg) return null;
+
+  const t    = calcLecturaTrade(proyectoId);
+  const cpi  = vg.cpi;
+  const cls  = cpi >= 1 ? 'text-success' : cpi >= 0.95 ? 'text-warning' : 'text-danger';
+  const dice = cpi >= 1
+    ? `Por cada peso presupuestado llevas gastado ${formatMXN(1 / cpi)} — vas <b>bajo</b> presupuesto.`
+    : `Por cada peso presupuestado llevas gastado ${formatMXN(1 / cpi)} — vas <b>sobre</b> presupuesto.`;
+
+  const card = document.createElement('div');
+  card.className = 'card mb-24';
+  card.innerHTML = `
+    <h3 class="section-title" style="margin-bottom:4px">🎯 Valor ganado</h3>
+    <div class="text-sm text-muted" style="margin-bottom:14px">
+      Qué tan caro te está saliendo lo que ya construiste, y a dónde llega la obra si el ritmo se mantiene
+    </div>
+
+    <div style="display:flex;gap:20px;flex-wrap:wrap;padding-bottom:14px;border-bottom:1px solid var(--border)">
+      <div style="flex:1;min-width:170px">
+        <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">
+          Índice de costo (CPI)
+        </div>
+        <div class="${cls}" style="font-size:26px;font-weight:700;font-variant-numeric:tabular-nums">${cpi.toFixed(3)}</div>
+        <div class="text-muted" style="font-size:11px;margin-top:2px;line-height:1.4">
+          1.000 = exactamente en presupuesto
+        </div>
+      </div>
+      <div style="flex:2;min-width:220px">
+        <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">
+          Variación de costo sobre lo ya hecho
+        </div>
+        <div class="${vg.variacionCosto >= 0 ? 'text-success' : 'text-danger'}"
+             style="font-size:20px;font-weight:700;font-variant-numeric:tabular-nums">
+          ${vg.variacionCosto >= 0 ? '+' : '−'}${formatMXN(Math.abs(vg.variacionCosto))}
+        </div>
+        <div class="text-muted" style="font-size:11px;margin-top:2px;line-height:1.45">
+          Lo ejecutado debió costar ${formatMXN(vg.evCosto)} y llevas ${formatMXN(t.cIncurrido)}. ${dice}
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:20px;flex-wrap:wrap;padding-top:14px">
+      <div style="flex:1;min-width:170px">
+        <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">
+          Costo final estimado
+        </div>
+        <div style="font-size:18px;font-weight:700;font-variant-numeric:tabular-nums">${formatMXN(vg.costoFinalEstimado)}</div>
+        <div class="text-muted" style="font-size:11px;margin-top:2px">presupuestado ${formatMXN(t.cPresup)}</div>
+      </div>
+      <div style="flex:1;min-width:170px">
+        <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">
+          Utilidad proyectada al cierre
+        </div>
+        <div class="${vg.utilidadProyectada >= 0 ? 'text-success' : 'text-danger'}"
+             style="font-size:18px;font-weight:700;font-variant-numeric:tabular-nums">${formatMXN(vg.utilidadProyectada)}</div>
+        <div class="text-muted" style="font-size:11px;margin-top:2px">
+          esperada ${formatMXN(vg.utilidadEsperada)} ·
+          <span class="${vg.desvioUtilidad >= 0 ? 'text-success' : 'text-danger'}">
+            ${vg.desvioUtilidad >= 0 ? '+' : '−'}${formatMXN(Math.abs(vg.desvioUtilidad))}
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top:14px;padding:10px 12px;background:var(--surface2);border-radius:var(--radius);font-size:11px;color:var(--text-muted);line-height:1.55">
+      El ejecutado viene a precio de venta, así que para medir eficiencia se valúa a costo con la
+      misma proporción del presupuesto (×${vg.factorCosto.toFixed(4)}). Sin eso, ejecutado ÷ gastado
+      daría ${(t.vEjec / t.cIncurrido).toFixed(3)}, que no es eficiencia: es tu margen con otro nombre.
+      <br>La proyección supone que el ritmo de costo se mantiene. No incluye índice de tiempo (SPI)
+      ni curva S: eso requiere el programa de obra, que todavía no publica ninguna app.
+    </div>
+  `;
+  return card;
+}
+
+// =====================================================
 // LECTURA FINANCIERA (insights automáticos)
 // =====================================================
 function _aoInsights(proyectoId, k) {
@@ -519,6 +601,10 @@ function renderAnalisisObraTab(proyectoId) {
   // ---- Lectura como trade (realizado vs flotante) ----
   wrap.appendChild(_aoTradeCard(proyectoId));
 
+  // ---- Valor ganado (índice de costo + proyección) ----
+  const vgCard = _aoValorGanadoCard(proyectoId);
+  if (vgCard) wrap.appendChild(vgCard);
+
   // ---- Lectura financiera ----
   const insights = _aoInsights(proyectoId, k);
   if (insights.length) {
@@ -571,6 +657,10 @@ function renderAnalisisObraTab(proyectoId) {
                 lectura del avance: por ahora la brecha solo se lee en el extremo derecho.</span>`}`
         : 'Ejecutado − gastado = utilidad realizada · cobrado − ejecutado = anticipo aún no ganado')}
     ${_chartCard('ao-chart-cat', '🧱 Composición del gasto por periodo', 'En qué se está yendo el dinero a lo largo del tiempo')}
+    ${calcRitmoEjecucion(proyectoId).length >= 2
+      ? _chartCard('ao-chart-ritmo', '⚡ Ritmo de ejecución por estimación',
+          'Cuánta obra produces en cada periodo — si la barra se cae, la utilidad se realiza más lento')
+      : ''}
   `;
   wrap.appendChild(grid);
 
@@ -697,6 +787,52 @@ function _aoBuildCharts(proyectoId, proyecto) {
       type: 'line',
       data: { labels: s.labels, datasets },
       options: _aoChartOpts(),
+    });
+  }
+
+  // ---- 5. Ritmo de ejecución: cuánta obra se produjo en cada estimación ----
+  const ctx5 = document.getElementById('ao-chart-ritmo');
+  if (ctx5) {
+    const ritmo = calcRitmoEjecucion(proyectoId);
+    const media = ritmo.reduce((a, r) => a + r.delPeriodo, 0) / (ritmo.length || 1);
+    _aoCharts.ritmo = new Chart(ctx5, {
+      type: 'bar',
+      data: {
+        labels: ritmo.map(r => `#${r.numero}`),
+        datasets: [
+          {
+            label: 'Ejecutado en el periodo',
+            data: ritmo.map(r => r.delPeriodo),
+            // Verde arriba del promedio, ámbar abajo: la caída de ritmo se ve sola.
+            backgroundColor: ritmo.map(r => r.delPeriodo >= media ? C.success : C.warning),
+          },
+          {
+            label: 'Promedio',
+            data: ritmo.map(() => media),
+            type: 'line',
+            borderColor: C.muted, borderDash: [5, 4], pointRadius: 0, borderWidth: 1.5,
+          },
+        ],
+      },
+      options: {
+        ..._aoChartOpts(),
+        plugins: {
+          ..._aoChartOpts().plugins,
+          tooltip: {
+            callbacks: {
+              title: (items) => {
+                const r = ritmo[items[0].dataIndex];
+                return `Estimación #${r.numero} · cerrada ${formatDate(r.fechaCierre)}`;
+              },
+              label: ctx => ` ${ctx.dataset.label}: ${formatMXN(ctx.parsed.y)}`,
+              afterBody: (items) => {
+                const r = ritmo[items[0].dataIndex];
+                return `Acumulado a esa fecha: ${formatMXN(r.acumulado)}`;
+              },
+            },
+          },
+        },
+      },
     });
   }
 
