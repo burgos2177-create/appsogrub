@@ -417,12 +417,43 @@ function _aoValorGanadoCard(proyectoId) {
       </div>
     </div>
 
+    ${(() => {
+      const sp = calcSPI(proyectoId);
+      if (!sp || sp.spi === null) return '';
+      const c = sp.spi >= 1 ? 'text-success' : sp.spi >= 0.9 ? 'text-warning' : 'text-danger';
+      const cob = sp.curva.cobertura;
+      return `
+      <div style="display:flex;gap:20px;flex-wrap:wrap;padding-top:14px;border-top:1px solid var(--border);margin-top:14px">
+        <div style="flex:1;min-width:170px">
+          <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">
+            Índice de tiempo (SPI)
+          </div>
+          <div class="${c}" style="font-size:26px;font-weight:700;font-variant-numeric:tabular-nums">${sp.spi.toFixed(3)}</div>
+          <div class="text-muted" style="font-size:11px;margin-top:2px">1.000 = al corriente del programa</div>
+        </div>
+        <div style="flex:2;min-width:220px">
+          <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">
+            Avance contra el programa
+          </div>
+          <div class="${sp.variacion >= 0 ? 'text-success' : 'text-danger'}"
+               style="font-size:20px;font-weight:700;font-variant-numeric:tabular-nums">
+            ${sp.variacion >= 0 ? '+' : '−'}${formatMXN(Math.abs(sp.variacion))}
+          </div>
+          <div class="text-muted" style="font-size:11px;margin-top:2px;line-height:1.45">
+            Hoy debías llevar ${formatMXN(sp.pv)} ejecutados y llevas ${formatMXN(sp.ev)} —
+            vas <b>${sp.variacion >= 0 ? 'adelantado' : 'atrasado'}</b>.
+            ${cob < 0.99 ? `<span class="text-warning"> Ojo: el programa solo cubre el ${(cob * 100).toFixed(0)}% del catálogo, así que el SPI se queda corto.</span>` : ''}
+          </div>
+        </div>
+      </div>`;
+    })()}
+
     <div style="margin-top:14px;padding:10px 12px;background:var(--surface2);border-radius:var(--radius);font-size:11px;color:var(--text-muted);line-height:1.55">
       El ejecutado viene a precio de venta, así que para medir eficiencia se valúa a costo con la
       misma proporción del presupuesto (×${vg.factorCosto.toFixed(4)}). Sin eso, ejecutado ÷ gastado
       daría ${(t.vEjec / t.cIncurrido).toFixed(3)}, que no es eficiencia: es tu margen con otro nombre.
-      <br>La proyección supone que el ritmo de costo se mantiene. No incluye índice de tiempo (SPI)
-      ni curva S: eso requiere el programa de obra, que todavía no publica ninguna app.
+      <br>La proyección supone que el ritmo de costo se mantiene. El SPI compara lo ejecutado contra
+      el programa valuado con el catálogo OPUS; si el programa no cubre todo el catálogo, se avisa.
     </div>
   `;
   return card;
@@ -775,6 +806,17 @@ function _aoBuildCharts(proyectoId, proyecto) {
         label: 'Ejecutado a catálogo (hoy)',
         data: s.labels.map(() => trade.vEjec),
         borderColor: C.orange, borderDash: [8, 3], pointRadius: 0, borderWidth: 2,
+      });
+    }
+    // Curva S: el valor planeado del programa de obra. Es la línea base contra
+    // la que se mide el atraso — sin ella el resto son curvas sueltas.
+    const curva = calcCurvaPlaneada(proyectoId);
+    if (curva) {
+      datasets.push({
+        label: 'Programado (curva S)',
+        data: s.keys.map(k => planeadoEnFecha(proyectoId, _aoFinBucket(k, _aoState.gran), curva)),
+        borderColor: C.purple, backgroundColor: C.purple + '10',
+        tension: 0.35, pointRadius: 0, borderWidth: 2, borderDash: [2, 3], spanGaps: false,
       });
     }
     if (contrato > 0) {

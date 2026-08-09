@@ -681,6 +681,145 @@ function calcLecturaTrade(proyectoId) {
 }
 
 // =====================================================
+// PROGRAMA DE OBRA — la línea base (valor planeado / curva S)
+//
+// Vive en /legacy/bitacora/sogrub_programa_obra/{proyectoId}:
+//   { nombre, inicio, fin, festivos:[], actividades:{ id: {orden, nombre, frente,
+//     inicio, fin, dias, claves:[...] } } }
+//
+// El programa da FECHAS y el catálogo OPUS da DINERO. Se cruzan por clave: el
+// importe de cada concepto se reparte entre las actividades que lo mencionan
+// (ponderando por días, porque una actividad agrupa claves de unidades
+// distintas y multiplicar cantidad × PU mezclaría m² con m³), y el importe de
+// cada actividad se reparte en sus días hábiles. Así Σ curva = Σ catálogo, que
+// es la condición para que el SPI signifique algo.
+// =====================================================
+const _programaCache = {};   // proyectoId → programa | null
+
+function getProgramaObra(proyectoId) {
+  return _programaCache[proyectoId] ?? null;
+}
+
+async function cargarProgramaObra(proyectoId) {
+  try {
+    _programaCache[proyectoId] =
+      (await _dbRef(`sogrub_programa_obra/${proyectoId}`).get()).val() || null;
+  } catch (err) {
+    console.warn('[ProgramaObra]', err);
+    _programaCache[proyectoId] = null;
+  }
+  return _programaCache[proyectoId];
+}
+
+// Días laborables entre dos fechas (L-V menos festivos declarados).
+function _diasHabilesEntre(inicio, fin, festivos = []) {
+  const out = [];
+  const d = new Date(inicio + 'T12:00'), f = new Date(fin + 'T12:00');
+  while (d <= f && out.length < 500) {
+    const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const dow = d.getDay();
+    if (dow !== 0 && dow !== 6 && !festivos.includes(iso)) out.push(iso);
+    d.setDate(d.getDate() + 1);
+  }
+  return out;
+}
+
+function calcCurvaPlaneada(proyectoId) {
+  const prog = getProgramaObra(proyectoId);
+  const pres = typeof getPresupuesto === 'function' ? getPresupuesto(proyectoId) : null;
+  if (!prog?.actividades || !pres?.conceptos?.length) return null;
+
+  const acts = Object.entries(prog.actividades)
+    .map(([id, a]) => ({ id, ...a }))
+    .filter(a => a.inicio && a.fin)
+    .sort((a, b) => (Number(a.orden) || 0) - (Number(b.orden) || 0));
+  if (!acts.length) return null;
+
+  // clave → actividades que la ejecutan
+  const porClave = new Map();
+  for (const a of acts) {
+    for (const k of (a.claves || [])) {
+      const kk = String(k).trim();
+      if (!porClave.has(kk)) porClave.set(kk, []);
+      porClave.get(kk).push(a);
+    }
+  }
+
+  const valor = Object.fromEntries(acts.map(a => [a.id, 0]));
+  const sinProgramar = [];
+  let totalCatalogo = 0;
+
+  for (const c of pres.conceptos) {
+    if (c.tipo !== 'concepto' || c.archivado) continue;
+    const total = Number(c.total) || 0;
+    if (!total) continue;
+    totalCatalogo += total;
+
+    const destinos = porClave.get(String(c.clave).trim());
+    if (!destinos?.length) {
+      sinProgramar.push({ clave: c.clave, descripcion: c.descripcion, total });
+      continue;
+    }
+    const sumaDias = destinos.reduce((s, a) => s + (Number(a.dias) || 1), 0);
+    for (const a of destinos) valor[a.id] += total * ((Number(a.dias) || 1) / sumaDias);
+  }
+
+  // Cada actividad se reparte linealmente en sus días hábiles.
+  const festivos = prog.festivos || [];
+  const porDia = {};
+  for (const a of acts) {
+    const dias = _diasHabilesEntre(a.inicio, a.fin, festivos);
+    if (!dias.length || !valor[a.id]) continue;
+    const cuota = valor[a.id] / dias.length;
+    for (const d of dias) porDia[d] = (porDia[d] || 0) + cuota;
+  }
+
+  const fechas = Object.keys(porDia).sort();
+  const acumulado = {};
+  let acc = 0;
+  for (const f of fechas) { acc += porDia[f]; acumulado[f] = acc; }
+
+  return {
+    acumulado, fechas,
+    total: acc,
+    totalCatalogo,
+    cobertura: totalCatalogo > 0 ? acc / totalCatalogo : 0,
+    sinProgramar: sinProgramar.sort((a, b) => b.total - a.total),
+    actividades: acts.map(a => ({ ...a, importe: valor[a.id] })),
+    inicio: prog.inicio, fin: prog.fin, nombre: prog.nombre,
+  };
+}
+
+// Valor planeado acumulado a una fecha (interpolado al último día con dato).
+function planeadoEnFecha(proyectoId, fechaISO, curva = null) {
+  const c = curva || calcCurvaPlaneada(proyectoId);
+  if (!c) return null;
+  let mejor = null;
+  for (const f of c.fechas) {
+    if (f > fechaISO) break;
+    mejor = c.acumulado[f];
+  }
+  return mejor;
+}
+
+// Índice de tiempo: cuánto llevas ejecutado contra cuánto debías llevar hoy.
+// SPI = 1 → al corriente · < 1 → atrasado · > 1 → adelantado.
+function calcSPI(proyectoId) {
+  const curva = calcCurvaPlaneada(proyectoId);
+  const t = calcLecturaTrade(proyectoId);
+  if (!curva || !t.tieneAvance) return null;
+  const hoy = new Date().toISOString().slice(0, 10);
+  const pv  = planeadoEnFecha(proyectoId, hoy, curva);
+  if (!pv) return null;
+  return {
+    pv, ev: t.vEjec,
+    spi: pv > 0 ? t.vEjec / pv : null,
+    variacion: t.vEjec - pv,        // + adelantado · − atrasado (en dinero)
+    curva,
+  };
+}
+
+// =====================================================
 // VALOR GANADO (earned value) — el índice de costo honesto
 //
 // El ejecutado viene a precio de VENTA, así que ejecutado/gastado da un número

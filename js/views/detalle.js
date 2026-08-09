@@ -22,7 +22,7 @@ function renderDetalle(proyectoId) {
   // Trae el valor de venta de lo ya ejecutado, sin el cual no se puede
   // separar la utilidad realizada del anticipo del cliente. Llega async: al
   // resolver se repintan los KPIs y, si está abierto, el tab de análisis.
-  cargarAvanceObra(proyectoId).then(() => {
+  Promise.all([cargarAvanceObra(proyectoId), cargarProgramaObra(proyectoId)]).then(() => {
     if (_activeProyecto !== proyectoId) return;
     refreshDetalleKPIs(proyectoId);
     if (_detalleState.activeTab === 'analisis') renderAnalisisObraTab(proyectoId);
