@@ -111,6 +111,7 @@ function refreshCajaTable() {
             <th>Fecha</th>
             <th>Concepto</th>
             <th>Monto</th>
+            <th>Factura</th>
             <th>Status</th>
             <th>Tipo</th>
             <th>Acciones</th>
@@ -120,11 +121,21 @@ function refreshCajaTable() {
           ${movs.map(m => {
             const proy = m.proyecto_id ? proyectos.find(p => p.id === m.proyecto_id) : null;
             const colorMonto = m.monto >= 0 ? 'amount-positive' : 'amount-negative';
+            const _link = (url, txt) =>
+              `<a href="${url}" target="_blank" rel="noopener noreferrer" class="badge badge-info badge-no-dot"
+                  style="font-size:10px;text-decoration:none">↗ ${txt}</a>`;
+            const factura = [
+              m.factura_drive_url ? _link(m.factura_drive_url, 'PDF')
+                : m.factura_nombre ? '<span class="badge badge-muted badge-no-dot" style="font-size:10px">📄 PDF</span>' : '',
+              m.factura_xml_url ? _link(m.factura_xml_url, 'XML')
+                : m.factura_xml_nombre ? '<span class="badge badge-muted badge-no-dot" style="font-size:10px">📄 XML</span>' : '',
+            ].filter(Boolean).join(' ');
             return `
               <tr>
                 <td class="text-muted">${formatDate(m.fecha)}</td>
                 <td>${m.concepto || '—'}</td>
                 <td class="${colorMonto} font-mono">${formatMXN(m.monto)}</td>
+                <td>${factura || '<span class="text-dim">—</span>'}</td>
                 <td>${statusBadge(m.status)}</td>
                 <td>${tipoBadge(m.tipo, proy?.nombre ?? '')}</td>
                 <td>
@@ -205,6 +216,37 @@ function abrirModalMovimiento(id = null) {
         <label for="status-pendiente" class="toggle-label">Pendiente</label>
       </div>
     </div>
+    <div class="form-group" style="border-top:1px solid var(--border);padding-top:14px">
+      <label class="form-label">Factura <span class="text-dim">(opcional)</span></label>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div>
+          <div class="text-sm" style="color:var(--text-muted);margin-bottom:4px;font-weight:500">PDF</div>
+          <input type="file" id="mov-factura-pdf" class="form-input" accept=".pdf" style="padding:6px 10px">
+          ${mov?.factura_drive_url
+            ? `<div style="margin-top:4px;display:flex;align-items:center;gap:6px">
+                 <a href="${mov.factura_drive_url}" target="_blank" rel="noopener noreferrer"
+                    class="btn btn-secondary btn-sm" style="font-size:11px">↗ Ver PDF en Drive</a>
+                 <span class="text-sm text-muted">${mov.factura_nombre ?? ''}</span>
+               </div>`
+            : mov?.factura_nombre ? `<div class="text-sm text-muted" style="margin-top:4px">📄 ${mov.factura_nombre}</div>` : ''}
+        </div>
+        <div>
+          <div class="text-sm" style="color:var(--text-muted);margin-bottom:4px;font-weight:500">XML (CFDI)</div>
+          <input type="file" id="mov-factura-xml" class="form-input" accept=".xml" style="padding:6px 10px">
+          ${mov?.factura_xml_url
+            ? `<div style="margin-top:4px;display:flex;align-items:center;gap:6px">
+                 <a href="${mov.factura_xml_url}" target="_blank" rel="noopener noreferrer"
+                    class="btn btn-secondary btn-sm" style="font-size:11px">↗ Ver XML en Drive</a>
+                 <span class="text-sm text-muted">${mov.factura_xml_nombre ?? ''}</span>
+               </div>`
+            : mov?.factura_xml_nombre ? `<div class="text-sm text-muted" style="margin-top:4px">📄 ${mov.factura_xml_nombre}</div>` : ''}
+        </div>
+      </div>
+      <span class="text-dim" style="font-size:11px;display:block;margin-top:6px">
+        Se guardan en Drive en <code>gastos-sogrub-${(mov?.fecha ?? todayISO()).slice(0, 7)}</code>,
+        en una carpeta por gasto. El mes lo define la fecha del movimiento.
+      </span>
+    </div>
   `;
 
   openModal({
@@ -228,16 +270,59 @@ function abrirModalMovimiento(id = null) {
 
       const monto = tipo === 'egreso' ? -montoRaw : montoRaw;
 
+      // Archivos de factura seleccionados en este guardado
+      const uploadPDF = body.querySelector('#mov-factura-pdf')?.files?.[0] ?? null;
+      const uploadXML = body.querySelector('#mov-factura-xml')?.files?.[0] ?? null;
+
+      const datos = { fecha, monto, concepto, status };
+      // Al reemplazar un archivo se limpia su url/id: los de Drive se
+      // reescriben al terminar la subida, y así no queda un link al viejo.
+      if (uploadPDF) Object.assign(datos, { factura_nombre: uploadPDF.name, factura_drive_url: '', factura_drive_id: '' });
+      if (uploadXML) Object.assign(datos, { factura_xml_nombre: uploadXML.name, factura_xml_url: '', factura_xml_id: '' });
+
+      let savedId;
       if (mov) {
-        updateItem(KEYS.MOVIMIENTOS, id, { fecha, monto, concepto, status });
+        updateItem(KEYS.MOVIMIENTOS, id, datos);
+        savedId = id;
         showToast('Movimiento actualizado', 'success');
       } else {
-        addItem(KEYS.MOVIMIENTOS, { fecha, monto, concepto, status, tipo: 'gasto_general', proyecto_id: null });
+        const nuevo = addItem(KEYS.MOVIMIENTOS, { ...datos, tipo: 'gasto_general', proyecto_id: null });
+        savedId = nuevo.id;
         showToast('Movimiento registrado', 'success');
       }
 
       closeModal();
       refreshCajaTable();
+
+      // Subida a Drive en segundo plano: el movimiento ya quedó guardado, así
+      // que un fallo de Drive no pierde la captura.
+      if (uploadPDF || uploadXML) {
+        if (!driveAvailable()) {
+          showToast('Movimiento guardado, pero Drive no está disponible para subir la factura', 'warning');
+          return;
+        }
+        showToast(`📤 Subiendo ${[uploadPDF && 'PDF', uploadXML && 'XML'].filter(Boolean).join(' + ')} a Drive…`, 'info');
+        driveUploadFacturaGeneral({ pdf: uploadPDF, xml: uploadXML }, {
+          concepto, fecha,
+          existing: {
+            folderId: mov?.factura_drive_folder_id ?? null,
+            pdfId:    uploadPDF ? (mov?.factura_drive_id ?? null) : null,
+            xmlId:    uploadXML ? (mov?.factura_xml_id   ?? null) : null,
+          },
+        })
+          .then(result => {
+            const updates = { factura_drive_folder_id: result.folderId };
+            if (result.pdf) { updates.factura_drive_url = result.pdf.webViewLink; updates.factura_drive_id = result.pdf.id; }
+            if (result.xml) { updates.factura_xml_url   = result.xml.webViewLink; updates.factura_xml_id   = result.xml.id; }
+            updateItem(KEYS.MOVIMIENTOS, savedId, updates);
+            showToast('✅ Factura guardada en Google Drive', 'success');
+            refreshCajaTable();
+          })
+          .catch(err => {
+            console.error('[Drive gasto empresa]', err);
+            showToast('⚠ No se pudo subir a Drive: ' + err.message, 'error');
+          });
+      }
     },
   });
 }

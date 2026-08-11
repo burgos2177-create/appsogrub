@@ -293,16 +293,22 @@ async function driveUploadFactura(files, proyectoId, opts = {}) {
   }
 }
 
-async function _doUpload(files, proyectoId, { concepto = '', fecha = '', existing = {} } = {}) {
-  const safeName    = _sanitizeName(concepto);
-  const folderLabel = fecha ? `${fecha} - ${safeName}` : safeName;
-
+async function _doUpload(files, proyectoId, opts = {}) {
   let proyFolderId;
   try {
     proyFolderId = await _getProjectFolderId(proyectoId);
   } catch (e) {
     throw new Error(`[carpeta proyecto] ${e.message}`);
   }
+  return _subirEnCarpeta(files, proyFolderId, opts);
+}
+
+// Sube el par PDF/XML a una subcarpeta '{fecha} - {concepto}' dentro de la
+// carpeta padre que se le indique. Lo comparten la ruta por proyecto y la de
+// gastos de empresa, para que la organización en Drive sea idéntica.
+async function _subirEnCarpeta(files, parentFolderId, { concepto = '', fecha = '', existing = {} } = {}) {
+  const safeName    = _sanitizeName(concepto);
+  const folderLabel = fecha ? `${fecha} - ${safeName}` : safeName;
 
   // Verificar que la subcarpeta existe y no está en papelera
   let subfolderId;
@@ -312,7 +318,7 @@ async function _doUpload(files, proyectoId, { concepto = '', fecha = '', existin
       subfolderId  = existing.folderId;
       folderReused = true;
     } else {
-      subfolderId = (await _createFolder(folderLabel, proyFolderId)).id;
+      subfolderId = (await _createFolder(folderLabel, parentFolderId)).id;
     }
   } catch (e) {
     throw new Error(`[subcarpeta] ${e.message}`);
@@ -344,6 +350,52 @@ async function _doUpload(files, proyectoId, { concepto = '', fecha = '', existin
   }
 
   return result;
+}
+
+// =====================================================
+// GASTOS DE EMPRESA (Caja SOGRUB) — carpeta mensual
+//
+//   SOGRUB Facturas/
+//     gastos-sogrub-2026-08/
+//       2026-08-11 - Servicios contables/
+//         Servicios contables.pdf
+//         factura.xml
+//
+// Misma organización que las obras, pero agrupando por mes en vez de por
+// proyecto. El mes lo decide la fecha del MOVIMIENTO, no la de subida: una
+// factura de julio capturada en agosto pertenece a julio.
+// =====================================================
+const DRIVE_GASTOS_PREFIX = 'gastos-sogrub';
+
+async function _getMesFolderId(fechaISO) {
+  const mes    = String(fechaISO || todayISO()).slice(0, 7);   // 'YYYY-MM'
+  const nombre = `${DRIVE_GASTOS_PREFIX}-${mes}`;
+
+  const guardada = (getConfig().drive_mes_folders || {})[mes];
+  if (guardada && await _folderAlive(guardada)) return guardada;
+
+  const rootId = await _getRootFolderId();
+  let id = await _findFolder(nombre, rootId);
+  if (!id) id = (await _createFolder(nombre, rootId)).id;
+
+  const c = getConfig();
+  c.drive_mes_folders = { ...(c.drive_mes_folders || {}), [mes]: id };
+  saveConfig(c);
+  return id;
+}
+
+async function driveUploadFacturaGeneral(files, opts = {}) {
+  try {
+    return await _subirEnCarpeta(files, await _getMesFolderId(opts.fecha), opts);
+  } catch (firstErr) {
+    // Igual que en obras: si algo quedó obsoleto (carpeta en papelera, ids
+    // viejos), se olvida el cache de carpetas y se reconstruye desde cero.
+    console.warn('[Drive] Reintentando gasto de empresa:', firstErr.message);
+    const c = getConfig();
+    c.drive_mes_folders = {};
+    saveConfig(c);
+    return await _subirEnCarpeta(files, await _getMesFolderId(opts.fecha), { ...opts, existing: {} });
+  }
 }
 
 /** Comprueba si la librería GIS ya está cargada */
