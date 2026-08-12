@@ -681,6 +681,89 @@ function calcLecturaTrade(proyectoId) {
 }
 
 // =====================================================
+// ÓRDENES DE CAMBIO — contrato vigente (lo publica estimaciones)
+//
+// /shared/contratos/{obraId} trae el contrato FORMAL VIGENTE, ya con las OC
+// aplicadas, y `rubrosAcum` con el movimiento ACUMULADO por rubro (con signo).
+//
+// Regla que no se puede romper: `rubrosAcum` es ESTADO, no evento. El vigente
+// siempre se RECALCULA como original + rubrosAcum. Si se acumulara en cada
+// lectura, el ajuste se duplicaría. Por lo mismo, el `impactoRubros` que trae
+// cada item del buzón es el delta de UNA OC y sirve SOLO para mostrarlo en la
+// tarjeta — sumarlo además de rubrosAcum contaría doble.
+//
+// Bitácora solo LEE estos nodos. Si algo no cuadra, es bug de estimaciones.
+// =====================================================
+const _contratoOCCache = {};   // proyectoId → nodo | null
+
+function getContratoOC(proyectoId) {
+  return _contratoOCCache[proyectoId] ?? null;
+}
+
+async function cargarContratoOC(proyectoId) {
+  try {
+    const links  = (await _dbRef('/shared/obraLinks').get()).val() || {};
+    const obraId = Object.entries(links).find(([, pid]) => String(pid) === String(proyectoId))?.[0];
+    if (!obraId) { _contratoOCCache[proyectoId] = null; return null; }
+    const val = (await _dbRef(`/shared/contratos/${obraId}`).get()).val();
+    // Ausencia = obra que nunca pasó por el módulo de OC. No es error.
+    _contratoOCCache[proyectoId] = val ? { obraId, ...val } : null;
+  } catch (err) {
+    console.warn('[ContratoOC]', err);
+    _contratoOCCache[proyectoId] = null;
+  }
+  return _contratoOCCache[proyectoId];
+}
+
+// ¿Esta obra tiene órdenes de cambio aplicadas?
+function tieneOrdenesCambio(proyectoId) {
+  return (Number(getContratoOC(proyectoId)?.ordenesCambio?.count) || 0) > 0;
+}
+
+// Lista de OC aplicadas, ordenada por número.
+function listaOrdenesCambio(proyectoId) {
+  const ap = getContratoOC(proyectoId)?.ordenesCambio?.aplicadas || {};
+  return Object.entries(ap)
+    .map(([ocId, oc]) => ({ ocId, ...oc }))
+    .sort((a, b) => (Number(a.numero) || 0) - (Number(b.numero) || 0));
+}
+
+// Ajuste acumulado por rubro, mapeado a las bolsitas de bitácora.
+// Los rubros vienen CON SIGNO: solo se suman, sin Math.abs ni inversiones.
+function ajusteRubrosOC(proyectoId) {
+  const r = getContratoOC(proyectoId)?.rubrosAcum;
+  if (!r) return null;
+  const n = v => Number(v) || 0;
+  return {
+    costoDirecto:   n(r.costoDirecto),
+    indOficina:     n(r.indOficina),
+    indCampo:       n(r.indCampo),
+    financiamiento: n(r.financiamiento),
+    utilidad:       n(r.utilidad),
+    otros:          n(r.cargos) + n(r.otro),
+    venta:          n(r.venta),
+  };
+}
+
+// Invariantes del nodo. No se corrige nada: si algo no amarra es bug del
+// publicador y hay que verlo allá, no taparlo acá.
+function validarContratoOC(proyectoId) {
+  const c = getContratoOC(proyectoId);
+  if (!c?.ordenesCambio) return null;
+  const n = v => Number(v) || 0;
+  const tol = 1;
+  const pruebas = [
+    { nombre: 'rubrosAcum.venta = netoAcum',
+      a: n(c.rubrosAcum?.venta), b: n(c.ordenesCambio.netoAcum) },
+    { nombre: 'contrato.total = original + netoAcumCIVA',
+      a: n(c.contrato?.total), b: n(c.contratoOriginalCIVA) + n(c.ordenesCambio.netoAcumCIVA) },
+    { nombre: 'subtotal + iva = total',
+      a: n(c.contrato?.subtotal) + n(c.contrato?.iva), b: n(c.contrato?.total) },
+  ].map(p => ({ ...p, dif: p.a - p.b, ok: Math.abs(p.a - p.b) <= tol }));
+  return { pruebas, cuadra: pruebas.every(p => p.ok) };
+}
+
+// =====================================================
 // PROGRAMA DE OBRA — la línea base (valor planeado / curva S)
 //
 // Vive en /legacy/bitacora/sogrub_programa_obra/{proyectoId}:
@@ -1045,6 +1128,12 @@ function calcBolsitasProyecto(proyectoId) {
   const proyecto = getItem(KEYS.PROYECTOS, proyectoId) ?? {};
   const d = calcDesgloseContrato(proyecto);
 
+  // Ajuste acumulado por órdenes de cambio. Se RECALCULA cada vez desde el
+  // original: nunca se acumula sobre el valor ya ajustado.
+  const oc  = ajusteRubrosOC(proyectoId);
+  const cOC = getContratoOC(proyectoId);
+  const A   = (rubro) => oc ? oc[rubro] : 0;
+
   const gastos = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
     .filter(m => m.proyecto_id === proyectoId && m.tipo === 'gasto' && m.status === 'Pagado');
 
@@ -1052,26 +1141,41 @@ function calcBolsitasProyecto(proyectoId) {
   gastos.forEach(m => { gastado[_bolsaDeGasto(m)] += Math.abs(m.monto); });
 
   const bolsas = [
-    { key: 'costo_directo', label: 'Costo directo',      icon: '🧱', budget: d.costoDirecto, gastado: gastado.costo_directo },
-    { key: 'ind_oficina',   label: 'Indirectos oficina', icon: '🏢', budget: d.indOficina,   gastado: gastado.ind_oficina },
-    { key: 'ind_campo',     label: 'Indirectos campo',   icon: '🚧', budget: d.indCampo,     gastado: gastado.ind_campo },
+    { key: 'costo_directo', label: 'Costo directo',      icon: '🧱', original: d.costoDirecto, ajuste: A('costoDirecto'), gastado: gastado.costo_directo },
+    { key: 'ind_oficina',   label: 'Indirectos oficina', icon: '🏢', original: d.indOficina,   ajuste: A('indOficina'),   gastado: gastado.ind_oficina },
+    { key: 'ind_campo',     label: 'Indirectos campo',   icon: '🚧', original: d.indCampo,     ajuste: A('indCampo'),     gastado: gastado.ind_campo },
   ].map(b => {
-    const overflow  = Math.max(0, b.gastado - b.budget);
-    const restante  = b.budget - b.gastado;
-    const pct       = b.budget > 0 ? (b.gastado / b.budget) * 100 : (b.gastado > 0 ? 100 : 0);
-    return { ...b, overflow, restante, pct };
+    const budget    = b.original + b.ajuste;          // vigente = original + acumulado
+    const overflow  = Math.max(0, b.gastado - budget);
+    const restante  = budget - b.gastado;
+    const pct       = budget > 0 ? (b.gastado / budget) * 100 : (b.gastado > 0 ? 100 : 0);
+    return { ...b, budget, overflow, restante, pct };
   });
 
   const overflowTotal      = bolsas.reduce((a, b) => a + b.overflow, 0);
-  const utilidadDisponible = d.utilidad - overflowTotal;
+  const utilidadPlaneada   = d.utilidad + A('utilidad');
+  const utilidadDisponible = utilidadPlaneada - overflowTotal;
 
   return {
     bolsas,
-    financiamiento:   d.financiamiento,
-    utilidadPlaneada: d.utilidad,
+    financiamiento:   d.financiamiento + A('financiamiento'),
+    utilidadPlaneada,
+    utilidadOriginal: d.utilidad,
+    otros:            A('otros'),
     overflowTotal,
     utilidadDisponible,
-    contrato:         d.contrato,
+    // Contrato vigente sin IVA. Se prefiere el que publica estimaciones; si no
+    // hay nodo, el derivado de la cascada local.
+    contrato:         Number(cOC?.contrato?.subtotal) || (d.contrato + A('venta')),
+    contratoOriginal: d.contrato,
+    ajusteContrato:   A('venta'),
+    tieneOC:          !!oc && (Number(cOC?.ordenesCambio?.count) || 0) > 0,
+    numOC:            Number(cOC?.ordenesCambio?.count) || 0,
+    contratoVigenteCIVA:  Number(cOC?.contrato?.total) || null,
+    contratoOriginalCIVA: Number(cOC?.contratoOriginalCIVA) || null,
+    netoAcumCIVA:         Number(cOC?.ordenesCambio?.netoAcumCIVA) || 0,
+    aditivasAcum:         Number(cOC?.ordenesCambio?.aditivasAcum) || 0,
+    deductivasAcum:       Number(cOC?.ordenesCambio?.deductivasAcum) || 0,
   };
 }
 

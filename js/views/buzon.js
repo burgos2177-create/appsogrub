@@ -63,6 +63,7 @@ function _tipoLabelCorto(tipo) {
     nomina_tecnico_campo_quincena: '👷 Nómina técnico campo',
     nomina_tecnico_oficina_quincena: '🧑‍💼 Nómina técnico oficina',
     nomina_directivo_quincena: '🧑‍💼 Nómina directivo',
+    orden_cambio: '📐 Orden de cambio',
   }[tipo] || tipo;
 }
 
@@ -412,7 +413,11 @@ function _buzonCard(item) {
   // Caja chica usa monto plano (number); CxC/CxP usan { subtotal, iva, importe }.
   // OC y gasto_oc traen total plano.
   const esCajaChica = item.tipo === 'gasto_caja_chica' || item.tipo === 'deposito_caja_chica';
-  const monto     = (esOC || esGastoOC)
+  // La OC trae su neto CON IVA y con signo propio: puede ser negativa (deductiva).
+  const esOrdenCambio = item.tipo === 'orden_cambio';
+  const monto     = esOrdenCambio
+    ? Math.abs(Number(item.netoCIVA) || 0)
+    : (esOC || esGastoOC)
     ? Number(item.total ?? item.monto) || 0
     : (esCajaChica
       ? Number(item.monto) || 0
@@ -434,7 +439,8 @@ function _buzonCard(item) {
     nomina_operativo_semana: '👷 Nómina operativo (semanal)',
     nomina_tecnico_campo_quincena: '👷 Nómina técnico campo (quincenal)',
     nomina_tecnico_oficina_quincena: '🧑‍💼 Nómina técnico oficina (quincenal)',
-    nomina_directivo_quincena: '🧑‍💼 Nómina directivo (quincenal)'
+    nomina_directivo_quincena: '🧑‍💼 Nómina directivo (quincenal)',
+    orden_cambio: '📐 Orden de cambio (contrato)'
   }[item.tipo] || item.tipo;
   const desfase   = _calcularDesfase(item);
 
@@ -452,8 +458,8 @@ function _buzonCard(item) {
     </div>
     ${desfase ? `<span title="${desfase.tooltip}" style="font-size:11px;color:#e0a04c;background:rgba(224,160,76,.12);padding:2px 7px;border-radius:8px;flex-shrink:0">⚠ Δ$${Math.abs(desfase.delta).toLocaleString('es-MX', {minimumFractionDigits:2})}</span>` : ''}
     <div style="text-align:right;flex-shrink:0">
-      <div style="font-family:ui-monospace,monospace;font-size:17px;font-weight:700;color:${(esSub || esOC || item.tipo === 'gasto_caja_chica' || item.tipo === 'gasto_indirecto' || item.tipo === 'gasto_oc' || item.tipo === 'carga_social' || (item.tipo && item.tipo.startsWith('nomina_'))) ? '#e15555' : 'var(--accent)'}">
-        ${(esSub || esOC || item.tipo === 'gasto_caja_chica' || item.tipo === 'gasto_indirecto' || item.tipo === 'gasto_oc' || item.tipo === 'carga_social' || (item.tipo && item.tipo.startsWith('nomina_'))) ? '−' : '+'}$${monto.toLocaleString('es-MX', {minimumFractionDigits:2, maximumFractionDigits:2})}
+      <div style="font-family:ui-monospace,monospace;font-size:17px;font-weight:700;color:${esOrdenCambio ? ((Number(item.netoCIVA) || 0) >= 0 ? '#4caf82' : '#e0a04c') : (esSub || esOC || item.tipo === 'gasto_caja_chica' || item.tipo === 'gasto_indirecto' || item.tipo === 'gasto_oc' || item.tipo === 'carga_social' || (item.tipo && item.tipo.startsWith('nomina_'))) ? '#e15555' : 'var(--accent)'}">
+        ${esOrdenCambio ? ((Number(item.netoCIVA) || 0) >= 0 ? '+' : '−') : (esSub || esOC || item.tipo === 'gasto_caja_chica' || item.tipo === 'gasto_indirecto' || item.tipo === 'gasto_oc' || item.tipo === 'carga_social' || (item.tipo && item.tipo.startsWith('nomina_'))) ? '−' : '+'}$${monto.toLocaleString('es-MX', {minimumFractionDigits:2, maximumFractionDigits:2})}
       </div>
     </div>
     <span style="color:var(--text-muted);font-size:14px;flex-shrink:0">${expanded ? '▲' : '▼'}</span>`;
@@ -498,7 +504,66 @@ function _rfcProveedorBuzon(nombre, item) {
   return (prov?.rfc || '').trim();
 }
 
+// Detalle de una orden de cambio. Es informativo: se muestra el impacto que
+// reporta el item, pero el presupuesto vigente NO sale de aquí — sale del
+// acumulado de /shared/contratos (ver _aprobarOrdenCambio).
+function _cardBodyOrdenCambio(item) {
+  const n = v => Number(v) || 0;
+  const M = v => `$${Math.abs(v).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const neto = n(item.netoCIVA);
+  const col  = neto >= 0 ? '#4caf82' : '#e0a04c';
+  const fila = (etiqueta, valor, color) => `
+    <div style="display:flex;justify-content:space-between;gap:16px;padding:2px 0">
+      <span style="color:var(--text-muted)">${etiqueta}</span>
+      <strong style="font-variant-numeric:tabular-nums${color ? `;color:${color}` : ''}">${valor}</strong>
+    </div>`;
+
+  const rubros = item.impactoRubros || {};
+  const filasRubros = Object.entries(rubros)
+    .filter(([, v]) => Math.abs(n(v)) > 0.005)
+    .map(([k, v]) => `<div style="display:flex;justify-content:space-between;gap:12px">
+        <span>${k}</span>
+        <span style="font-variant-numeric:tabular-nums;color:${n(v) >= 0 ? '#4caf82' : '#e0a04c'}">${n(v) >= 0 ? '+' : '−'}${M(n(v))}</span>
+      </div>`).join('');
+
+  return `
+    <div style="padding-top:12px;display:flex;flex-direction:column;gap:12px;font-size:13px">
+      <div style="padding:10px 12px;background:var(--surface);border-radius:6px">
+        <div style="font-weight:600;margin-bottom:6px">OC #${item.ocNumero ?? '—'} · ${item.obraNombre || item.obraId || ''}</div>
+        <div style="color:var(--text-muted);line-height:1.5">${item.descripcion || 'Sin descripción del motivo.'}</div>
+      </div>
+
+      <div style="padding:10px 12px;background:var(--surface);border-radius:6px">
+        ${fila('Aditivo', `+${M(n(item.montoAditivo))}`, '#4caf82')}
+        ${fila('Deductivo', `−${M(n(item.montoDeductivo))}`, '#e0a04c')}
+        ${fila('Neto sin IVA', `${n(item.montoNeto) >= 0 ? '+' : '−'}${M(n(item.montoNeto))}`)}
+        ${fila(`IVA (${n(item.ivaPct) || 16}%)`, M(n(item.iva)))}
+        <div style="border-top:1px solid var(--border);margin-top:5px;padding-top:5px">
+          ${fila('<b>Neto con IVA</b>', `${neto >= 0 ? '+' : '−'}${M(neto)}`, col)}
+        </div>
+      </div>
+
+      <div style="padding:10px 12px;background:var(--surface);border-radius:6px">
+        ${fila('Contrato antes', M(n(item.contratoAntesCIVA)))}
+        ${fila('Contrato después', M(n(item.contratoDespuesCIVA)), col)}
+      </div>
+
+      ${filasRubros ? `
+        <div style="padding:10px 12px;background:var(--surface);border-radius:6px;font-size:12px;line-height:1.7">
+          <div style="color:var(--text-muted);margin-bottom:4px">Impacto por rubro de esta OC</div>
+          ${filasRubros}
+        </div>` : ''}
+
+      <div style="padding:9px 11px;background:rgba(26,159,212,.08);border-left:3px solid var(--accent);border-radius:6px;font-size:11px;color:var(--text-muted);line-height:1.55">
+        Informativa: al registrarla <b>no se genera ningún movimiento contable</b>. Una orden de
+        cambio mueve el presupuesto, no la caja — el dinero llegará después por las estimaciones.
+        El presupuesto por rubro se actualiza desde el contrato vigente que publica estimaciones.
+      </div>
+    </div>`;
+}
+
 function _cardBodyHTML(item) {
+  if (item.tipo === 'orden_cambio') return _cardBodyOrdenCambio(item);
   const esSub     = item.tipo === 'estimacion_subcontratista';
   const esGastoCC = item.tipo === 'gasto_caja_chica';
   const esDepCC   = item.tipo === 'deposito_caja_chica';
@@ -1253,6 +1318,10 @@ async function _aprobarItem(item, aprobarYPagar = false) {
   if (item.tipo === 'gasto_indirecto')     return _aprobarGastoIndirecto(item, aprobarYPagar);
   if (typeof item.tipo === 'string' && item.tipo.startsWith('nomina_')) return _aprobarNomina(item);
   if (item.tipo === 'carga_social')        return _aprobarCargaSocial(item);
+  // Orden de cambio: INFORMATIVA. No genera contable — una OC no es dinero que
+  // entró o salió, es un cambio de presupuesto. El presupuesto vigente sale de
+  // /shared/contratos, no de este item.
+  if (item.tipo === 'orden_cambio')        return _aprobarOrdenCambio(item);
 
   // Resolvemos el proyecto contable (directo o vía obraLinks) para soportar items
   // que sólo traen obraId (p.ej. indirectos originados en materiales).
@@ -2873,6 +2942,44 @@ async function _depositarCajaChicaDesdeBitacora({ obraId, obraNombre, monto, fec
   // Efectivo informativo (fondo transferencia): solo el registro en
   // /shared/cajaChica, sin egreso contable — el retiro ya se contabilizó antes.
   return { movCajaChicaId, mifelMovId: null, folio: null };
+}
+
+// ─── Orden de cambio (informativa) ─────────────────────────────────────────
+//
+// Se acusa de recibido y se cierra. Deliberadamente NO crea movimiento
+// contable: una OC cambia el presupuesto, no la caja. El dinero llegará
+// después por las estimaciones, que sí generan `pago_cliente`.
+//
+// Tampoco se toca el presupuesto con `impactoRubros` del item: ese es el delta
+// de UNA OC y la fuente de verdad es el acumulado de /shared/contratos. Solo
+// se relee ese nodo para que el presupuesto por rubro se refresque.
+async function _aprobarOrdenCambio(item) {
+  try {
+    const histKey = `${Date.now()}_oc`;
+    await _multiPathUpdate({
+      [`/shared/buzon/${item.id}/estado`]:     'cerrado',
+      [`/shared/buzon/${item.id}/cerradoAt`]:  Date.now(),
+      [`/shared/buzon/${item.id}/cerradoPor`]: _currentUser?.email || '',
+      [`/shared/buzon/${item.id}/historial/${histKey}`]: {
+        estado: 'cerrado', at: Date.now(), por: _currentUser?.email || '',
+        nota: 'Orden de cambio acusada de recibido. No genera movimiento contable.',
+      },
+    });
+
+    // Releer el contrato vigente para que el presupuesto por rubro se actualice.
+    const proyectoId = item.proyectoId || await _resolverProyectoIdPorObra(item.obraId);
+    if (proyectoId) {
+      await cargarContratoOC(proyectoId);
+      if (typeof _activeProyecto !== 'undefined' && _activeProyecto === proyectoId) {
+        if (typeof refreshBolsitas === 'function')     refreshBolsitas(proyectoId);
+        if (typeof refreshDetalleKPIs === 'function')  refreshDetalleKPIs(proyectoId);
+      }
+    }
+    _toast(`OC #${item.ocNumero ?? ''} registrada · presupuesto vigente actualizado`, 'success');
+  } catch (err) {
+    console.error('[OC]', err);
+    _toast('Error: ' + err.message, 'error');
+  }
 }
 
 // Devolución del FONDO EFECTIVO → caja física de SOGRUB. Es el inverso exacto

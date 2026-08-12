@@ -18,6 +18,7 @@ App web para el contador de SOGRUB. Sister apps: **app-estimaciones** (ingeniero
 | `/shared/buzon/{itemId}` | cualquier app | Bus de aprobación cross-app. |
 | `/shared/obraLinks/{obraId}` | admin | Mapa `obraId → proyectoId` para resolver el proyecto contable a partir de la obra de campo. |
 | `/shared/avanceObra/{obraId}` | estimaciones | Solo lectura. Avance ejecutado a precio de catálogo — habilita la utilidad realizada (ver abajo). |
+| `/shared/contratos/{obraId}` | estimaciones | Solo lectura. Contrato vigente con órdenes de cambio aplicadas (ver abajo). |
 | `/shared/cajaChica/{obraId}/{meta,movimientos}` | **materiales** y **esta app** | Ledger de caja chica por obra (saldo conciliado vive aquí, no en el ledger del proyecto). |
 
 ## Buzón cross-app — máquina de estados B1-B8
@@ -215,6 +216,36 @@ ritmo al que se realiza la utilidad.
 - Fallback para obras sin `historial`: bitácora guarda una foto diaria del acumulado en
   `/legacy/bitacora/sogrub_avance_historial/{proyectoId}/{fecha}`. En cuanto la obra tiene
   historial publicado deja de escribirlas y usa el de estimaciones.
+
+## Órdenes de cambio — contrato vigente (2026-08-12)
+
+Estimaciones es el **único escritor**; bitácora solo lee `/shared/contratos/{obraId}` (vía búsqueda
+inversa en `obraLinks`). El nodo trae el contrato formal vigente, el original, el acumulado de OC
+y `rubrosAcum` con el movimiento por rubro.
+
+**La regla que no se puede romper:** `rubrosAcum` es **estado acumulado, no evento**. El vigente
+siempre se **recalcula** como `original + rubrosAcum` — `calcBolsitasProyecto` parte de
+`calcDesgloseContrato` fresco en cada llamada y suma el acumulado, nunca sobre el valor ya
+ajustado. Sumarlo incrementalmente duplicaría el ajuste.
+
+**Tampoco se usa `impactoRubros` del buzón para mover el presupuesto**: ese es el delta de UNA OC y
+sirve solo para pintar la tarjeta. Si se sumara además de `rubrosAcum`, se contaría doble.
+
+- Signos: `rubrosAcum` viene con signo y solo se suma (nada de `Math.abs`). `aditivasAcum` y
+  `deductivasAcum` son magnitudes positivas; el signo vive en el neto.
+- IVA: `rubrosAcum` y `netoAcum` son **sin IVA**; para montos con IVA se usa `netoAcumCIVA` o
+  `contrato.total`, nunca recalculando el 16% acá.
+- Mapeo de rubros: `indOficina`/`indCampo` van 1:1 a las dos bolsitas de bitácora (no se fusionan);
+  `cargos + otro` → `otros`; `venta` → contrato sin IVA.
+- Sin nodo = obra que nunca entró al módulo de OC: se usa el presupuesto original y no se muestra
+  nada de OC. La ausencia no es error.
+- `validarContratoOC` chequea los tres invariantes (`rubrosAcum.venta = netoAcum`,
+  `contrato.total = original + netoAcumCIVA`, `subtotal + iva = total`). Si alguno falla se **avisa
+  en la cinta de OC y no se ajusta nada**: es bug del publicador.
+
+**Buzón `orden_cambio`**: informativo. `_aprobarOrdenCambio` cierra el item y relee
+`/shared/contratos` — **no genera movimiento contable**, porque una OC mueve el presupuesto y no la
+caja; el dinero llega después vía `pago_cliente`.
 
 ## Estructura de archivos
 

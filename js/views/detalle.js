@@ -22,9 +22,14 @@ function renderDetalle(proyectoId) {
   // Trae el valor de venta de lo ya ejecutado, sin el cual no se puede
   // separar la utilidad realizada del anticipo del cliente. Llega async: al
   // resolver se repintan los KPIs y, si está abierto, el tab de análisis.
-  Promise.all([cargarAvanceObra(proyectoId), cargarProgramaObra(proyectoId)]).then(() => {
+  Promise.all([
+    cargarAvanceObra(proyectoId),
+    cargarProgramaObra(proyectoId),
+    cargarContratoOC(proyectoId),      // contrato vigente con órdenes de cambio
+  ]).then(() => {
     if (_activeProyecto !== proyectoId) return;
     refreshDetalleKPIs(proyectoId);
+    refreshBolsitas(proyectoId);
     if (_detalleState.activeTab === 'analisis') renderAnalisisObraTab(proyectoId);
   });
 
@@ -434,11 +439,14 @@ function renderBolsitasProyecto(proyectoId) {
     return card;
   }
 
-  // Cada bolsita de gasto: barra presupuesto vs. gastado
+  // Cada bolsita de gasto: barra presupuesto vs. gastado. Cuando la obra tiene
+  // órdenes de cambio aplicadas se agrega la línea Original → Ajuste → Vigente;
+  // sin OC no se muestra nada de eso para no ensuciar la vista.
   const _bolsaRow = (bag) => {
     const pctFill = Math.min(bag.pct, 100);
     const cls = bag.pct > 100 ? 'high' : bag.pct >= 85 ? 'medium' : 'low';
     const sobregiro = bag.overflow > 0;
+    const conAjuste = b.tieneOC && Math.abs(bag.ajuste) > 0.005;
     return `
       <div class="bolsa-row">
         <div class="bolsa-head">
@@ -457,6 +465,14 @@ function renderBolsitasProyecto(proyectoId) {
             ? `<span class="text-danger">⚠ Sobregiro ${formatMXN(bag.overflow)} → utilidad</span>`
             : `<span class="text-muted">Disponible ${formatMXN(bag.restante)}</span>`}
         </div>
+        ${conAjuste ? `
+          <div style="display:flex;gap:10px;flex-wrap:wrap;font-size:10px;margin-top:3px;color:var(--text-muted)">
+            <span>Original ${formatMXN(bag.original)}</span>
+            <span style="color:${bag.ajuste >= 0 ? 'var(--success)' : 'var(--warning)'}">
+              OC ${bag.ajuste >= 0 ? '+' : '−'}${formatMXN(Math.abs(bag.ajuste))}
+            </span>
+            <span>Vigente <b style="color:var(--text)">${formatMXN(bag.budget)}</b></span>
+          </div>` : ''}
       </div>`;
   };
 
@@ -464,8 +480,9 @@ function renderBolsitasProyecto(proyectoId) {
   card.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px;flex-wrap:wrap;gap:8px">
       <h3 class="section-title" style="margin:0">🎒 Presupuesto por rubro</h3>
-      <span class="text-sm text-muted">Contrato ${formatMXN(b.contrato)}</span>
+      <span class="text-sm text-muted">Contrato ${formatMXN(b.contrato)}${b.tieneOC ? ' <span class="text-dim">vigente</span>' : ''}</span>
     </div>
+    ${b.tieneOC ? _bolsaCintaOC(proyectoId, b) : ''}
     <div class="bolsas-grid">
       ${b.bolsas.map(_bolsaRow).join('')}
     </div>
@@ -491,6 +508,53 @@ function renderBolsitasProyecto(proyectoId) {
     </div>
   `;
   return card;
+}
+
+// Cinta con el resumen de órdenes de cambio: contrato antes → después, el neto
+// y la lista de OC aplicadas. Solo se dibuja si la obra tiene alguna.
+function _bolsaCintaOC(proyectoId, b) {
+  const ocs = listaOrdenesCambio(proyectoId);
+  const val = validarContratoOC(proyectoId);
+  const neto = b.netoAcumCIVA;
+  const color = neto >= 0 ? 'var(--success)' : 'var(--warning)';
+
+  const detalle = ocs.map(o => {
+    const n = Number(o.montoNeto) || 0;
+    return `<div style="display:flex;justify-content:space-between;gap:12px;padding:3px 0">
+      <span>OC #${o.numero}${o.fecha ? ` · ${formatDate(String(o.fecha).slice(0, 10))}` : ''} —
+        ${(o.descripcion || 'sin descripción').slice(0, 60)}</span>
+      <strong style="font-variant-numeric:tabular-nums;color:${n >= 0 ? 'var(--success)' : 'var(--warning)'}">
+        ${n >= 0 ? '+' : '−'}${formatMXN(Math.abs(n))}
+      </strong>
+    </div>`;
+  }).join('');
+
+  return `
+    <details style="margin-bottom:14px;background:var(--surface2);border-left:3px solid ${color};border-radius:var(--radius);padding:10px 12px">
+      <summary style="cursor:pointer;font-size:12px;color:var(--text-muted);list-style:none">
+        📐 <b style="color:var(--text)">${b.numOC} orden${b.numOC === 1 ? '' : 'es'} de cambio</b>
+        aplicada${b.numOC === 1 ? '' : 's'} · neto
+        <b style="color:${color}">${neto >= 0 ? '+' : '−'}${formatMXN(Math.abs(neto))}</b> c/IVA
+        ${b.contratoOriginalCIVA && b.contratoVigenteCIVA
+          ? ` · ${formatMXN(b.contratoOriginalCIVA)} → <b style="color:var(--text)">${formatMXN(b.contratoVigenteCIVA)}</b>`
+          : ''}
+        <span class="text-dim">· ver detalle</span>
+      </summary>
+      <div style="margin-top:8px;font-size:11px;color:var(--text-muted);line-height:1.5">
+        ${detalle || '<span class="text-dim">Sin detalle por OC.</span>'}
+        <div style="border-top:1px solid var(--border);margin-top:6px;padding-top:6px;display:flex;gap:14px;flex-wrap:wrap">
+          <span>Aditivas <b style="color:var(--success)">+${formatMXN(b.aditivasAcum)}</b></span>
+          <span>Deductivas <b style="color:var(--warning)">−${formatMXN(b.deductivasAcum)}</b></span>
+          <span class="text-dim">(sin IVA)</span>
+        </div>
+        ${val && !val.cuadra ? `
+          <div style="margin-top:6px;color:var(--danger)">
+            ⚠ El nodo que publica estimaciones no cuadra:
+            ${val.pruebas.filter(p => !p.ok).map(p => `${p.nombre} (dif ${formatMXN(p.dif)})`).join(' · ')}.
+            No se ajusta nada acá — hay que revisarlo en estimaciones.
+          </div>` : ''}
+      </div>
+    </details>`;
 }
 
 function refreshBolsitas(proyectoId) {
