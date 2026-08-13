@@ -507,6 +507,14 @@ function _rfcProveedorBuzon(nombre, item) {
 // Detalle de una orden de cambio. Es informativo: se muestra el impacto que
 // reporta el item, pero el presupuesto vigente NO sale de aquí — sale del
 // acumulado de /shared/contratos (ver _aprobarOrdenCambio).
+// El publicador manda el IVA a veces como fracción (0.16) y a veces como
+// porcentaje (16). Se normaliza a porcentaje para no imprimir "0.16%".
+function _pctIVA(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return 16;
+  return Number((n < 1 ? n * 100 : n).toFixed(2));
+}
+
 function _cardBodyOrdenCambio(item) {
   const n = v => Number(v) || 0;
   const M = v => `$${Math.abs(v).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -537,7 +545,7 @@ function _cardBodyOrdenCambio(item) {
         ${fila('Aditivo', `+${M(n(item.montoAditivo))}`, '#4caf82')}
         ${fila('Deductivo', `−${M(n(item.montoDeductivo))}`, '#e0a04c')}
         ${fila('Neto sin IVA', `${n(item.montoNeto) >= 0 ? '+' : '−'}${M(n(item.montoNeto))}`)}
-        ${fila(`IVA (${n(item.ivaPct) || 16}%)`, M(n(item.iva)))}
+        ${fila(`IVA (${_pctIVA(item.ivaPct)}%)`, M(n(item.iva)))}
         <div style="border-top:1px solid var(--border);margin-top:5px;padding-top:5px">
           ${fila('<b>Neto con IVA</b>', `${neto >= 0 ? '+' : '−'}${M(neto)}`, col)}
         </div>
@@ -558,6 +566,10 @@ function _cardBodyOrdenCambio(item) {
         Informativa: al registrarla <b>no se genera ningún movimiento contable</b>. Una orden de
         cambio mueve el presupuesto, no la caja — el dinero llegará después por las estimaciones.
         El presupuesto por rubro se actualiza desde el contrato vigente que publica estimaciones.
+      </div>
+
+      <div class="bz-acciones" style="display:flex;gap:8px;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--border)">
+        ${_accionesHTML(item)}
       </div>
     </div>`;
 }
@@ -977,6 +989,14 @@ function _accionesHTML(item) {
   const e      = item.estado;
 
   if (e === 'recibido' || e === 'pendiente' || e === 'en_revision') {
+    // Orden de cambio: informativa. No se aprueba ni se paga — se acusa de
+    // recibido y se cierra, para que no se quede atorada en revisión.
+    if (item.tipo === 'orden_cambio') {
+      return `
+        <button class="bz-btn-aprobar" ${dis} style="background:#5dd39e;color:#0e3a25;border:none;border-radius:6px;padding:8px 14px;font-weight:600">✓ Enterado, cerrar</button>
+        <button class="bz-btn-rechazar" style="background:transparent;color:#e15555;border:1px solid #e15555;border-radius:6px;padding:8px 14px;cursor:pointer">✕ Marcar con observación</button>
+        ${vincBtn}`;
+    }
     if (esCajaChica) {
       // Caja chica: aprobar = asentar contable directamente. No hay flujo
       // CxC/CxP, así que tampoco hay "Aprobar + Pagar".
