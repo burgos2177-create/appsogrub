@@ -587,6 +587,15 @@ function _cardBodyHTML(item) {
   const esCajaChica = esGastoCC || esDepCC;
   // Etiqueta legible de forma de pago (gasto_oc)
   const _formaPagoLbl = { credito: '🧾 Crédito (por pagar)', efectivo: '💵 Efectivo', transferencia: '🏦 Transferencia', caja_chica: '💰 Caja chica' }[item.formaPago] || item.formaPago || '—';
+  // De qué caja va a salir el dinero al asentar (indirectos / nómina / carga social).
+  // Se pinta siempre, incluso cuando el origen no la mandó, para que el supuesto
+  // "sale de Mifel" quede a la vista y no se descubra hasta el arqueo.
+  const _cajaOrigen = _metodoPagoDeItem(item);
+  const _cajaOrigenLbl = _cajaOrigen === 'efectivo'
+    ? '<b style="color:#e0a04c">💵 Efectivo</b> <span class="text-muted" style="font-size:11px">(caja física)</span>'
+    : _cajaOrigen === 'transferencia'
+    ? '<b>🏦 Transferencia</b> <span class="text-muted" style="font-size:11px">(Mifel)</span>'
+    : '<span class="text-muted">no especificada — se asume 🏦 Mifel</span>';
   const fechaPago = item.fecha
     ? new Date(item.fecha).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })
     : (esOC && item.fechaEmision
@@ -637,16 +646,19 @@ function _cardBodyHTML(item) {
     : esIndirecto
     ? `Concepto: <b>${item.concepto || '—'}</b><br>
        Categoría: <b>${item.categoriaNombre || item.categoria || '—'}</b>${item.empresa ? ' <span style="color:#e0a04c">· empresa</span>' : ''}<br>
-       ${item.proveedorNombre ? `Proveedor: <b>${item.proveedorNombre}</b> <code style="font-size:11px" title="RFC del proveedor">${_rfcProveedorBuzon(item.proveedorNombre, item) || '—'}</code><br>` : ''}Fecha: <b>${fechaPago}</b>`
+       ${item.proveedorNombre ? `Proveedor: <b>${item.proveedorNombre}</b> <code style="font-size:11px" title="RFC del proveedor">${_rfcProveedorBuzon(item.proveedorNombre, item) || '—'}</code><br>` : ''}Sale de: ${_cajaOrigenLbl}<br>
+       Fecha: <b>${fechaPago}</b>`
     : esNomina
     ? `Personal: <b>${item.tipoPersonal || '—'}</b>${item.periodicidad ? ' · ' + item.periodicidad : ''}<br>
        Período: <b>${item.label || item.periodoId || '—'}</b><br>
        Empleados: <b>${item.numEmpleados ?? '—'}</b> · Neto: <b>$${(Number(item.totalNeto ?? item?.monto?.importe) || 0).toLocaleString('es-MX',{minimumFractionDigits:2})}</b><br>
-       Obras prorrateadas: <b>${Object.keys(item.prorrateoPorObra || {}).length}</b>${Number(item.netoSinObra) ? ' + empresa' : ''}`
+       Obras prorrateadas: <b>${Object.keys(item.prorrateoPorObra || {}).length}</b>${Number(item.netoSinObra) ? ' + empresa' : ''}<br>
+       Sale de: ${_cajaOrigenLbl}`
     : esCargaSocial
     ? `Clasificación: <b>${item.clasificacion || '—'}${item.ambito ? ' · ' + item.ambito : ''}</b><br>
        Mes: <b>${item.mes || '—'}</b>${item.incluyeInfonavit ? ' · <span style="color:#5dd39e">incluye Infonavit</span>' : ''}<br>
        Empleados: <b>${(item.empleados || []).length}</b> · Obras prorrateadas: <b>${Object.keys(item.prorrateoPorObra || {}).length}</b><br>
+       Sale de: ${_cajaOrigenLbl}<br>
        ${item.fechaVencimiento ? `Vence: <b>${new Date(item.fechaVencimiento).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })}</b>` : `Fecha: <b>${fechaPago}</b>`}`
     : `Estimación: <b>#${item.estimNumero ?? '—'}</b><br>
        Fecha pago: <b>${fechaPago}</b>`;
@@ -1194,6 +1206,29 @@ function _formaPagoLblCorto(fp) {
   return { credito: 'crédito', efectivo: 'efectivo', transferencia: 'transferencia', caja_chica: 'caja chica' }[fp] || fp || '';
 }
 
+// Normaliza la forma de pago que mandan las apps de campo (o el modal de pago)
+// al valor que entienden calcSaldoMifel / calcSaldoEfectivo.
+//   'efectivo' → sale de la caja física · 'transferencia' → sale de Mifel
+//   undefined  → no la especificaron; el cálculo la asume transferencia.
+// Acepta varias grafías porque cada app la manda distinto: formaPago
+// ('efectivo'), metodoPago ('Efectivo'), o el select del modal ('SPEI').
+// OJO: 'credito' y 'caja_chica' NO son cajas — devuelven undefined a propósito;
+// esos flujos los resuelve quien llama (status Pendiente / paga_de_caja_chica).
+function _metodoPagoDe(...vals) {
+  for (const v of vals) {
+    const s = String(v ?? '').trim().toLowerCase();
+    if (!s) continue;
+    if (s === 'efectivo' || s === 'cash') return 'efectivo';
+    if (s === 'transferencia' || s === 'transfer' || s === 'spei' || s === 'cheque') return 'transferencia';
+  }
+  return undefined;
+}
+
+// Forma de pago que trae un item del buzón, sin importar el nombre del campo.
+function _metodoPagoDeItem(item) {
+  return _metodoPagoDe(item?.formaPago, item?.metodoPago, item?.metodo, item?.forma_pago);
+}
+
 // =====================================================
 // Gasto de recepción de OC (app-materiales, tipo='gasto_oc').
 // Self-contained: monto = total CON IVA, desglose por conceptoKey (SIN IVA).
@@ -1417,6 +1452,9 @@ async function _aprobarItem(item, aprobarYPagar = false) {
   if (aprobarYPagar) {
     pagoData = await _modalDatosPago((_tipoEsCxP(item.tipo)) ? 'pago' : 'cobro');
     if (!pagoData) return; // cancelado
+    // De qué caja salió (o entró) el dinero. Sin esto el contable nacía sin
+    // metodo_pago y los cálculos lo daban por Mifel aunque se pagara en efectivo.
+    movimiento.metodo_pago = _metodoPagoDe(pagoData.metodo) ?? movimiento.metodo_pago;
   }
 
   try {
@@ -1476,8 +1514,11 @@ async function _marcarPagadoCobrado(item) {
 
   try {
     const movUpdates = { status: 'Pagado', fecha: pagoData.fechaISO };
-    // gasto_oc a crédito: al pagarlo, define de qué caja salió (efectivo/Mifel).
-    if (esGastoOC) movUpdates.metodo_pago = (pagoData.metodo === 'Efectivo') ? 'efectivo' : 'transferencia';
+    // Al liquidarlo se define de qué caja salió (o entró) el dinero. Aplica a
+    // todos los tipos, no sólo a gasto_oc: si aquí eliges Efectivo y no se
+    // escribe metodo_pago, el saldo lo descuenta de Mifel y el arqueo no cuadra.
+    const _mp = _metodoPagoDe(pagoData.metodo);
+    if (_mp) movUpdates.metodo_pago = _mp;
     updateItem('sogrub_proy_movimientos', item.movId, movUpdates);
 
     const nuevoEstado = esCxP ? 'pagado' : 'cobrado';
@@ -1775,8 +1816,7 @@ async function _aprobarGastoIndirecto(item, aprobarYPagar = false) {
 
   // Forma de pago (opcional; indirectos puede mandar formaPago/metodoPago).
   // 'efectivo' → sale de la CAJA DE EFECTIVO; cualquier otra cosa → Mifel.
-  const _fp = item.formaPago || item.metodoPago || '';
-  const metodoPago = _fp === 'efectivo' ? 'efectivo' : (_fp === 'transferencia' ? 'transferencia' : undefined);
+  const metodoPago = _metodoPagoDeItem(item);
 
   // ── Empresa / sin obra → egreso de Mifel (o de efectivo), no toca proyecto ──
   if (esEmpresa) {
@@ -1871,6 +1911,10 @@ async function _aprobarNomina(item) {
   const CAT_POR_PERSONAL = { operativo: 'Mano de Obra', tecnico_campo: 'Mano de Obra', tecnico_oficina: 'Indirecto', directivo: 'Indirecto' };
   const categoria = CAT_POR_PERSONAL[item.tipoPersonal] || 'Indirecto';
   const label     = item.label || item.concepto || 'nómina';
+  // Si indirectos marcó la nómina como pagada en efectivo, el dinero salió de la
+  // caja física, no de Mifel. Sin esto el prorrateo bajaba Mifel y el arqueo de
+  // efectivo quedaba sobrando el neto completo.
+  const metodoPago = _metodoPagoDeItem(item);
 
   let folio;
   try { folio = await _generarFolio('CP'); }
@@ -1896,6 +1940,7 @@ async function _aprobarNomina(item) {
       status:       'Pagado',
       tipo:         'gasto',
       categoria,
+      metodo_pago:  metodoPago,
       nomina_periodo_id: item.periodoId || null,
       origen_buzon_id: item.id,
     });
@@ -1922,6 +1967,7 @@ async function _aprobarNomina(item) {
         tipo:           'nomina',
         categoria,
         empresa:        true,
+        metodo_pago:    metodoPago,
         nomina_periodo_id: item.periodoId || null,
         tipo_personal:  item.tipoPersonal || null,
         num_empleados:  item.numEmpleados || null,
@@ -1947,6 +1993,7 @@ async function _aprobarCargaSocial(item) {
   const fechaISO  = item.fecha || new Date().toISOString().slice(0, 10);
   const categoria = item.clasificacion === 'directo' ? 'Mano de Obra' : 'Indirecto';
   const ambito    = item.ambito === 'campo' ? 'campo' : 'oficina';
+  const metodoPago = _metodoPagoDeItem(item);
 
   let folio;
   try { folio = await _generarFolio('CP'); }
@@ -1971,6 +2018,7 @@ async function _aprobarCargaSocial(item) {
       tipo:         'gasto',
       categoria,
       indirecto_ambito: categoria === 'Indirecto' ? ambito : undefined,
+      metodo_pago:  metodoPago,
       carga_social_mes: item.mes || null,
       origen_buzon_id: item.id,
     });
@@ -1997,6 +2045,7 @@ async function _aprobarCargaSocial(item) {
         tipo:           'carga_social',
         categoria,
         empresa:        true,
+        metodo_pago:    metodoPago,
         carga_social_mes:  item.mes || null,
         incluye_infonavit: !!item.incluyeInfonavit,
         origen_buzon_id: item.id,

@@ -46,6 +46,17 @@ cualquier → rechazado
 | `gasto_indirecto` | indirectos | obra → `sogrub_proy_movimientos` (gasto, categoria='Indirecto'); **empresa** (`empresa:true`/sin obra) → egreso directo de Mifel (`sogrub_movimientos`) | Folio CP. Proveedor y desglose OPUS **opcionales** (`conceptoKey`); `monto={subtotal,iva,importe}`. Resuelve obra→proyecto vía `obraLinks`. Prorrateo = N items (uno por obra). Ver `_aprobarGastoIndirecto`. |
 | `nomina_*` (`nomina_operativo_semana`, `nomina_tecnico_campo_quincena`, `nomina_tecnico_oficina_quincena`, `nomina_directivo_quincena`) | indirectos | 1 egreso Mifel (`sogrub_movimientos`, neto total) **+** N `sogrub_proy_movimientos` por `prorrateoPorObra` con `no_afecta_mifel:true` | Folio CP. `netoSinObra` queda sólo en el egreso de empresa. Categoría por `tipoPersonal`: operativo/técnico-campo→'Mano de Obra', oficina/directivo→'Indirecto'. Anti-doble-conteo: `calcSaldoMifel` excluye `no_afecta_mifel` (el neto ya bajó Mifel una vez), pero SÍ baja la caja de cada proyecto. Ver `_aprobarNomina`. |
 
+**Forma de pago — de qué caja sale el dinero.** Todo contable que nace del buzón hereda
+`metodo_pago` vía `_metodoPagoDeItem(item)` (lee `formaPago` / `metodoPago` / `metodo` /
+`forma_pago`, normaliza `Efectivo|SPEI|Cheque|…`). No es cosmético: `calcSaldoMifel` lee
+`metodo_pago ?? 'transferencia'`, así que **un contable sin el campo se descuenta de Mifel**
+aunque se haya pagado con billetes, y el arqueo de efectivo termina sobrando ese monto. El
+modal de pago (`_modalDatosPago`, tanto en aprobar+pagar como en `_marcarPagadoCobrado`) lo
+escribe para todos los tipos, no sólo `gasto_oc`. `credito` y `caja_chica` **no** son cajas:
+devuelven `undefined` a propósito y los resuelve quien llama (status Pendiente /
+`paga_de_caja_chica`). En la tabla del proyecto la pastilla lleva `?` cuando el campo falta,
+para distinguir "fue transferencia" de "nadie lo dijo".
+
 Ver `_aprobarItem`, `_aprobarGastoCajaChica`, `_aprobarDepositoCajaChica`, `_depositarCajaChicaDesdeBitacora` en `js/views/buzon.js`.
 
 ## Caja chica (módulo correlacionado con app-materiales)
