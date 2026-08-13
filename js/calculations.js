@@ -622,11 +622,34 @@ async function cargarAvanceObra(proyectoId) {
   }
 }
 
-// Costo presupuestado total = las tres bolsitas de gasto (directo + los dos
-// indirectos). No incluye financiamiento ni utilidad: eso es margen, no costo.
+// Costo presupuestado VIGENTE = las tres bolsitas de gasto (directo + los dos
+// indirectos), ya con el acumulado de órdenes de cambio. No incluye
+// financiamiento ni utilidad: eso es margen, no costo.
+//
+// Tiene que ser el vigente y no el original: una OC deductiva baja la venta Y
+// baja los rubros de costo. Si acá se dejara el costo original, toda la
+// reducción del contrato caería sobre la utilidad esperada, como si se hubiera
+// quitado obra y aun así hubiera que pagarla.
+//
+// Igual que en calcBolsitasProyecto, `rubrosAcum` es ESTADO: se parte del
+// original fresco y se le suma el acumulado, nunca sobre el valor ya ajustado.
 function calcPresupuestoCostoTotal(proyectoId) {
-  const d = calcDesgloseContrato(getItem(KEYS.PROYECTOS, proyectoId) ?? {});
-  return d.costoDirecto + d.indOficina + d.indCampo;
+  const d  = calcDesgloseContrato(getItem(KEYS.PROYECTOS, proyectoId) ?? {});
+  const oc = ajusteRubrosOC(proyectoId);
+  const base = d.costoDirecto + d.indOficina + d.indCampo;
+  return oc ? base + oc.costoDirecto + oc.indOficina + oc.indCampo : base;
+}
+
+// Contrato vigente SIN IVA. Prioridad: el nodo de OC (autoritativo, lo publica
+// estimaciones) → el que trae avanceObra → el original de bitácora + el
+// acumulado de venta. Sin OC las tres rutas dan lo mismo.
+function calcContratoVigenteSubtotal(proyectoId, avance) {
+  const num = v => (Number.isFinite(Number(v)) ? Number(v) : null);
+  const d   = calcDesgloseContrato(getItem(KEYS.PROYECTOS, proyectoId) ?? {});
+  const oc  = ajusteRubrosOC(proyectoId);
+  return num(getContratoOC(proyectoId)?.contrato?.subtotal)
+      ?? num(avance?.contratoSubtotal)
+      ?? (d.contrato + (oc ? oc.venta : 0));
 }
 
 // =====================================================
@@ -650,9 +673,13 @@ function calcPresupuestoCostoTotal(proyectoId) {
 function calcLecturaTrade(proyectoId) {
   const avance   = getAvanceObra(proyectoId);
   const d        = calcDesgloseContrato(getItem(KEYS.PROYECTOS, proyectoId) ?? {});
+  const ocAj     = ajusteRubrosOC(proyectoId);
 
-  const cPresup     = d.costoDirecto + d.indOficina + d.indCampo;
-  const vContrato   = Number(avance?.contratoSubtotal) || d.contrato || 0;
+  // Ambos lados VIGENTES: si una OC movió el contrato, también movió los rubros
+  // de costo. Comparar venta vigente contra costo original hacía que toda la
+  // deductiva se leyera como utilidad perdida.
+  const cPresup     = calcPresupuestoCostoTotal(proyectoId);
+  const vContrato   = calcContratoVigenteSubtotal(proyectoId, avance);
   const cIncurrido  = calcTotalGastadoPagado(proyectoId);
   const netoCobrado = calcIVACobradoCliente(proyectoId).netoTotal;
 
@@ -669,6 +696,16 @@ function calcLecturaTrade(proyectoId) {
     updatedAt: avance?.updatedAt ?? null,
     vEjec, vContrato, cIncurrido, cPresup, netoCobrado,
     utilidadEsperada,
+    // Desglose del efecto de las OC sobre la utilidad esperada, para que se vea
+    // cuánto del cambio de contrato fue obra que se quitó (costo) y cuánto fue
+    // margen de verdad. Sin OC va en null y la tarjeta no lo pinta.
+    oc: ocAj ? {
+      venta:    ocAj.venta,
+      costo:    ocAj.costoDirecto + ocAj.indOficina + ocAj.indCampo,
+      utilidad: ocAj.venta - (ocAj.costoDirecto + ocAj.indOficina + ocAj.indCampo),
+      contratoOriginal: vContrato - ocAj.venta,
+      costoOriginal:    cPresup - (ocAj.costoDirecto + ocAj.indOficina + ocAj.indCampo),
+    } : null,
     pnlRealizado,
     pnlFlotante:      tieneAvance ? utilidadEsperada - pnlRealizado : null,
     margenRealizado:  (tieneAvance && vEjec > 0) ? (pnlRealizado / vEjec) * 100 : null,

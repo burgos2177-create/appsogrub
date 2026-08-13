@@ -303,8 +303,21 @@ function _aoTradeCard(proyectoId) {
         'lo que queda por ganar al terminar la obra', signo(t.pnlFlotante))}
       ${bloque('🎯 Utilidad esperada',
         M(t.utilidadEsperada),
-        `${M(t.vContrato)} contrato − ${M(t.cPresup)} costo presupuestado`, signo(t.utilidadEsperada))}
+        `${M(t.vContrato)} contrato vigente − ${M(t.cPresup)} costo presupuestado vigente`, signo(t.utilidadEsperada))}
     </div>
+
+    ${t.oc ? `
+    <div style="margin-top:14px;padding:10px 12px;background:var(--surface2);border-radius:var(--radius);
+         border-left:3px solid var(--accent);font-size:11px;color:var(--text-muted);line-height:1.6">
+      <b style="color:var(--text)">📋 Efecto de las órdenes de cambio</b><br>
+      Contrato ${M(t.oc.contratoOriginal)} → <b>${M(t.vContrato)}</b>
+      (${t.oc.venta >= 0 ? '+' : '−'}${M(Math.abs(t.oc.venta))})<br>
+      Costo presupuestado ${M(t.oc.costoOriginal)} → <b>${M(t.cPresup)}</b>
+      (${t.oc.costo >= 0 ? '+' : '−'}${M(Math.abs(t.oc.costo))})<br>
+      <span style="color:var(--text)">Neto sobre la utilidad esperada:
+      <b class="${t.oc.utilidad >= 0 ? 'text-success' : 'text-danger'}">${t.oc.utilidad >= 0 ? '+' : '−'}${M(Math.abs(t.oc.utilidad))}</b></span>
+      — el resto del cambio de contrato es obra que se ${t.oc.venta >= 0 ? 'agregó' : 'quitó'}, con su costo.
+    </div>` : ''}
 
     <div style="padding-top:14px">
       ${bloque('💧 Efectivo flotante del cliente',

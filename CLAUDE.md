@@ -181,7 +181,7 @@ sin IVA. Se lee vía búsqueda inversa en `/shared/obraLinks` (`cargarAvanceObra
 
 ```
 V_ejec      = ejecutadoCatalogoSubtotal        C_incurrido = gastado (pagado)
-V_contrato  = contratoSubtotal                 C_presup    = directo + ind. oficina + ind. campo
+V_contrato  = contrato VIGENTE sin IVA         C_presup    = (directo + ind. oficina + ind. campo) VIGENTES
 
 Utilidad esperada (target)  = V_contrato − C_presup
 PnL realizado (ya ganado)   = V_ejec − C_incurrido
@@ -192,6 +192,14 @@ Efectivo flotante cliente   = netoCobrado − V_ejec            ← en caja pero
 
 Invariante: `PnL realizado + PnL flotante = Utilidad esperada`. Se muestra como línea de
 verificación en la tarjeta.
+
+**Los dos lados van vigentes (2026-08-13).** `V_contrato` sale de
+`calcContratoVigenteSubtotal` (nodo de OC → `avanceObra` → original + `rubrosAcum.venta`) y
+`C_presup` de `calcPresupuestoCostoTotal`, que suma `rubrosAcum` de los tres rubros de costo.
+Mezclarlos —venta vigente contra costo original— hacía que **toda** una OC deductiva se leyera
+como utilidad perdida: se quitaba obra del contrato pero el costo de esa obra seguía
+presupuestado. Sólo la parte de la OC que no es costo mueve la utilidad esperada; la tarjeta
+lo desglosa en `t.oc` (venta / costo / neto).
 
 **Dónde se ve:**
 - Detalle → KPI 📈 Utilidad: *Realizada* (V_ejec − gastado), *Esperada* (obra completa) y
