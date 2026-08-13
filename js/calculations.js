@@ -1046,11 +1046,14 @@ function calcIVADesglose(proyectoId) {
   let ivaPagado = 0;
   let ivaPorCobrar = 0;
   let ivaVerificado = 0;  // IVA de gastos que tienen factura adjunta (PDF o XML)
+  let nConIva = 0, nConFactura = 0, nSinIva = 0;
 
   movs.forEach(m => {
     const abs = Math.abs(m.monto);
     const tieneFactura = !!(m.factura_drive_url || m.factura_xml_url || m.factura_nombre || m.factura_xml_nombre);
     if (m.incluye_iva) {
+      nConIva++;
+      if (tieneFactura) nConFactura++;
       // Preferir subtotal/IVA guardados (exactos aun con retenciones, donde el
       // monto viene neto); si no existen, derivar del monto bruto (/1.16).
       const tieneDesglose = Number(m.monto_subtotal) > 0 && m.monto_iva != null;
@@ -1060,12 +1063,27 @@ function calcIVADesglose(proyectoId) {
       ivaPagado += iva;
       if (tieneFactura) ivaVerificado += iva;
     } else {
+      nSinIva++;
       gastoNeto += abs;
+      // OJO: esto NO es IVA que se pueda acreditar. Es el IVA que se AÑADIRÍA
+      // si estos gastos llegaran facturados — sirve para armar el total de
+      // factura del estado de cuenta, nada más. Un gasto marcado sin IVA no
+      // generó ningún IVA acreditable.
       ivaPorCobrar += abs * 0.16;
     }
   });
 
-  return { gastoNeto, ivaPagado, ivaPorCobrar, ivaVerificado, totalBruto: gastoNeto + ivaPagado };
+  return {
+    gastoNeto, ivaPagado, ivaVerificado,
+    // IVA realmente pagado que todavía no tiene CFDI que lo respalde. ESTE es
+    // el que no puedes acreditar hasta conseguir la factura.
+    ivaSinFactura: ivaPagado - ivaVerificado,
+    // IVA hipotético sobre los gastos sin IVA (ver arriba). Se conserva porque
+    // el estado de cuenta lo usa para el total de factura.
+    ivaPorCobrar,
+    conteos: { conIva: nConIva, conFactura: nConFactura, sinFactura: nConIva - nConFactura, sinIva: nSinIva },
+    totalBruto: gastoNeto + ivaPagado,
+  };
 }
 
 // =====================================================

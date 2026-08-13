@@ -202,8 +202,14 @@ function renderDetalleKPIs(proyectoId, proyecto) {
         <div style="font-weight:600;color:var(--text-muted);margin-bottom:3px;font-size:10px;text-transform:uppercase;letter-spacing:.05em">Gastos</div>
         <div>Neto gastado: <strong>${formatMXN(iva.gastoNeto)}</strong></div>
         <div>IVA pagado (gastos): <strong style="color:var(--danger)">${formatMXN(iva.ivaPagado)}</strong></div>
-        <div style="color:var(--success)">IVA verificado c/facturas: <strong>${formatMXN(iva.ivaVerificado)}</strong></div>
-        <div style="color:var(--warning)">IVA por acreditar: <strong>${formatMXN(iva.ivaPorCobrar)}</strong></div>
+        <div style="color:var(--success)">IVA verificado c/facturas: <strong>${formatMXN(iva.ivaVerificado)}</strong>
+          <span style="font-size:10px;color:var(--text-dim)">(${iva.conteos.conFactura} de ${iva.conteos.conIva} gastos con IVA)</span></div>
+        <div style="color:var(--warning)" title="IVA que ya pagaste pero todavía no tiene factura que lo respalde. Hasta conseguirla no se puede acreditar.">
+          IVA sin factura: <strong>${formatMXN(iva.ivaSinFactura)}</strong>
+          <span style="font-size:10px;color:var(--text-dim)">(${iva.conteos.sinFactura} gasto${iva.conteos.sinFactura === 1 ? '' : 's'})</span></div>
+        <div style="color:var(--text-dim);font-size:10px;line-height:1.4;margin-top:2px">
+          ${iva.conteos.sinIva} gasto${iva.conteos.sinIva === 1 ? '' : 's'} marcado${iva.conteos.sinIva === 1 ? '' : 's'} sin IVA — no generan IVA acreditable.
+        </div>
         <div style="border-top:1px solid var(--border);margin-top:4px;padding-top:4px;font-weight:600;color:var(--text-muted);font-size:10px;text-transform:uppercase;letter-spacing:.05em">Cobrado al cliente</div>
         <div>IVA cobrado: <strong style="color:var(--accent)">${formatMXN(ivaCobrado.ivaTotal)}</strong></div>
         <div style="margin-top:3px">Balance IVA:
