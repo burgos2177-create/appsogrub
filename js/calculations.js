@@ -1063,11 +1063,37 @@ function calcIVACobradoCliente(proyectoId) {
   return { netoTotal, ivaTotal, total: netoTotal + ivaTotal };
 }
 
-// Total gastado pagado (para detalle)
+// Costo SIN IVA de un movimiento.
+//
+// Por qué existe: el presupuesto OPUS (contrato, bolsitas, catálogo) está SIN
+// IVA, y `monto` guarda el total CON IVA — es lo que salió del banco. Sumar
+// `monto` contra un presupuesto sin IVA infla el gasto por el IVA completo y
+// hace que las bolsitas se vean sobregiradas antes de estarlo.
+//
+// El IVA no es costo de obra: es un impuesto acreditable, un tema fiscal
+// aparte. Para CAJA sí se usa `monto` (el banco no acredita nada), y por eso
+// calcSaldoCajaProyecto / calcSaldoMifel se quedan como están.
+//
+// Prioridad: subtotal capturado → total − IVA capturado → derivado al 16% →
+// el monto tal cual (gasto sin IVA).
+function montoCostoSinIVA(m) {
+  const abs = Math.abs(Number(m?.monto) || 0);
+  const sub = Number(m?.monto_subtotal);
+  // Guarda de cordura: hay registros viejos donde monto_subtotal trae otra cosa
+  // (p. ej. el ejecutado del período). Si excede el total, no es un subtotal.
+  if (Number.isFinite(sub) && sub > 0 && sub <= abs + 0.005) return sub;
+  const iva = Number(m?.monto_iva);
+  if (Number.isFinite(iva) && iva > 0 && iva < abs) return abs - iva;
+  if (m?.incluye_iva) return abs / 1.16;
+  return abs;
+}
+
+// Total gastado pagado, SIN IVA — se compara contra presupuesto y contra el
+// ejecutado a catálogo, que también van sin IVA.
 function calcTotalGastadoPagado(proyectoId) {
   const movs = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
     .filter(m => m.proyecto_id === proyectoId && m.tipo === 'gasto' && m.status === 'Pagado');
-  return movs.reduce((acc, m) => acc + Math.abs(m.monto), 0);
+  return movs.reduce((acc, m) => acc + montoCostoSinIVA(m), 0);
 }
 
 // =====================================================
@@ -1192,8 +1218,9 @@ function calcBolsitasProyecto(proyectoId) {
   const gastos = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
     .filter(m => m.proyecto_id === proyectoId && m.tipo === 'gasto' && m.status === 'Pagado');
 
+  // SIN IVA: el presupuesto de cada bolsita está sin IVA (ver montoCostoSinIVA).
   const gastado = { costo_directo: 0, ind_oficina: 0, ind_campo: 0 };
-  gastos.forEach(m => { gastado[_bolsaDeGasto(m)] += Math.abs(m.monto); });
+  gastos.forEach(m => { gastado[_bolsaDeGasto(m)] += montoCostoSinIVA(m); });
 
   const bolsas = [
     { key: 'costo_directo', label: 'Costo directo',      icon: '🧱', original: d.costoDirecto, ajuste: A('costoDirecto'), gastado: gastado.costo_directo },
