@@ -1063,7 +1063,7 @@ function calcIVACobradoCliente(proyectoId) {
   return { netoTotal, ivaTotal, total: netoTotal + ivaTotal };
 }
 
-// Costo SIN IVA de un movimiento.
+// Importe SIN IVA de un movimiento (sirve igual para gastos y para abonos).
 //
 // Por qué existe: el presupuesto OPUS (contrato, bolsitas, catálogo) está SIN
 // IVA, y `monto` guarda el total CON IVA — es lo que salió del banco. Sumar
@@ -1076,7 +1076,7 @@ function calcIVACobradoCliente(proyectoId) {
 //
 // Prioridad: subtotal capturado → total − IVA capturado → derivado al 16% →
 // el monto tal cual (gasto sin IVA).
-function montoCostoSinIVA(m) {
+function montoSinIVA(m) {
   const abs = Math.abs(Number(m?.monto) || 0);
   const sub = Number(m?.monto_subtotal);
   // Guarda de cordura: hay registros viejos donde monto_subtotal trae otra cosa
@@ -1093,7 +1093,7 @@ function montoCostoSinIVA(m) {
 function calcTotalGastadoPagado(proyectoId) {
   const movs = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
     .filter(m => m.proyecto_id === proyectoId && m.tipo === 'gasto' && m.status === 'Pagado');
-  return movs.reduce((acc, m) => acc + montoCostoSinIVA(m), 0);
+  return movs.reduce((acc, m) => acc + montoSinIVA(m), 0);
 }
 
 // =====================================================
@@ -1218,9 +1218,9 @@ function calcBolsitasProyecto(proyectoId) {
   const gastos = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
     .filter(m => m.proyecto_id === proyectoId && m.tipo === 'gasto' && m.status === 'Pagado');
 
-  // SIN IVA: el presupuesto de cada bolsita está sin IVA (ver montoCostoSinIVA).
+  // SIN IVA: el presupuesto de cada bolsita está sin IVA (ver montoSinIVA).
   const gastado = { costo_directo: 0, ind_oficina: 0, ind_campo: 0 };
-  gastos.forEach(m => { gastado[_bolsaDeGasto(m)] += montoCostoSinIVA(m); });
+  gastos.forEach(m => { gastado[_bolsaDeGasto(m)] += montoSinIVA(m); });
 
   const bolsas = [
     { key: 'costo_directo', label: 'Costo directo',      icon: '🧱', original: d.costoDirecto, ajuste: A('costoDirecto'), gastado: gastado.costo_directo },

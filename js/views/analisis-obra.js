@@ -109,7 +109,7 @@ function _aoSeries(proyectoId, gran) {
   const s = {
     keys,
     labels: keys.map(k => _aoBucketLabel(k, gran)),
-    cobrado: Z(), sogrub: Z(), gastado: Z(), gastoPend: Z(), deltaSaldo: Z(),
+    cobrado: Z(), cobradoNeto: Z(), sogrub: Z(), gastado: Z(), gastoPend: Z(), deltaSaldo: Z(),
     porCat: {},
   };
 
@@ -120,6 +120,9 @@ function _aoSeries(proyectoId, gran) {
 
     if (m.tipo === 'abono_cliente') {
       s.cobrado[i] += abs;
+      // Neto sin IVA: es lo que se compara contra el ejecutado a catálogo,
+      // que también va sin IVA. El IVA es pass-through, no es obra pagada.
+      s.cobradoNeto[i] += (m.status === 'Pagado') ? montoSinIVA(m) : 0;
       s.deltaSaldo[i] += m.monto;
     } else if (m.tipo === 'transferencia_sogrub') {
       s.sogrub[i] += m.monto;
@@ -146,7 +149,25 @@ function _aoSeries(proyectoId, gran) {
   const acc = (arr) => { let t = 0; return arr.map(v => t += v); };
   s.saldoAcum   = acc(s.deltaSaldo);
   s.cobradoAcum = acc(s.cobrado);
+  s.cobradoNetoAcum = acc(s.cobradoNeto);
   s.gastadoAcum = acc(s.gastado);
+
+  // ---- Saldo a favor del cliente ----------------------------------------
+  // Lo que pagó menos la obra que ya recibió, todo sin IVA. Es lo que habría
+  // que devolverle (o descontarle) si la obra se cerrara ese día.
+  //
+  // Arranca en el anticipo completo —nada ejecutado todavía— y baja con cada
+  // estimación por dos vías a la vez: la amortización del anticipo y la parte
+  // ejecutada que el cliente NO paga en esa estimación. Si termina la obra
+  // arriba de cero, ese remanente es anticipo que nunca se amortizó.
+  //
+  // Escalonada, no continua: sólo baja cuando cierra una estimación, porque
+  // hasta entonces no hay obra certificada. Antes del primer cierre
+  // avanceEjecutadoEnFecha devuelve null = cero ejecutado.
+  const ejecPorBucket = keys.map(k => avanceEjecutadoEnFecha(proyectoId, _aoFinBucket(k, gran)) ?? 0);
+  s.ejecutadoAcum  = ejecPorBucket;
+  s.saldoCliente   = keys.map((_, i) => s.cobradoNetoAcum[i] - ejecPorBucket[i]);
+  s.tieneEjecutado = ejecPorBucket.some(v => v > 0);
   return s;
 }
 
@@ -164,10 +185,13 @@ function _aoAplicarRango(s, rango, gran) {
   const cut = arr => arr.slice(from);
   const out = {
     keys: cut(s.keys), labels: cut(s.labels),
-    cobrado: cut(s.cobrado), sogrub: cut(s.sogrub),
+    cobrado: cut(s.cobrado), cobradoNeto: cut(s.cobradoNeto), sogrub: cut(s.sogrub),
     gastado: cut(s.gastado), gastoPend: cut(s.gastoPend),
     deltaSaldo: cut(s.deltaSaldo), saldoAcum: cut(s.saldoAcum),
-    cobradoAcum: cut(s.cobradoAcum), gastadoAcum: cut(s.gastadoAcum),
+    cobradoAcum: cut(s.cobradoAcum), cobradoNetoAcum: cut(s.cobradoNetoAcum),
+    gastadoAcum: cut(s.gastadoAcum),
+    ejecutadoAcum: cut(s.ejecutadoAcum), saldoCliente: cut(s.saldoCliente),
+    tieneEjecutado: s.tieneEjecutado,
     porCat: {},
   };
   for (const [c, arr] of Object.entries(s.porCat)) out.porCat[c] = cut(arr);
@@ -687,7 +711,8 @@ function renderAnalisisObraTab(proyectoId) {
     </div>
   `;
   grid.innerHTML = `
-    ${_chartCard('ao-chart-caja', '💰 Evolución de la caja de la obra', 'Saldo disponible después de cada entrada y salida')}
+    ${_chartCard('ao-chart-caja', '💰 Evolución de la caja de la obra',
+      'Saldo disponible después de cada entrada y salida (con IVA) · <b>A favor del cliente</b> = lo que pagó − lo ejecutado, sin IVA: lo que le devolverías si la obra cerrara hoy')}
     ${_chartCard('ao-chart-flujo', '⇄ Entradas vs salidas por periodo', 'Cobros al cliente y fondeo SOGRUB contra gasto ejecutado')}
     ${_chartCard('ao-chart-acum', '📈 Curva cobrado vs gastado vs ejecutado',
       trade.tieneAvance
@@ -766,10 +791,35 @@ function _aoBuildCharts(proyectoId, proyecto) {
               borderColor: c => (c.p1.parsed.y < 0 || c.p0.parsed.y < 0) ? C.danger : C.accent,
             },
           },
+          // A favor del cliente: lo que pagó menos la obra que ya recibió.
+          // Sin relleno y en escalón, para que no se confunda con la caja
+          // (que sí es dinero disponible) y para que se lea que sólo se
+          // mueve cuando cierra una estimación.
+          ...(s.tieneEjecutado ? [{
+            label: 'A favor del cliente',
+            data: s.saldoCliente,
+            borderColor: C.warning,
+            backgroundColor: 'transparent',
+            fill: false,
+            stepped: 'after',
+            tension: 0,
+            pointRadius: s.labels.length > 40 ? 0 : 2,
+            pointHoverRadius: 4,
+            borderWidth: 2,
+            borderDash: [5, 3],
+          }] : []),
           { label: '', data: zeros, borderColor: C.muted + '66', borderDash: [4, 4], pointRadius: 0, borderWidth: 1, _skipTooltip: true },
         ],
       },
-      options: { ..._aoChartOpts(), plugins: { ..._aoChartOpts().plugins, legend: { display: false } } },
+      options: {
+        ..._aoChartOpts(),
+        plugins: {
+          ..._aoChartOpts().plugins,
+          legend: s.tieneEjecutado
+            ? { display: true, labels: { filter: it => !!it.text, boxWidth: 12, font: { size: 11 } } }
+            : { display: false },
+        },
+      },
     });
   }
 
