@@ -313,3 +313,41 @@ Antes de pushear cambios en `js/`: `bash bump-cache.sh` (bumpa el `?v=` en cada 
 4. En materiales: crear recepción tipo caja chica con $1500 y "Reportar a caja chica" → verificar item nuevo en buzón aquí + en sub-tab Caja chica del proyecto.
 5. Aquí: aprobar el gasto desde la fila de la tabla → genera `sogrub_proy_movimientos` con `categoria='Caja chica'` y `desglose_presupuesto` mapeado, sincroniza materiales (saldo cae a $3500).
 6. Borrar el `sogrub_proy_movimientos` recién creado → buzón se marca huerfano + espejo en `/shared/cajaChica` vuelve a `reportado` + saldo en materiales recupera los $1500.
+
+## Pagos parciales — una obligación, N exhibiciones (2026-08-24)
+
+Un gasto puede liquidarse en varias exhibiciones (anticipo 60% + liquidación contra
+entrega). La obligación es **una**: un movimiento, una factura, un desglose OPUS. Lo que
+se parte es el pago.
+
+```
+m.pagos = [{ id, fecha, monto, metodo_pago, referencia, nota }]
+```
+
+Helpers en `js/calculations.js`: `aplicacionesPago(m)` (la primitiva — todo lo demás
+deriva de ella), `montoPagadoDe`, `saldoPendienteDe`, `sobrepagoDe`, `statusPagoDe`
+(`Pendiente|Parcial|Pagado`), `fraccionPagadaDe`, `costoPagadoSinIVA`.
+
+- **Compatibilidad total**: un movimiento SIN `pagos[]` rinde una aplicación implícita por
+  el total si `status='Pagado'`, y ninguna si está `'Pendiente'`. Todo lo histórico calcula
+  idéntico. No hay migración.
+- **`status` se sigue escribiendo** (`'Pagado'` cuando ya no queda saldo, si no
+  `'Pendiente'`) para no romper el buzón, los hooks ni las otras apps. Pero quien necesite
+  **dinero real** usa las funciones de arriba, NUNCA `status` — un parcial lleva
+  `status='Pendiente'` con dinero ya salido.
+- **Cada exhibición trae su propia caja**: el anticipo por transferencia y la liquidación en
+  efectivo es un caso normal. `calcSaldoMifel` y `calcSaldoEfectivo` iteran
+  `aplicacionesPago`, no movimientos.
+- **Costo prorrateado**: las bolsitas y `calcTotalGastadoPagado` usan `costoPagadoSinIVA` =
+  subtotal × fracción liquidada. Un gasto al 60% aporta el 60% del costo.
+- **Comprometido**: `calcBolsitasProyecto` devuelve además `comprometido` / `pctComp` /
+  `overflowComp` por bolsa — lo devengado sin pagar. Se pinta rayado encima de la barra para
+  que un sobregiro ya firmado no aparezca hasta que se liquide.
+- **Conciliación**: `_concLedgerApp` emite una línea **por exhibición**, no por movimiento.
+  Al banco llegan pagos sueltos; emparejar contra el total nunca encontraría ninguno.
+- **Deuda pendiente** = Σ `saldoPendienteDe`, no monto completo.
+
+UI: botón 💵 en cada fila de gasto → modal de pagos (barra de avance, alta/baja de
+exhibiciones, "Liquidar el saldo"). En el buzón, "Marcar Pagado" de una CxP pregunta el
+monto: si es menor al saldo, agrega la exhibición y el item **no** pasa a `pagado` — sigue
+siendo cuenta por pagar viva, y el espejo de la OC en `/shared/compras` no se cierra.

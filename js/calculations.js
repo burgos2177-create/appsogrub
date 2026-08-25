@@ -42,11 +42,14 @@ function calcSaldoMifel() {
   // Mifel (van a calcSaldoEfectivo); (b) prorrateo de nómina (no_afecta_mifel) —
   // el neto ya salió de Mifel en el egreso único de nómina, aunque estos SÍ bajan
   // la caja del proyecto (calcSaldoCajaProyecto no los excluye).
-  const gastosPagados = proyMov
-    .filter(m => m.tipo === 'gasto' && m.status === 'Pagado' && !m.paga_de_caja_chica
-              && !m.no_afecta_mifel
-              && (m.metodo_pago ?? 'transferencia') !== 'efectivo')
-    .reduce((acc, m) => acc + m.monto, 0);
+  // Se suma pago por pago, no movimiento por movimiento: un gasto liquidado en
+  // exhibiciones baja de Mifel sólo lo que ya salió, y cada exhibición puede
+  // haber salido de una caja distinta.
+  const gastosPagados = -proyMov
+    .filter(m => m.tipo === 'gasto' && !m.paga_de_caja_chica && !m.no_afecta_mifel)
+    .flatMap(aplicacionesPago)
+    .filter(p => p.metodo_pago !== 'efectivo')
+    .reduce((acc, p) => acc + p.monto, 0);
 
   return saldo_inicial_mifel + movSOGRUB + abonosCliente + gastosPagados;
 }
@@ -81,13 +84,19 @@ function calcSaldoEfectivo() {
   // en sogrub_efectivo_movimientos); contarlos aquí sería doble descuento.
   // Los tipo='deposito_caja_chica' tampoco pasan este reduce (solo abono/gasto):
   // su descuento de caja física es el egreso propio en EFECTIVO_MOV.
-  const proyEfectivo = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
-    .filter(m => m.metodo_pago === 'efectivo' && !m.paga_de_caja_chica)
-    .reduce((acc, m) => {
-      if (m.tipo === 'abono_cliente') return acc + Math.abs(m.monto);                 // ingreso a caja
-      if (m.tipo === 'gasto' && m.status === 'Pagado') return acc - Math.abs(m.monto); // egreso de caja
-      return acc;
-    }, 0);
+  const proyMovs = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
+    .filter(m => !m.paga_de_caja_chica);
+  // Abonos del cliente cobrados en efectivo → entran a la caja física.
+  const abonosEfectivo = proyMovs
+    .filter(m => m.tipo === 'abono_cliente' && m.metodo_pago === 'efectivo')
+    .reduce((acc, m) => acc + Math.abs(m.monto), 0);
+  // Gastos: exhibición por exhibición, sólo las liquidadas en efectivo.
+  const gastosEfectivo = proyMovs
+    .filter(m => m.tipo === 'gasto')
+    .flatMap(aplicacionesPago)
+    .filter(p => p.metodo_pago === 'efectivo')
+    .reduce((acc, p) => acc + p.monto, 0);
+  const proyEfectivo = abonosEfectivo - gastosEfectivo;
 
   // Movimientos generales (empresa) pagados en efectivo — monto ya con signo.
   const mifelEfectivo = (getCollection(KEYS.MOVIMIENTOS) ?? [])
@@ -276,8 +285,8 @@ function calcSaldoCajaProyecto(proyectoId) {
   // a caja chica (movimiento `tipo='deposito_caja_chica'` abajo). Si los
   // restáramos también aquí, doble conteo.
   const gastosPagados = movs
-    .filter(m => m.tipo === 'gasto' && m.status === 'Pagado' && !m.paga_de_caja_chica)
-    .reduce((acc, m) => acc + Math.abs(m.monto), 0);
+    .filter(m => m.tipo === 'gasto' && !m.paga_de_caja_chica)
+    .reduce((acc, m) => acc + montoPagadoDe(m), 0);
 
   // Depósitos del proyecto a caja chica → bajan saldo del proyecto.
   const depositosCajaChica = movs
@@ -414,9 +423,11 @@ function calcDisponibleDesglose() {
 // Para el desglose con caja chica, usar calcDeudaPendienteDesglose() abajo.
 // =====================================================
 function calcDeudaPendiente(proyectoId) {
+  // Saldo insoluto, no monto completo: un gasto con el 60% de anticipo ya
+  // pagado sólo debe el 40% restante.
   const movs = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
-    .filter(m => m.proyecto_id === proyectoId && m.tipo === 'gasto' && m.status === 'Pendiente');
-  return movs.reduce((acc, m) => acc + Math.abs(m.monto), 0);
+    .filter(m => m.proyecto_id === proyectoId && m.tipo === 'gasto');
+  return movs.reduce((acc, m) => acc + saldoPendienteDe(m), 0);
 }
 
 // Desglose de deuda pendiente:
@@ -1063,6 +1074,85 @@ function calcIVACobradoCliente(proyectoId) {
   return { netoTotal, ivaTotal, total: netoTotal + ivaTotal };
 }
 
+// =====================================================
+// PAGOS PARCIALES — una obligación, N aplicaciones de pago
+//
+// Un gasto puede liquidarse en varias exhibiciones (anticipo 60% + liquidación
+// contra entrega, por ejemplo). La obligación es UNA: un movimiento, una
+// factura, un desglose OPUS. Lo que se parte es el pago.
+//
+//   m.pagos = [{ id, fecha, monto, metodo_pago, referencia, nota }]
+//
+// `status` se sigue escribiendo ('Pagado' cuando ya no queda saldo, si no
+// 'Pendiente') para que nada de lo que ya lee ese campo se rompa — incluidas
+// las otras apps y el buzón. El estado intermedio vive en `pagos`, y quien
+// necesite dinero real usa las funciones de aquí abajo, NO `status`.
+//
+// Compatibilidad: un movimiento SIN `pagos[]` rinde una aplicación implícita
+// por el total si está Pagado, y ninguna si está Pendiente. Con eso todo lo
+// histórico calcula exactamente igual que antes.
+// =====================================================
+function aplicacionesPago(m) {
+  const total = Math.abs(Number(m?.monto) || 0);
+  const ps = Array.isArray(m?.pagos) ? m.pagos.filter(p => Math.abs(Number(p?.monto) || 0) > 0) : [];
+  if (ps.length) {
+    return ps.map((p, i) => ({
+      id:          p.id || `${m.id}#${i}`,
+      fecha:       p.fecha || m.fecha,
+      monto:       Math.abs(Number(p.monto) || 0),
+      // Cada exhibición puede salir de una caja distinta: el anticipo por
+      // transferencia y la liquidación en efectivo, por ejemplo.
+      metodo_pago: p.metodo_pago ?? m.metodo_pago ?? 'transferencia',
+      referencia:  p.referencia || '',
+      nota:        p.nota || '',
+      movId:       m.id,
+    }));
+  }
+  if (m?.status === 'Pagado' && total > 0) {
+    return [{
+      id: m.id, fecha: m.fecha, monto: total,
+      metodo_pago: m.metodo_pago ?? 'transferencia',
+      referencia: '', nota: '', movId: m.id, implicita: true,
+    }];
+  }
+  return [];
+}
+
+function montoPagadoDe(m) {
+  return aplicacionesPago(m).reduce((a, p) => a + p.monto, 0);
+}
+
+function saldoPendienteDe(m) {
+  return Math.max(0, Math.abs(Number(m?.monto) || 0) - montoPagadoDe(m));
+}
+
+// Pagado de más. No se tapa: si aparece, hay un pago mal capturado o el
+// movimiento se editó a la baja después de pagarlo.
+function sobrepagoDe(m) {
+  return Math.max(0, montoPagadoDe(m) - Math.abs(Number(m?.monto) || 0));
+}
+
+// 'Pendiente' · 'Parcial' · 'Pagado'. Es el estado REAL, derivado del dinero.
+function statusPagoDe(m) {
+  const total = Math.abs(Number(m?.monto) || 0);
+  const pag   = montoPagadoDe(m);
+  if (pag <= 0.005) return 'Pendiente';
+  if (pag >= total - 0.005) return 'Pagado';
+  return 'Parcial';
+}
+
+// Fracción liquidada (0 a 1). Un movimiento en $0 se considera saldado.
+function fraccionPagadaDe(m) {
+  const total = Math.abs(Number(m?.monto) || 0);
+  return total > 0 ? Math.min(1, montoPagadoDe(m) / total) : 1;
+}
+
+// Costo SIN IVA de la parte YA PAGADA. Es lo que entra a las bolsitas y al
+// total gastado: se prorratea el subtotal por la fracción liquidada.
+function costoPagadoSinIVA(m) {
+  return montoSinIVA(m) * fraccionPagadaDe(m);
+}
+
 // Importe SIN IVA de un movimiento (sirve igual para gastos y para abonos).
 //
 // Por qué existe: el presupuesto OPUS (contrato, bolsitas, catálogo) está SIN
@@ -1092,8 +1182,9 @@ function montoSinIVA(m) {
 // ejecutado a catálogo, que también van sin IVA.
 function calcTotalGastadoPagado(proyectoId) {
   const movs = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
-    .filter(m => m.proyecto_id === proyectoId && m.tipo === 'gasto' && m.status === 'Pagado');
-  return movs.reduce((acc, m) => acc + montoSinIVA(m), 0);
+    .filter(m => m.proyecto_id === proyectoId && m.tipo === 'gasto');
+  // Sólo la parte liquidada: un gasto a 60% de anticipo aporta el 60% del costo.
+  return movs.reduce((acc, m) => acc + costoPagadoSinIVA(m), 0);
 }
 
 // =====================================================
@@ -1215,23 +1306,35 @@ function calcBolsitasProyecto(proyectoId) {
   const cOC = getContratoOC(proyectoId);
   const A   = (rubro) => oc ? oc[rubro] : 0;
 
-  const gastos = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
-    .filter(m => m.proyecto_id === proyectoId && m.tipo === 'gasto' && m.status === 'Pagado');
+  const gastosTodos = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
+    .filter(m => m.proyecto_id === proyectoId && m.tipo === 'gasto');
+  const gastos = gastosTodos.filter(m => montoPagadoDe(m) > 0);
 
   // SIN IVA: el presupuesto de cada bolsita está sin IVA (ver montoSinIVA).
   const gastado = { costo_directo: 0, ind_oficina: 0, ind_campo: 0 };
-  gastos.forEach(m => { gastado[_bolsaDeGasto(m)] += montoSinIVA(m); });
+  gastos.forEach(m => { gastado[_bolsaDeGasto(m)] += costoPagadoSinIVA(m); });
+  // Comprometido = lo devengado que todavía no se paga. No entra al gastado
+  // (la bolsita mide dinero ejercido) pero se pinta encima de la barra para
+  // que un sobregiro que ya está firmado no aparezca hasta que se pague.
+  const comprometido = { costo_directo: 0, ind_oficina: 0, ind_campo: 0 };
+  gastosTodos.forEach(m => {
+    const pend = saldoPendienteDe(m);
+    if (pend > 0) comprometido[_bolsaDeGasto(m)] += montoSinIVA(m) * (pend / (Math.abs(Number(m.monto)) || 1));
+  });
 
   const bolsas = [
-    { key: 'costo_directo', label: 'Costo directo',      icon: '🧱', original: d.costoDirecto, ajuste: A('costoDirecto'), gastado: gastado.costo_directo },
-    { key: 'ind_oficina',   label: 'Indirectos oficina', icon: '🏢', original: d.indOficina,   ajuste: A('indOficina'),   gastado: gastado.ind_oficina },
-    { key: 'ind_campo',     label: 'Indirectos campo',   icon: '🚧', original: d.indCampo,     ajuste: A('indCampo'),     gastado: gastado.ind_campo },
+    { key: 'costo_directo', label: 'Costo directo',      icon: '🧱', original: d.costoDirecto, ajuste: A('costoDirecto'), gastado: gastado.costo_directo, comprometido: comprometido.costo_directo },
+    { key: 'ind_oficina',   label: 'Indirectos oficina', icon: '🏢', original: d.indOficina,   ajuste: A('indOficina'),   gastado: gastado.ind_oficina,   comprometido: comprometido.ind_oficina },
+    { key: 'ind_campo',     label: 'Indirectos campo',   icon: '🚧', original: d.indCampo,     ajuste: A('indCampo'),     gastado: gastado.ind_campo,     comprometido: comprometido.ind_campo },
   ].map(b => {
     const budget    = b.original + b.ajuste;          // vigente = original + acumulado
     const overflow  = Math.max(0, b.gastado - budget);
     const restante  = budget - b.gastado;
     const pct       = budget > 0 ? (b.gastado / budget) * 100 : (b.gastado > 0 ? 100 : 0);
-    return { ...b, budget, overflow, restante, pct };
+    // Con lo firmado y no pagado encima: adelanta el sobregiro que ya existe.
+    const pctComp   = budget > 0 ? ((b.gastado + b.comprometido) / budget) * 100 : 0;
+    const overflowComp = Math.max(0, b.gastado + b.comprometido - budget);
+    return { ...b, budget, overflow, restante, pct, pctComp, overflowComp };
   });
 
   const overflowTotal      = bolsas.reduce((a, b) => a + b.overflow, 0);

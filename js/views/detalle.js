@@ -453,6 +453,9 @@ function renderBolsitasProyecto(proyectoId) {
     const cls = bag.pct > 100 ? 'high' : bag.pct >= 85 ? 'medium' : 'low';
     const sobregiro = bag.overflow > 0;
     const conAjuste = b.tieneOC && Math.abs(bag.ajuste) > 0.005;
+    // Devengado y sin pagar: se raya encima de la barra para que un sobregiro
+    // ya firmado no aparezca recién cuando se liquide.
+    const comprometido = bag.comprometido || 0;
     return `
       <div class="bolsa-row">
         <div class="bolsa-head">
@@ -462,13 +465,22 @@ function renderBolsitasProyecto(proyectoId) {
             <span class="text-dim"> / ${formatMXN(bag.budget)}</span>
           </span>
         </div>
-        <div class="progress-bar" style="height:8px">
+        <div class="progress-bar" style="height:8px;position:relative">
           <div class="progress-fill ${cls}" style="width:${pctFill}%"></div>
+          ${comprometido > 0 ? `
+            <div title="Comprometido: ${formatMXN(comprometido)} firmado y todavía sin pagar"
+                 style="position:absolute;top:0;left:${pctFill}%;height:100%;
+                        width:${Math.max(0, Math.min(bag.pctComp, 100) - pctFill)}%;
+                        background:repeating-linear-gradient(45deg,var(--warning),var(--warning) 3px,transparent 3px,transparent 6px);
+                        opacity:.75"></div>` : ''}
         </div>
         <div class="bolsa-foot">
-          <span class="text-dim">${bag.pct.toFixed(0)}% usado</span>
+          <span class="text-dim">${bag.pct.toFixed(0)}% usado${
+            comprometido > 0 ? ` <span style="color:var(--warning)">+${(bag.pctComp - bag.pct).toFixed(0)}% comprometido</span>` : ''}</span>
           ${sobregiro
             ? `<span class="text-danger">⚠ Sobregiro ${formatMXN(bag.overflow)} → utilidad</span>`
+            : bag.overflowComp > 0
+            ? `<span class="text-warning">⚠ Con lo comprometido se sobregira ${formatMXN(bag.overflowComp)}</span>`
             : `<span class="text-muted">Disponible ${formatMXN(bag.restante)}</span>`}
         </div>
         ${conAjuste ? `
@@ -771,9 +783,11 @@ function renderDetalleTableOnly(proyectoId, wrap) {
                 <td>${tipoBadge(m.tipo)}${((m.tipo === 'gasto' || m.tipo === 'abono_cliente') && !m.paga_de_caja_chica) ? ` <span class="badge badge-muted badge-no-dot" style="font-size:10px" title="${m.metodo_pago === 'efectivo' ? 'Pagado en efectivo (caja física)' : m.metodo_pago === 'transferencia' ? 'Pagado por transferencia (Mifel)' : 'Forma de pago no especificada — se asume transferencia (Mifel). Edita el movimiento si salió de efectivo.'}">${m.metodo_pago === 'efectivo' ? '💵 Efectivo' : '🏦 Transf.'}${m.metodo_pago ? '' : '<span style="opacity:.55"> ?</span>'}</span>` : ''}</td>
                 <td class="${colorMonto} font-mono">${formatMXN(m.monto)}</td>
                 <td>${ivaLabel}${facturaIcon}</td>
-                <td>${statusBadge(m.status)}</td>
+                <td>${m.tipo === 'gasto' ? _statusPagoBadge(m) : statusBadge(m.status)}</td>
                 <td>
                   <div class="td-actions">
+                    ${m.tipo === 'gasto' && !m.paga_de_caja_chica
+                      ? `<button class="btn btn-ghost btn-icon btn-pagos-pm" data-id="${m.id}" title="Pagos (exhibiciones)">💵</button>` : ''}
                     <button class="btn btn-ghost btn-icon btn-edit-pm" data-id="${m.id}" title="Editar">✏️</button>
                     <button class="btn btn-ghost btn-icon btn-del-pm"  data-id="${m.id}" title="Eliminar">🗑️</button>
                   </div>
@@ -786,6 +800,9 @@ function renderDetalleTableOnly(proyectoId, wrap) {
     </div>
   `;
 
+  tableWrap.querySelectorAll('.btn-pagos-pm').forEach(btn => {
+    btn.addEventListener('click', () => abrirModalPagos(proyectoId, btn.dataset.id));
+  });
   tableWrap.querySelectorAll('.btn-edit-pm').forEach(btn => {
     btn.addEventListener('click', () => {
       const m = getItem(KEYS.PROY_MOVIMIENTOS, btn.dataset.id);
@@ -802,6 +819,181 @@ function renderDetalleTableOnly(proyectoId, wrap) {
 // =====================================================
 // MODAL: GASTO / ABONO CLIENTE
 // =====================================================
+// Pastilla de estado de pago para gastos: Pendiente · Parcial (%) · Pagado.
+function _statusPagoBadge(m) {
+  const st = statusPagoDe(m);
+  if (st !== 'Parcial') {
+    const sobre = sobrepagoDe(m);
+    return statusBadge(st) + (sobre > 0
+      ? ` <span class="badge badge-danger" style="font-size:10px" title="Se pagó más que el monto del gasto">⚠ +${formatMXN(sobre)}</span>` : '');
+  }
+  const pct = Math.round(fraccionPagadaDe(m) * 100);
+  return `<span class="badge badge-warning" style="font-size:11px"
+    title="Pagado ${formatMXN(montoPagadoDe(m))} de ${formatMXN(Math.abs(m.monto))} · falta ${formatMXN(saldoPendienteDe(m))}">
+    Parcial ${pct}%</span>`;
+}
+
+// =====================================================
+// MODAL DE PAGOS — las exhibiciones de un gasto
+//
+// Una obligación, N pagos. La factura sigue siendo una sola por el total; lo
+// que se parte es la liquidación (anticipo 60%, liquidación contra entrega…).
+// Cuando la suma de exhibiciones alcanza el monto, el gasto queda Pagado.
+// =====================================================
+function abrirModalPagos(proyectoId, movId) {
+  const mov = getItem(KEYS.PROY_MOVIMIENTOS, movId);
+  if (!mov) return;
+  const total = Math.abs(Number(mov.monto) || 0);
+
+  const render = () => {
+    const m       = getItem(KEYS.PROY_MOVIMIENTOS, movId);
+    const apps    = aplicacionesPago(m);
+    const pagado  = montoPagadoDe(m);
+    const pend    = saldoPendienteDe(m);
+    const sobre   = sobrepagoDe(m);
+    const pct     = Math.min(100, Math.round(fraccionPagadaDe(m) * 100));
+    const implic  = apps.length === 1 && apps[0].implicita;
+
+    const filas = apps.length ? apps.map((p, i) => `
+      <tr>
+        <td class="text-muted" style="font-size:12px">${formatDate(p.fecha)}</td>
+        <td>${p.nota || p.referencia || (p.implicita ? '<em class="text-muted">pago único</em>' : '—')}</td>
+        <td><span class="badge badge-muted badge-no-dot" style="font-size:10px">${p.metodo_pago === 'efectivo' ? '💵 Efectivo' : '🏦 Transf.'}</span></td>
+        <td class="font-mono text-right">${formatMXN(p.monto)}</td>
+        <td style="text-align:right">${implic ? '' :
+          `<button class="btn btn-ghost btn-icon btn-del-pago" data-i="${i}" title="Eliminar este pago">🗑️</button>`}</td>
+      </tr>`).join('')
+      : `<tr><td colspan="5" class="text-muted" style="text-align:center;padding:14px">Sin pagos registrados — el gasto está pendiente por completo.</td></tr>`;
+
+    const hoy = todayISO();
+    return `
+      <div style="margin-bottom:14px">
+        <div style="font-weight:600;margin-bottom:2px">${mov.concepto || 'Gasto'}</div>
+        <div class="text-muted" style="font-size:12px">${mov.subcontratista || 'Sin proveedor'} · Total ${formatMXN(total)}</div>
+      </div>
+
+      <div style="background:var(--surface2);border-radius:var(--radius);padding:12px;margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px">
+          <span>Pagado <b class="text-success">${formatMXN(pagado)}</b></span>
+          <span>Falta <b class="${pend > 0 ? 'text-warning' : 'text-muted'}">${formatMXN(pend)}</b></span>
+        </div>
+        <div style="height:8px;background:var(--border);border-radius:4px;overflow:hidden">
+          <div style="height:100%;width:${pct}%;background:${pct >= 100 ? 'var(--success)' : 'var(--warning)'};transition:width .2s"></div>
+        </div>
+        <div class="text-muted" style="font-size:11px;margin-top:5px">${pct}% liquidado${
+          sobre > 0 ? ` · <b class="text-danger">⚠ pagado de más ${formatMXN(sobre)}</b>` : ''}</div>
+      </div>
+
+      <table class="data-table" style="width:100%;margin-bottom:16px">
+        <thead><tr><th>Fecha</th><th>Concepto del pago</th><th>De</th><th class="text-right">Monto</th><th></th></tr></thead>
+        <tbody>${filas}</tbody>
+      </table>
+
+      ${implic ? `<div class="text-muted" style="font-size:11px;margin-bottom:12px;padding:8px 10px;background:var(--surface2);border-radius:var(--radius)">
+        Este gasto se marcó como pagado antes de que existieran las exhibiciones. Al agregar un pago aquí, el pago único de arriba se sustituye por lo que captures.
+      </div>` : ''}
+
+      <div style="border-top:1px solid var(--border);padding-top:14px">
+        <div style="font-weight:600;font-size:13px;margin-bottom:10px">➕ Registrar pago</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <label style="font-size:12px">Fecha
+            <input type="date" id="pg-fecha" value="${hoy}" class="form-input" style="margin-top:4px;width:100%">
+          </label>
+          <label style="font-size:12px">Monto
+            <input type="number" id="pg-monto" step="0.01" min="0.01" value="${pend > 0 ? pend.toFixed(2) : ''}"
+                   placeholder="0.00" class="form-input" style="margin-top:4px;width:100%">
+          </label>
+          <label style="font-size:12px">Sale de
+            <select id="pg-metodo" class="form-input" style="margin-top:4px;width:100%">
+              <option value="transferencia">🏦 Transferencia (Mifel)</option>
+              <option value="efectivo">💵 Efectivo (caja física)</option>
+            </select>
+          </label>
+          <label style="font-size:12px">Concepto / referencia
+            <input type="text" id="pg-nota" placeholder="Anticipo 60%, liquidación…" class="form-input" style="margin-top:4px;width:100%">
+          </label>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+          <button class="btn btn-sm" id="pg-add" style="background:var(--success);color:#0e3a25;border:none">Agregar pago</button>
+          ${pend > 0 ? `<button class="btn btn-sm btn-ghost" id="pg-liquidar">Liquidar el saldo (${formatMXN(pend)})</button>` : ''}
+        </div>
+      </div>`;
+  };
+
+  const guardar = (pagos) => {
+    const m = getItem(KEYS.PROY_MOVIMIENTOS, movId);
+    const tot = Math.abs(Number(m.monto) || 0);
+    const sum = pagos.reduce((a, p) => a + Math.abs(Number(p.monto) || 0), 0);
+    // `status` se mantiene sincronizado para todo lo que aún lo lee (buzón,
+    // otras apps, hooks). El estado parcial vive en `pagos`.
+    updateItem(KEYS.PROY_MOVIMIENTOS, movId, {
+      pagos,
+      status: sum >= tot - 0.005 ? 'Pagado' : 'Pendiente',
+    });
+    refrescar();
+    refreshDetalleKPIs(proyectoId);
+    refreshDetalleTable(proyectoId);
+    refreshDetalleCharts(proyectoId);
+    refreshBolsitas(proyectoId);
+  };
+
+  const contenedor = document.createElement('div');
+
+  const refrescar = () => {
+    contenedor.innerHTML = render();
+    enlazar(contenedor);
+  };
+
+  const enlazar = (body) => {
+    body.querySelectorAll('.btn-del-pago').forEach(b => {
+      b.addEventListener('click', () => {
+        const m = getItem(KEYS.PROY_MOVIMIENTOS, movId);
+        const ps = (Array.isArray(m.pagos) ? [...m.pagos] : []);
+        ps.splice(Number(b.dataset.i), 1);
+        guardar(ps);
+        showToast('Pago eliminado', 'success');
+      });
+    });
+
+    const agregar = (monto, nota) => {
+      const m = getItem(KEYS.PROY_MOVIMIENTOS, movId);
+      const fecha = body.querySelector('#pg-fecha')?.value || todayISO();
+      const mnt   = Math.abs(Number(monto));
+      if (!(mnt > 0)) { showToast('Ingresa un monto mayor a 0', 'error'); return; }
+      // Si venía como pago único implícito, se materializa antes de agregar
+      // para no perder el histórico ni duplicar el monto.
+      let ps = Array.isArray(m.pagos) ? [...m.pagos] : [];
+      if (!ps.length && m.status === 'Pagado' && Math.abs(Number(m.monto) || 0) > 0) ps = [];
+      ps.push({
+        id: 'pg_' + Math.random().toString(36).slice(2, 10),
+        fecha,
+        monto: mnt,
+        metodo_pago: body.querySelector('#pg-metodo')?.value || 'transferencia',
+        nota: (nota ?? body.querySelector('#pg-nota')?.value ?? '').trim(),
+      });
+      guardar(ps);
+      showToast('Pago registrado', 'success');
+    };
+
+    body.querySelector('#pg-add')?.addEventListener('click',
+      () => agregar(body.querySelector('#pg-monto')?.value));
+    body.querySelector('#pg-liquidar')?.addEventListener('click', () => {
+      const m = getItem(KEYS.PROY_MOVIMIENTOS, movId);
+      agregar(saldoPendienteDe(m), body.querySelector('#pg-nota')?.value || 'Liquidación');
+    });
+  };
+
+  refrescar();
+  openModal({
+    title: '💵 Pagos del gasto',
+    body: contenedor,
+    confirmText: 'Cerrar',
+    cancelText: 'Salir',
+    onConfirm: () => closeModal(),
+    large: true,
+  });
+}
+
 function abrirModalMovProy(proyectoId, tipo, id = null) {
   const mov = id ? getItem(KEYS.PROY_MOVIMIENTOS, id) : null;
 

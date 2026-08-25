@@ -1509,11 +1509,37 @@ async function _marcarPagadoCobrado(item) {
   const esInd  = item.tipo === 'gasto_indirecto';
   const esGastoOC = item.tipo === 'gasto_oc';
   const esCxP  = esSub || esOC || esInd || esGastoOC;
-  const pagoData = await _modalDatosPago(esCxP ? 'pago' : 'cobro');
+
+  // Cuentas por pagar: se permite liquidar en exhibiciones (anticipo 60% y
+  // liquidación contra entrega es lo normal en una OC de servicio). El cobro
+  // al cliente se queda binario: esos entran completos.
+  const movActual = item.movId ? getItem('sogrub_proy_movimientos', item.movId) : null;
+  const saldoAnterior = movActual ? saldoPendienteDe(movActual) : 0;
+  const pagoData = await _modalDatosPago(esCxP ? 'pago' : 'cobro',
+                                         (esCxP && saldoAnterior > 0) ? saldoAnterior : null);
   if (!pagoData) return;
 
   try {
-    const movUpdates = { status: 'Pagado', fecha: pagoData.fechaISO };
+    const movUpdates = { fecha: pagoData.fechaISO };
+    // Liquidación parcial: se agrega una exhibición y el gasto sigue con saldo.
+    const totalMov = movActual ? Math.abs(Number(movActual.monto) || 0) : 0;
+    const esParcial = pagoData.monto != null && pagoData.monto < saldoAnterior - 0.005;
+    if (pagoData.monto != null && movActual) {
+      const ps = Array.isArray(movActual.pagos) ? [...movActual.pagos] : [];
+      ps.push({
+        id: 'pg_' + Math.random().toString(36).slice(2, 10),
+        fecha: pagoData.fechaISO,
+        monto: pagoData.monto,
+        metodo_pago: _metodoPagoDe(pagoData.metodo) ?? 'transferencia',
+        referencia: pagoData.referencia || '',
+        nota: esParcial ? 'Pago parcial' : 'Liquidación',
+      });
+      movUpdates.pagos  = ps;
+      const sum = ps.reduce((a, p) => a + Math.abs(Number(p.monto) || 0), 0);
+      movUpdates.status = sum >= totalMov - 0.005 ? 'Pagado' : 'Pendiente';
+    } else {
+      movUpdates.status = 'Pagado';
+    }
     // Al liquidarlo se define de qué caja salió (o entró) el dinero. Aplica a
     // todos los tipos, no sólo a gasto_oc: si aquí eliges Efectivo y no se
     // escribe metodo_pago, el saldo lo descuenta de Mifel y el arqueo no cuadra.
@@ -1521,21 +1547,24 @@ async function _marcarPagadoCobrado(item) {
     if (_mp) movUpdates.metodo_pago = _mp;
     updateItem('sogrub_proy_movimientos', item.movId, movUpdates);
 
-    const nuevoEstado = esCxP ? 'pagado' : 'cobrado';
+    // Mientras quede saldo, el item NO pasa a 'pagado': sigue siendo una
+    // cuenta por pagar viva, sólo que con abono.
+    const nuevoEstado = esParcial ? (item.estado || 'aprobado') : (esCxP ? 'pagado' : 'cobrado');
     const tsField     = nuevoEstado === 'cobrado' ? 'cobradoAt' : 'pagadoAt';
     const histKey     = `${Date.now()}_pago`;
     const buzonPatch = {
       estado:       nuevoEstado,
-      [tsField]:    pagoData.fecha,
+      ...(esParcial ? { pagadoParcial: (totalMov - saldoAnterior) + pagoData.monto, saldoPendiente: saldoAnterior - pagoData.monto }
+                    : { [tsField]: pagoData.fecha, pagadoParcial: null, saldoPendiente: null }),
       metodoPago:   pagoData.metodo,
       referenciaPago: pagoData.referencia || null,
       [`estadoHistorial/${histKey}`]: {
         estado: nuevoEstado, at: pagoData.fecha, por: _currentUser?.uid || '',
-        nota: `${pagoData.metodo}${pagoData.referencia ? ' ref:' + pagoData.referencia : ''}`
+        nota: `${esParcial ? `Abono $${pagoData.monto.toLocaleString('es-MX',{minimumFractionDigits:2})} · saldo $${(saldoAnterior - pagoData.monto).toLocaleString('es-MX',{minimumFractionDigits:2})} · ` : ''}${pagoData.metodo}${pagoData.referencia ? ' ref:' + pagoData.referencia : ''}`
       }
     };
     const updates = { [`/shared/buzon/${item.id}`]: buzonPatch };
-    if (esOC && item.obraId && item.ocId) {
+    if (esOC && item.obraId && item.ocId && !esParcial) {
       updates[`/shared/compras/obras/${item.obraId}/oc/${item.ocId}`] = {
         estado: 'pagada',
         pagadaAt: pagoData.fecha,
@@ -1544,7 +1573,7 @@ async function _marcarPagadoCobrado(item) {
         actualizadoAt: Date.now()
       };
     }
-    if (esGastoOC && item.obraId && item.refRecepcionId) {
+    if (esGastoOC && item.obraId && item.refRecepcionId && !esParcial) {
       updates[`/shared/materiales/${item.obraId}/recepciones/${item.refRecepcionId}`] = {
         estadoContable: 'pagado',
         pagadoAt:       pagoData.fecha,
@@ -1553,7 +1582,9 @@ async function _marcarPagadoCobrado(item) {
     }
     await _multiPathUpdate(updates);
     _buzon.expanded.delete(item.id);
-    _toast(`Marcado como ${nuevoEstado}.`, 'success');
+    _toast(esParcial
+      ? `Abono de $${pagoData.monto.toLocaleString('es-MX',{minimumFractionDigits:2})} registrado · saldo $${(saldoAnterior - pagoData.monto).toLocaleString('es-MX',{minimumFractionDigits:2})}.`
+      : `Marcado como ${nuevoEstado}.`, 'success');
   } catch (err) {
     _toast('Error: ' + err.message, 'error');
   }
@@ -2071,7 +2102,10 @@ async function _generarFolio(tipo) {
 
 // ─── Modal datos de pago ───────────────────────────────────────────────────
 
-function _modalDatosPago(modo) {
+// `totalMax` opcional: cuando se pasa, el modal deja capturar una liquidación
+// PARCIAL (anticipo 60%, por ejemplo) y devuelve `monto` con lo que realmente
+// se pagó. Sin él, el modal se comporta como siempre.
+function _modalDatosPago(modo, totalMax = null) {
   return new Promise(resolve => {
     const overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:9999';
@@ -2091,6 +2125,14 @@ function _modalDatosPago(modo) {
               <option>Efectivo</option><option>Otro</option>
             </select>
           </label>
+          ${totalMax ? `<label style="font-size:13px">Monto a pagar
+            <input type="number" id="mp-monto" step="0.01" min="0.01" value="${Number(totalMax).toFixed(2)}"
+              style="margin-top:4px;display:block;width:100%;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px">
+            <span style="display:block;margin-top:4px;font-size:11px;color:var(--text-muted)">
+              Total de la obligación: $${Number(totalMax).toLocaleString('es-MX',{minimumFractionDigits:2})}.
+              Si pagas menos, queda como <b>parcial</b> y el saldo sigue en cuentas por pagar.
+            </span>
+          </label>` : ''}
           <label style="font-size:13px">Referencia (opcional)
             <input type="text" id="mp-ref" placeholder="Folio SPEI, num. cheque, etc."
               style="margin-top:4px;display:block;width:100%;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px">
@@ -2108,7 +2150,12 @@ function _modalDatosPago(modo) {
     overlay.querySelector('#mp-ok').addEventListener('click', () => {
       const fechaStr = overlay.querySelector('#mp-fecha').value;
       const fecha    = new Date(fechaStr + 'T12:00:00').getTime();
-      cleanup({ fecha, fechaISO: fechaStr, metodo: overlay.querySelector('#mp-metodo').value, referencia: overlay.querySelector('#mp-ref').value.trim() });
+      const montoEl = overlay.querySelector('#mp-monto');
+      const monto   = montoEl ? Math.abs(Number(montoEl.value) || 0) : null;
+      if (montoEl && !(monto > 0)) { montoEl.focus(); return; }
+      cleanup({ fecha, fechaISO: fechaStr, monto,
+                metodo: overlay.querySelector('#mp-metodo').value,
+                referencia: overlay.querySelector('#mp-ref').value.trim() });
     });
   });
 }

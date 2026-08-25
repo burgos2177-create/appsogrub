@@ -148,9 +148,20 @@ function _concLedgerApp() {
 
   for (const m of (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])) {
     const metodo = m.metodo_pago ?? 'transferencia';
-    if (m.tipo === 'abono_cliente' && metodo !== 'efectivo') add(m, 'Obra', 'abono_cliente');
-    else if (m.tipo === 'gasto' && m.status === 'Pagado' && !m.paga_de_caja_chica
-             && !m.no_afecta_mifel && metodo !== 'efectivo') add(m, 'Obra', 'gasto');
+    if (m.tipo === 'abono_cliente' && metodo !== 'efectivo') { add(m, 'Obra', 'abono_cliente'); continue; }
+    if (m.tipo !== 'gasto' || m.paga_de_caja_chica || m.no_afecta_mifel) continue;
+    // Una línea por EXHIBICIÓN, no por movimiento: al banco llegan pagos
+    // sueltos (anticipo, liquidación), y emparejar contra el total del gasto
+    // nunca encontraría ninguno de los dos.
+    for (const p of aplicacionesPago(m)) {
+      if (p.metodo_pago === 'efectivo') continue;
+      const parcial = !p.implicita && aplicacionesPago(m).length > 1;
+      out.push({
+        id: p.id, fecha: p.fecha, de: 'Obra', tipo: 'gasto',
+        concepto: (m.concepto || '') + (parcial ? ` · pago ${p.nota || p.referencia || 'parcial'}` : ''),
+        monto: -Math.abs(p.monto),
+      });
+    }
   }
 
   return out.filter(m => m.fecha).sort((a, b) => a.fecha.localeCompare(b.fecha));
