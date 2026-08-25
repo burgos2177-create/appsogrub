@@ -913,7 +913,24 @@ function abrirModalPagos(proyectoId, movId) {
             <input type="text" id="pg-nota" placeholder="Anticipo 60%, liquidación…" class="form-input" style="margin-top:4px;width:100%">
           </label>
         </div>
-        <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+
+        <div style="margin-top:10px;padding:9px 11px;background:var(--surface2);border-radius:var(--radius)">
+          <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap">
+            <span class="text-muted" style="font-size:11px">% del total:</span>
+            ${[30, 40, 50, 60, 70, 100].map(v => `
+              <button type="button" class="pg-pct-chip" data-pct="${v}"
+                style="background:transparent;border:1px solid var(--border);border-radius:20px;
+                       padding:2px 10px;font-size:11px;color:var(--text);cursor:pointer;line-height:1.5">${v}%</button>`).join('')}
+            <span class="text-dim" style="font-size:11px">o</span>
+            <input type="number" id="pg-pct" step="0.01" min="0.01" max="100" placeholder="—"
+              style="width:62px;padding:3px 7px;background:var(--bg);border:1px solid var(--border);
+                     border-radius:6px;color:var(--text);font-size:11px;text-align:right">
+            <span class="text-muted" style="font-size:11px">%</span>
+          </div>
+          <div id="pg-hint" class="text-muted" style="font-size:11px;margin-top:6px"></div>
+        </div>
+
+        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
           <button class="btn btn-sm" id="pg-add" style="background:var(--success);color:#0e3a25;border:none">Agregar pago</button>
           ${pend > 0 ? `<button class="btn btn-sm btn-ghost" id="pg-liquidar">Liquidar el saldo (${formatMXN(pend)})</button>` : ''}
         </div>
@@ -974,6 +991,56 @@ function abrirModalPagos(proyectoId, movId) {
       guardar(ps);
       showToast('Pago registrado', 'success');
     };
+
+    // ---- Monto ⇄ % del total, en los dos sentidos -----------------------
+    const elMonto = body.querySelector('#pg-monto');
+    const elPct   = body.querySelector('#pg-pct');
+    const elHint  = body.querySelector('#pg-hint');
+
+    const pintarHint = () => {
+      if (!elHint) return;
+      const m   = getItem(KEYS.PROY_MOVIMIENTOS, movId);
+      const tot = Math.abs(Number(m.monto) || 0);
+      const val = Math.abs(Number(elMonto?.value) || 0);
+      if (!(val > 0) || !(tot > 0)) {
+        elHint.innerHTML = `Total de la obligación: <b>${formatMXN(tot)}</b>`;
+        return;
+      }
+      const pctVal  = (val / tot) * 100;
+      const saldoQ  = saldoPendienteDe(m) - val;
+      elHint.innerHTML = `<b>${formatMXN(val)}</b> = <b>${pctVal.toFixed(2)}%</b> del total`
+        + (saldoQ > 0.005
+            ? ` · quedarían <b class="text-warning">${formatMXN(saldoQ)}</b> por pagar`
+            : saldoQ < -0.005
+            ? ` · <b class="text-danger">⚠ excede el saldo en ${formatMXN(-saldoQ)}</b>`
+            : ` · <b class="text-success">liquida el gasto</b>`);
+    };
+
+    const aplicarPct = (pct) => {
+      const m   = getItem(KEYS.PROY_MOVIMIENTOS, movId);
+      const tot = Math.abs(Number(m.monto) || 0);
+      const p   = Math.abs(Number(pct) || 0);
+      if (!(p > 0) || !(tot > 0)) return;
+      // Se redondea a centavos: dos exhibiciones de 60/40 deben sumar el total
+      // exacto, no quedar cortas por un decimal perdido.
+      if (elMonto) elMonto.value = ((tot * p) / 100).toFixed(2);
+      pintarHint();
+    };
+
+    body.querySelectorAll('.pg-pct-chip').forEach(ch => {
+      ch.addEventListener('click', () => {
+        if (elPct) elPct.value = ch.dataset.pct;
+        aplicarPct(ch.dataset.pct);
+        const nota = body.querySelector('#pg-nota');
+        // Sugerencia de concepto, sólo si el campo sigue vacío.
+        if (nota && !nota.value.trim()) {
+          nota.value = ch.dataset.pct === '100' ? 'Liquidación' : `Anticipo ${ch.dataset.pct}%`;
+        }
+      });
+    });
+    elPct?.addEventListener('input', () => aplicarPct(elPct.value));
+    elMonto?.addEventListener('input', () => { if (elPct) elPct.value = ''; pintarHint(); });
+    pintarHint();
 
     body.querySelector('#pg-add')?.addEventListener('click',
       () => agregar(body.querySelector('#pg-monto')?.value));
