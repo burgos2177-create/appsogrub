@@ -56,6 +56,8 @@ function renderDetalle(proyectoId) {
 
   // ---- Bolsitas de presupuesto por rubro ----
   root.appendChild(renderBolsitasProyecto(proyectoId));
+  const _ret = renderFondosRetenidos(proyectoId);
+  if (_ret) root.appendChild(_ret);
 
   // ---- Toolbar acciones ----
   root.appendChild(renderDetalleToolbar(proyectoId, proyecto));
@@ -143,6 +145,7 @@ function renderDetalleKPIs(proyectoId, proyecto) {
   const avance           = calcAvanceFinanciero(proyectoId);
   const avanceCobranza   = calcAvanceCobranza(proyectoId);
   const deudaPend        = calcDeudaPendiente(proyectoId);
+  const fondosRet        = calcFondosRetenidos(proyectoId);
   const iva              = calcIVADesglose(proyectoId);
   const presupuesto      = proyecto?.presupuesto_contrato ?? 0;
   const restantePorCobrar = Math.max(0, presupuesto - totalCobrado);
@@ -313,7 +316,7 @@ function renderDetalleKPIs(proyectoId, proyecto) {
     </div>
     <div class="kpi-card" id="kpi-deuda-pendiente-${proyectoId}">
       <div class="kpi-label">⚠️ Deuda pendiente</div>
-      <div class="kpi-value ${deudaPend > 0 ? 'text-warning' : 'text-muted'}" style="font-size:20px" id="deuda-total-${proyectoId}">${formatMXN(deudaPend)}</div>
+      <div class="kpi-value ${(deudaPend + fondosRet.pendiente) > 0 ? 'text-warning' : 'text-muted'}" style="font-size:20px" id="deuda-total-${proyectoId}">${formatMXN(deudaPend + fondosRet.pendiente)}</div>
       <div class="kpi-sub" style="display:flex;flex-direction:column;gap:3px;margin-top:4px" id="deuda-desglose-${proyectoId}">
         <div style="display:flex;justify-content:space-between">
           <span>A proveedores</span>
@@ -323,12 +326,17 @@ function renderDetalleKPIs(proyectoId, proyecto) {
           <span>De caja chica</span>
           <strong style="font-variant-numeric:tabular-nums;color:var(--text-muted)" id="deuda-cc-${proyectoId}">—</strong>
         </div>
+        ${fondosRet.pendiente > 0 ? `
+        <div style="display:flex;justify-content:space-between" title="Fondos de garantía retenidos a subcontratistas. El dinero sigue en tu caja, pero se les debe.">
+          <span>🔒 Fondos retenidos</span>
+          <strong style="font-variant-numeric:tabular-nums">${formatMXN(fondosRet.pendiente)}</strong>
+        </div>` : ''}
       </div>
     </div>
   `;
 
   // Cargar deuda de caja chica async (vive en /shared/cajaChica)
-  setTimeout(() => _cargarDeudaCajaChica(proyectoId, deudaPend), 0);
+  setTimeout(() => _cargarDeudaCajaChica(proyectoId, deudaPend + fondosRet.pendiente), 0);
 
   // Toggle IVA info + botón estado de cuenta
   setTimeout(() => {
@@ -578,6 +586,97 @@ function _bolsaCintaOC(proyectoId, b) {
 function refreshBolsitas(proyectoId) {
   const old = document.getElementById('bolsitas-card');
   if (old) old.replaceWith(renderBolsitasProyecto(proyectoId));
+  // La tarjeta de retenciones aparece/desaparece según haya fondos, así que
+  // hay que poder crearla cuando antes no existía.
+  const oldRet = document.getElementById('retenciones-card');
+  const nueva  = renderFondosRetenidos(proyectoId);
+  if (oldRet && nueva)      oldRet.replaceWith(nueva);
+  else if (oldRet)          oldRet.remove();
+  else if (nueva) {
+    const bols = document.getElementById('bolsitas-card');
+    if (bols?.parentNode) bols.parentNode.insertBefore(nueva, bols.nextSibling);
+  }
+}
+
+// =====================================================
+// FONDOS RETENIDOS A SUBCONTRATISTAS
+//
+// Plata que le debes al sub y que sigue en tu caja. Conviene tenerla a la
+// vista: no aparece en el gasto (retener no es gastar) y es fácil olvidarla
+// hasta que el sub la reclama meses después.
+//
+// Devuelve null si el proyecto no tiene retenciones — la tarjeta no se pinta.
+// =====================================================
+function renderFondosRetenidos(proyectoId) {
+  const f = calcFondosRetenidos(proyectoId);
+  if (!f.count) return null;
+
+  const comp = calcComprometidoSubcontratistas(proyectoId);
+  const card = document.createElement('div');
+  card.className = 'card mb-24';
+  card.id = 'retenciones-card';
+
+  const fila = (r) => {
+    const liberado = r.estado === 'liberado';
+    return `
+      <tr>
+        <td>
+          <div style="font-weight:500">${r.proveedorNombre || '—'}</div>
+          <div class="text-muted" style="font-size:11px">${r.subcontratoNombre || '—'}${r.subEstimacionNumero != null ? ` · estim. #${r.subEstimacionNumero}` : ''}</div>
+        </td>
+        <td class="text-muted" style="font-size:12px">
+          ${r.etiqueta || 'Fondo de garantía'}
+          ${r.modo === 'pct' && r.pct ? `<span class="text-dim"> (${(Number(r.pct) * 100).toFixed(2).replace(/\.?0+$/, '')}%)</span>` : ''}
+        </td>
+        <td class="text-muted" style="font-size:12px">${formatDate(r.fecha)}</td>
+        <td class="font-mono text-right ${liberado ? 'text-muted' : 'text-warning'}">${formatMXN(r.monto)}</td>
+        <td>
+          ${liberado
+            ? `<span class="badge badge-success" style="font-size:10px" title="Liberado el ${formatDate(r.liberadoFecha)}">🔓 Liberado ${r.liberadoFecha ? formatDate(r.liberadoFecha) : ''}</span>`
+            : `<span class="badge badge-warning" style="font-size:10px">🔒 Pendiente</span>`}
+        </td>
+      </tr>`;
+  };
+
+  card.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px;flex-wrap:wrap;gap:8px">
+      <h3 class="section-title" style="margin:0">🔒 Fondos retenidos a subcontratistas</h3>
+      <span class="text-sm ${f.pendiente > 0 ? 'text-warning' : 'text-muted'}">
+        Por liberar <b>${formatMXN(f.pendiente)}</b>
+      </span>
+    </div>
+    <div class="text-sm text-muted" style="margin-bottom:12px">
+      Garantía por vicios ocultos. El dinero <b>sigue en tu caja</b> — no está en el gasto — pero se le debe al sub.
+    </div>
+
+    <div style="display:flex;gap:20px;flex-wrap:wrap;padding:10px 12px;background:var(--surface2);border-radius:var(--radius);margin-bottom:14px">
+      <div>
+        <div class="text-muted" style="font-size:11px">Pagado a subcontratistas</div>
+        <div class="font-mono" style="font-size:15px">${formatMXN(comp.pagado)}</div>
+      </div>
+      <div>
+        <div class="text-muted" style="font-size:11px">(+) Fondo retenido</div>
+        <div class="font-mono text-warning" style="font-size:15px">${formatMXN(comp.fondo)}</div>
+      </div>
+      <div style="border-left:1px solid var(--border);padding-left:20px">
+        <div class="text-muted" style="font-size:11px">(=) Comprometido con subs</div>
+        <div class="font-mono" style="font-size:15px;font-weight:600">${formatMXN(comp.total)}</div>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table class="data-table" style="width:100%">
+        <thead><tr>
+          <th>Subcontratista</th><th>Concepto</th><th>Fecha</th>
+          <th class="text-right">Monto</th><th>Estado</th>
+        </tr></thead>
+        <tbody>${f.retenciones.map(fila).join('')}</tbody>
+      </table>
+    </div>
+    ${f.liberado > 0 ? `<div class="text-muted" style="font-size:11px;margin-top:8px">
+      Ya liberado históricamente: <b>${formatMXN(f.liberado)}</b> — eso sí está dentro del gasto del proyecto.
+    </div>` : ''}`;
+  return card;
 }
 
 // =====================================================

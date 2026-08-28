@@ -442,7 +442,48 @@ function calcDeudaPendiente(proyectoId) {
 function calcDeudaPendienteDesglose(proyectoId, saldoCajaChica = 0) {
   const proveedores = calcDeudaPendiente(proyectoId);
   const cajaChica = Math.max(0, -Number(saldoCajaChica || 0));
-  return { proveedores, cajaChica, total: proveedores + cajaChica };
+  const retenido  = calcFondosRetenidos(proyectoId).pendiente;
+  return { proveedores, cajaChica, retenido, total: proveedores + cajaChica + retenido };
+}
+
+// =====================================================
+// FONDOS RETENIDOS A SUBCONTRATISTAS
+//
+// Al pagarle una estimación a un sub se le puede retener una parte (fondo de
+// garantía por vicios ocultos, típicamente 5-10%) y liberarla meses después.
+//
+// La regla que no se puede romper: **retener NO es gastar**. El dinero sigue
+// en tu caja; es un pasivo, no una salida. Por eso el fondo vive en su propia
+// colección y NO en `sogrub_proy_movimientos`: si estuviera ahí, cualquier
+// suma de gastos lo contaría, y al liberarlo se contaría otra vez.
+//
+// El gasto de la estimación ya viene NETO desde estimaciones (`monto.importe`).
+// `importeBruto` y `retencionTotal` son informativos, para explicar por qué el
+// gasto no coincide con lo estimado. No se restan ni se suman.
+// =====================================================
+function retencionesDeProyecto(proyectoId) {
+  return (getCollection(KEYS.RETENCIONES) ?? [])
+    .filter(r => r.proyecto_id === proyectoId)
+    .sort((a, b) => String(b.fecha || '').localeCompare(String(a.fecha || '')));
+}
+
+function calcFondosRetenidos(proyectoId) {
+  const rs = retencionesDeProyecto(proyectoId);
+  const n = v => Math.abs(Number(v) || 0);
+  const pendiente = rs.filter(r => r.estado !== 'liberado').reduce((a, r) => a + n(r.monto), 0);
+  const liberado  = rs.filter(r => r.estado === 'liberado').reduce((a, r) => a + n(r.monto), 0);
+  return { retenciones: rs, pendiente, liberado, total: pendiente + liberado, count: rs.length };
+}
+
+// Comprometido con un subcontratista = lo que ya se le pagó + lo que se le
+// retiene. Es el costo real del subcontrato, aunque parte no haya salido.
+function calcComprometidoSubcontratistas(proyectoId) {
+  const gastos = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
+    .filter(m => m.proyecto_id === proyectoId && m.tipo === 'gasto'
+              && (m.categoria || '') === 'Subcontratista');
+  const pagado = gastos.reduce((a, m) => a + Math.abs(Number(m.monto) || 0), 0);
+  const fondo  = calcFondosRetenidos(proyectoId).pendiente;
+  return { pagado, fondo, total: pagado + fondo };
 }
 
 // =====================================================

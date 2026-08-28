@@ -64,6 +64,7 @@ function _tipoLabelCorto(tipo) {
     nomina_tecnico_oficina_quincena: '🧑‍💼 Nómina técnico oficina',
     nomina_directivo_quincena: '🧑‍💼 Nómina directivo',
     orden_cambio: '📐 Orden de cambio',
+    retencion_subcontratista: '🔒 Retención sub',
   }[tipo] || tipo;
 }
 
@@ -415,13 +416,24 @@ function _buzonCard(item) {
   const esCajaChica = item.tipo === 'gasto_caja_chica' || item.tipo === 'deposito_caja_chica';
   // La OC trae su neto CON IVA y con signo propio: puede ser negativa (deductiva).
   const esOrdenCambio = item.tipo === 'orden_cambio';
-  const monto     = esOrdenCambio
+  // Retención / liberación: monto plano.
+  const esRetencion = item.tipo === 'retencion_subcontratista';
+  const monto     = esRetencion
+    ? Math.abs(Number(item.monto) || 0)
+    : esOrdenCambio
     ? Math.abs(Number(item.netoCIVA) || 0)
     : (esOC || esGastoOC)
     ? Number(item.total ?? item.monto) || 0
     : (esCajaChica
       ? Number(item.monto) || 0
       : (item?.monto?.importe || 0));
+  // Una retención con esGasto:false NO es salida de dinero — el fondo se queda
+  // en tu caja. Se pinta neutra para que nadie la lea como un gasto más.
+  const _retNoGasto = esRetencion && item.esGasto === false;
+  const _esEgreso = !_retNoGasto && (esSub || esOC || esRetencion
+    || item.tipo === 'gasto_caja_chica' || item.tipo === 'gasto_indirecto'
+    || item.tipo === 'gasto_oc' || item.tipo === 'carga_social'
+    || (item.tipo && item.tipo.startsWith('nomina_')));
   const fechaPago = item.fecha
     ? new Date(item.fecha).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })
     : (item.fechaEmision
@@ -440,7 +452,9 @@ function _buzonCard(item) {
     nomina_tecnico_campo_quincena: '👷 Nómina técnico campo (quincenal)',
     nomina_tecnico_oficina_quincena: '🧑‍💼 Nómina técnico oficina (quincenal)',
     nomina_directivo_quincena: '🧑‍💼 Nómina directivo (quincenal)',
-    orden_cambio: '📐 Orden de cambio (contrato)'
+    orden_cambio: '📐 Orden de cambio (contrato)',
+    retencion_subcontratista: item.movimiento === 'liberacion'
+      ? '🔓 Liberación de fondo retenido' : '🔒 Retención a subcontratista',
   }[item.tipo] || item.tipo;
   const desfase   = _calcularDesfase(item);
 
@@ -458,8 +472,8 @@ function _buzonCard(item) {
     </div>
     ${desfase ? `<span title="${desfase.tooltip}" style="font-size:11px;color:#e0a04c;background:rgba(224,160,76,.12);padding:2px 7px;border-radius:8px;flex-shrink:0">⚠ Δ$${Math.abs(desfase.delta).toLocaleString('es-MX', {minimumFractionDigits:2})}</span>` : ''}
     <div style="text-align:right;flex-shrink:0">
-      <div style="font-family:ui-monospace,monospace;font-size:17px;font-weight:700;color:${esOrdenCambio ? ((Number(item.netoCIVA) || 0) >= 0 ? '#4caf82' : '#e0a04c') : (esSub || esOC || item.tipo === 'gasto_caja_chica' || item.tipo === 'gasto_indirecto' || item.tipo === 'gasto_oc' || item.tipo === 'carga_social' || (item.tipo && item.tipo.startsWith('nomina_'))) ? '#e15555' : 'var(--accent)'}">
-        ${esOrdenCambio ? ((Number(item.netoCIVA) || 0) >= 0 ? '+' : '−') : (esSub || esOC || item.tipo === 'gasto_caja_chica' || item.tipo === 'gasto_indirecto' || item.tipo === 'gasto_oc' || item.tipo === 'carga_social' || (item.tipo && item.tipo.startsWith('nomina_'))) ? '−' : '+'}$${monto.toLocaleString('es-MX', {minimumFractionDigits:2, maximumFractionDigits:2})}
+      <div style="font-family:ui-monospace,monospace;font-size:17px;font-weight:700;color:${esOrdenCambio ? ((Number(item.netoCIVA) || 0) >= 0 ? '#4caf82' : '#e0a04c') : _retNoGasto ? '#e0a04c' : _esEgreso ? '#e15555' : 'var(--accent)'}">
+        ${esOrdenCambio ? ((Number(item.netoCIVA) || 0) >= 0 ? '+' : '−') : _retNoGasto ? '🔒' : _esEgreso ? '−' : '+'}$${monto.toLocaleString('es-MX', {minimumFractionDigits:2, maximumFractionDigits:2})}
       </div>
     </div>
     <span style="color:var(--text-muted);font-size:14px;flex-shrink:0">${expanded ? '▲' : '▼'}</span>`;
@@ -583,6 +597,8 @@ function _cardBodyHTML(item) {
   const esGastoOC = item.tipo === 'gasto_oc';
   const esIndirecto = item.tipo === 'gasto_indirecto';
   const esNomina  = typeof item.tipo === 'string' && item.tipo.startsWith('nomina_');
+  const esRetencionCard = item.tipo === 'retencion_subcontratista';
+  const esLiberacionCard = esRetencionCard && (item.esGasto === true || item.movimiento === 'liberacion');
   const esCargaSocial = item.tipo === 'carga_social';
   const esCajaChica = esGastoCC || esDepCC;
   // Etiqueta legible de forma de pago (gasto_oc)
@@ -603,7 +619,18 @@ function _cardBodyHTML(item) {
       : '—');
   const fechaCreado = item.creadoAt ? new Date(item.creadoAt).toLocaleString('es-MX') : '';
   const montoNum = esCajaChica ? Number(item.monto) || 0 : 0;
-  const montoInfo = esOC
+  const M2 = v => '$' + (Number(v) || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // El sub ahora puede venir con retención: se muestra bruto − retenido = neto
+  // para que se entienda por qué el gasto no coincide con la estimación.
+  const retTotalSub = Number(item.retencionTotal ?? item?.monto?.retencionTotal) || 0;
+  const brutoSub    = Number(item.importeBruto ?? item?.monto?.importeBruto) || 0;
+  const _retLista   = (item?.monto?.retenciones || item.retenciones || []);
+  const montoInfo = esRetencionCard
+    ? (esLiberacionCard
+        ? `Se libera <b>${M2(item.monto)}</b> · <b style="color:#e15555">sale de caja al aprobar</b>`
+        : `Fondo retenido <b>${M2(item.monto)}</b> · <b style="color:#e0a04c">🔒 no sale de caja</b>
+           <span class="text-muted" style="font-size:11px">— queda como deuda con el sub hasta que se libere</span>`)
+    : esOC
     ? `Subtotal $${(item.subtotal || 0).toLocaleString('es-MX',{minimumFractionDigits:2})} · IVA $${(item.ivaImporte || 0).toLocaleString('es-MX',{minimumFractionDigits:2})}${item.retencionesTotal ? ' · Retenciones $' + (item.retencionesTotal).toLocaleString('es-MX',{minimumFractionDigits:2}) : ''} · Total <b>$${(item.total || 0).toLocaleString('es-MX',{minimumFractionDigits:2})}</b>`
     : esGastoOC
     ? `Subtotal $${(Number(item.subtotal) || 0).toLocaleString('es-MX',{minimumFractionDigits:2})} · IVA $${(Number(item.iva) || 0).toLocaleString('es-MX',{minimumFractionDigits:2})} · Total <b>$${(Number(item.total ?? item.monto) || 0).toLocaleString('es-MX',{minimumFractionDigits:2})}</b>`
@@ -611,7 +638,18 @@ function _cardBodyHTML(item) {
     ? `Importe: <b>$${montoNum.toLocaleString('es-MX',{minimumFractionDigits:2})}</b> <span style="color:var(--text-muted);font-size:11px">(monto plano · sin desglose IVA del lado almacén)</span>${item.fondo === 'efectivo' ? ' · <b style="color:#e0a04c">💵 fondo efectivo</b>' : ''}`
     : (item?.monto?.conIva === false
         ? '<span style="color:#e0a04c">Sin IVA</span> — importe = subtotal'
-        : `Subtotal $${(item?.monto?.subtotal || 0).toLocaleString('es-MX',{minimumFractionDigits:2})} · IVA $${(item?.monto?.iva || 0).toLocaleString('es-MX',{minimumFractionDigits:2})}`);
+        : `Subtotal $${(item?.monto?.subtotal || 0).toLocaleString('es-MX',{minimumFractionDigits:2})} · IVA $${(item?.monto?.iva || 0).toLocaleString('es-MX',{minimumFractionDigits:2})}`)
+      + ((esSub && retTotalSub > 0) ? `
+        <div style="margin-top:7px;padding:7px 9px;background:rgba(224,160,76,.10);border-left:3px solid #e0a04c;border-radius:4px;font-size:11px;line-height:1.7">
+          <div>Importe estimado <b>${M2(brutoSub)}</b></div>
+          ${_retLista.length
+            ? _retLista.map(r => `<div>(−) ${r.etiqueta || 'Retención'}${r.modo === 'pct' && r.pct ? ` ${(Number(r.pct) * 100).toFixed(2).replace(/\.?0+$/, '')}%` : ''} <b style="color:#e0a04c">${M2(r.monto)}</b></div>`).join('')
+            : `<div>(−) Retención <b style="color:#e0a04c">${M2(retTotalSub)}</b></div>`}
+          <div style="border-top:1px solid var(--border);margin-top:4px;padding-top:4px">
+            (=) <b>Neto pagado ${M2(item?.monto?.importe)}</b>
+            <span class="text-muted">— es lo que se asienta como gasto</span>
+          </div>
+        </div>` : '');
   const proyectoIdResuelto = _resolverProyectoIdItem(item);
   const proyNombre  = ((esIndirecto || esNomina || esCargaSocial) && (item.empresa || !item.obraId))
     ? `<b style="color:#5dd39e">🏢 Empresa SOGRUB</b> <span class="text-muted" style="font-size:11px">(sin obra${(esNomina || esCargaSocial) ? ' · prorrateo por obra abajo' : ''})</span>`
@@ -660,6 +698,12 @@ function _cardBodyHTML(item) {
        Empleados: <b>${(item.empleados || []).length}</b> · Obras prorrateadas: <b>${Object.keys(item.prorrateoPorObra || {}).length}</b><br>
        Sale de: ${_cajaOrigenLbl}<br>
        ${item.fechaVencimiento ? `Vence: <b>${new Date(item.fechaVencimiento).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })}</b>` : `Fecha: <b>${fechaPago}</b>`}`
+    : esRetencionCard
+    ? `Subcontrato: <b>${item.subcontratoNombre || '—'}</b><br>
+       Estim. sub: <b>#${item.subEstimacionNumero ?? '—'}</b><br>
+       Subcontratista: <b>${item.proveedorNombre || '—'}</b><br>
+       Concepto: <b>${item.etiqueta || 'Fondo de garantía'}</b>${item.modo === 'pct' && item.pct ? ` <span class="text-muted">(${(Number(item.pct) * 100).toFixed(2).replace(/\.?0+$/, '')}% s/ importe)</span>` : ''}<br>
+       Fecha: <b>${fechaPago}</b>`
     : `Estimación: <b>#${item.estimNumero ?? '—'}</b><br>
        Fecha pago: <b>${fechaPago}</b>`;
 
@@ -1008,6 +1052,16 @@ function _accionesHTML(item) {
         <button class="bz-btn-aprobar" ${dis} style="background:#5dd39e;color:#0e3a25;border:none;border-radius:6px;padding:8px 14px;font-weight:600">✓ Enterado, cerrar</button>
         <button class="bz-btn-rechazar" style="background:transparent;color:#e15555;border:1px solid #e15555;border-radius:6px;padding:8px 14px;cursor:pointer">✕ Marcar con observación</button>
         ${vincBtn}`;
+    }
+    // Retención/liberación: una sola acción. Retener no tiene "pagar" (no sale
+    // dinero) y liberar sale completo, así que tampoco hay pago parcial.
+    if (item.tipo === 'retencion_subcontratista') {
+      const liberar = item.esGasto === true || item.movimiento === 'liberacion';
+      return `
+        <button class="bz-btn-aprobar" ${dis} style="background:${liberar ? '#5dd39e' : '#e0a04c'};color:#0e3a25;border:none;border-radius:6px;padding:8px 14px;font-weight:600">
+          ${liberar ? '🔓 Liberar y asentar gasto' : '🔒 Registrar retención'}</button>
+        <button class="bz-btn-rechazar" style="background:transparent;color:#e15555;border:1px solid #e15555;border-radius:6px;padding:8px 14px;cursor:pointer">✕ Rechazar</button>
+        ${vincBtn}${noVinc}`;
     }
     if (esCajaChica) {
       // Caja chica: aprobar = asentar contable directamente. No hay flujo
@@ -1377,6 +1431,8 @@ async function _aprobarItem(item, aprobarYPagar = false) {
   // entró o salió, es un cambio de presupuesto. El presupuesto vigente sale de
   // /shared/contratos, no de este item.
   if (item.tipo === 'orden_cambio')        return _aprobarOrdenCambio(item);
+  // Retención / liberación de fondo de garantía a subcontratista.
+  if (item.tipo === 'retencion_subcontratista') return _aprobarRetencionSub(item);
 
   // Resolvemos el proyecto contable (directo o vía obraLinks) para soportar items
   // que sólo traen obraId (p.ej. indirectos originados en materiales).
@@ -1923,6 +1979,140 @@ async function _aprobarGastoIndirecto(item, aprobarYPagar = false) {
     _buzon.expanded.delete(item.id);
     _toast(`${folio} · Indirecto $${importe.toLocaleString('es-MX',{minimumFractionDigits:2})} en ${item.obraNombre || 'obra'}.`, 'success');
   } catch (err) { console.error('[Buzón indirecto obra]', err); _toast('Error al aprobar: ' + err.message, 'error'); }
+}
+
+// =====================================================
+// RETENCIÓN / LIBERACIÓN A SUBCONTRATISTA (tipo 'retencion_subcontratista')
+//
+// LA REGLA, y no admite matices:
+//   esGasto === false  →  NO se genera movimiento de efectivo. Retener no es
+//                         gastar: el dinero sigue en tu caja. Es un pasivo.
+//   esGasto === true   →  Sí sale. Gasto normal, con la FECHA DEL ITEM (una
+//                         liberación puede llegar meses después, incluso de
+//                         otro ejercicio).
+//
+// El gasto de la estimación ya viene NETO desde estimaciones. Aquí no se le
+// resta ni se le suma nada: si al retener también descontáramos, y al liberar
+// volviéramos a descontar, el mismo dinero saldría dos veces.
+//
+// Pareo por `refKey`: la liberación trae el mismo refKey que su retención.
+// Idempotente: estimaciones puede reenviar el mismo refKey si corrige algo, y
+// entonces se actualiza el registro existente en vez de duplicarlo.
+// =====================================================
+function _retencionPorRefKey(refKey) {
+  if (!refKey) return null;
+  return (getCollection(KEYS.RETENCIONES) ?? []).find(r => r.refKey === refKey) || null;
+}
+
+async function _aprobarRetencionSub(item) {
+  const monto = Math.abs(Number(item.monto) || 0);
+  if (monto <= 0) { _toast('Retención con monto inválido.', 'error'); return; }
+
+  const proyectoId = item.proyectoId || await _resolverProyectoIdPorObra(item.obraId);
+  if (!proyectoId) { _toast('No hay proyecto vinculado a esta obra. Crea el link en /shared/obraLinks primero.', 'error'); return; }
+
+  const fechaISO  = item.fecha ? new Date(item.fecha).toISOString().slice(0, 10) : todayISO();
+  const esLiberar = item.esGasto === true || item.movimiento === 'liberacion';
+  const existente = _retencionPorRefKey(item.refKey);
+
+  // ── RETENER: sólo se registra el pasivo. Cero movimientos contables. ──
+  if (!esLiberar) {
+    const datos = {
+      refKey: item.refKey || `${item.obraId}:${item.subcontratoId}:${item.subEstimacionId}`,
+      proyecto_id: proyectoId,
+      obraId: item.obraId || null,
+      obraNombre: item.obraNombre || '',
+      proveedorNombre: (item.proveedorNombre || '').trim(),
+      subcontratoId: item.subcontratoId || null,
+      subcontratoNombre: item.subcontratoNombre || '',
+      subEstimacionId: item.subEstimacionId || null,
+      subEstimacionNumero: item.subEstimacionNumero ?? null,
+      etiqueta: item.etiqueta || 'Fondo de garantía',
+      modo: item.modo || 'pct',
+      // El pct es informativo: el monto ya viene resuelto y es el que manda.
+      pct: Number(item.pct) || null,
+      base: item.base || 'importe',
+      monto,
+      fecha: fechaISO,
+      descripcion: item.descripcion || '',
+      estado: existente?.estado === 'liberado' ? 'liberado' : 'pendiente',
+      origen_buzon_id: item.id,
+    };
+    try {
+      const guardado = existente
+        ? (updateItem(KEYS.RETENCIONES, existente.id, datos), existente)
+        : addItem(KEYS.RETENCIONES, datos);
+      const now = Date.now();
+      // 'asentado' y no 'aprobado': no hay nada que pagar después. El fondo
+      // queda registrado y su siguiente evento es la liberación, que llega
+      // como un item aparte.
+      await _dbRef(`/shared/buzon/${item.id}`).update({
+        estado:      'asentado',
+        aprobadoAt:  now,
+        aprobadoPor: _currentUser?.uid || '',
+        movId:       guardado.id,
+        destinoRefPath: `sogrub_retenciones[id=${guardado.id}]`,
+        huerfanoAt: null, huerfanoPor: null, descripcionHuerfano: null,
+        [`estadoHistorial/${now}_ret`]: {
+          estado: 'asentado', at: now, por: _currentUser?.uid || '',
+          nota: `Fondo retenido registrado · no afecta caja`,
+        },
+      });
+      _buzon.expanded.delete(item.id);
+      _toast(`🔒 Fondo retenido $${monto.toLocaleString('es-MX',{minimumFractionDigits:2})} registrado. No afecta caja: el dinero no ha salido.`, 'success');
+    } catch (err) { console.error('[Buzón retención]', err); _toast('Error al registrar la retención: ' + err.message, 'error'); }
+    return;
+  }
+
+  // ── LIBERAR: ahora sí sale el dinero. Gasto con la fecha del item. ──
+  if (!existente) {
+    // Liberación sin retención previa: se registra igual (el dinero salió de
+    // verdad) pero se marca, porque significa que la retención nunca se aprobó.
+    if (!confirm(`⚠ Llegó una liberación de $${monto.toLocaleString('es-MX',{minimumFractionDigits:2})} pero no existe la retención original (refKey ${item.refKey || '—'}).\n\nSe va a registrar el gasto de todas formas y quedará marcado para revisión. ¿Continuar?`)) return;
+  }
+
+  let folio;
+  try { folio = await _generarFolio('CP'); }
+  catch (err) { _toast('Error al generar folio: ' + err.message, 'error'); return; }
+
+  const provNombre = (item.proveedorNombre || existente?.proveedorNombre || '').trim();
+  const provDef    = provNombre ? _findOrCreateProveedor(provNombre, {}) : null;
+  const etiqueta   = item.etiqueta || existente?.etiqueta || 'Fondo de garantía';
+  const subNombre  = item.subcontratoNombre || existente?.subcontratoNombre || '';
+
+  const movimiento = {
+    proyecto_id:    proyectoId,
+    obraId:         item.obraId || existente?.obraId || null,
+    fecha:          fechaISO,
+    monto:          -monto,
+    concepto:       `[${folio}] Liberación ${etiqueta}${subNombre ? ` — ${subNombre}` : ''}${item.subEstimacionNumero != null ? ` estim. #${item.subEstimacionNumero}` : ''}`,
+    subcontratista: provNombre,
+    status:         'Pagado',
+    tipo:           'gasto',
+    categoria:      'Subcontratista',
+    proveedor_id:   provDef?.id || null,
+    metodo_pago:    _metodoPagoDeItem(item),
+    // Marcadores de trazabilidad: de qué fondo salió esta liberación.
+    liberacion_retencion: true,
+    retencion_ref_key: item.refKey || null,
+    retencion_huerfana: existente ? null : true,
+    origen_buzon_id: item.id,
+  };
+
+  try {
+    const created = addItem('sogrub_proy_movimientos', movimiento);
+    if (existente) {
+      updateItem(KEYS.RETENCIONES, existente.id, {
+        estado: 'liberado',
+        liberadoFecha: fechaISO,
+        liberadoAt: Date.now(),
+        movIdLiberacion: created.id,
+      });
+    }
+    await _dbRef(`/shared/buzon/${item.id}`).update(_buzonPatchAprobado(folio, created.id, 'sogrub_proy_movimientos'));
+    _buzon.expanded.delete(item.id);
+    _toast(`${folio} · 🔓 Fondo liberado $${monto.toLocaleString('es-MX',{minimumFractionDigits:2})} a ${provNombre || 'subcontratista'}${existente ? '' : ' ⚠ sin retención previa'}.`, existente ? 'success' : 'warning');
+  } catch (err) { console.error('[Buzón liberación]', err); _toast('Error al liberar: ' + err.message, 'error'); }
 }
 
 // Nómina de un período cerrado (tipo 'nomina_*'). Genera:

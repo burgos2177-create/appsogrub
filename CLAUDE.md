@@ -19,6 +19,7 @@ App web para el contador de SOGRUB. Sister apps: **app-estimaciones** (ingeniero
 | `/shared/obraLinks/{obraId}` | admin | Mapa `obraId → proyectoId` para resolver el proyecto contable a partir de la obra de campo. |
 | `/shared/avanceObra/{obraId}` | estimaciones | Solo lectura. Avance ejecutado a precio de catálogo — habilita la utilidad realizada (ver abajo). |
 | `/shared/contratos/{obraId}` | estimaciones | Solo lectura. Contrato vigente con órdenes de cambio aplicadas (ver abajo). |
+| `/legacy/bitacora/sogrub_retenciones` | **Esta app** | Fondos de garantía retenidos a subs. NO son movimientos de caja (ver abajo). |
 | `/shared/cajaChica/{obraId}/{meta,movimientos}` | **materiales** y **esta app** | Ledger de caja chica por obra (saldo conciliado vive aquí, no en el ledger del proyecto). |
 
 ## Buzón cross-app — máquina de estados B1-B8
@@ -351,3 +352,43 @@ UI: botón 💵 en cada fila de gasto → modal de pagos (barra de avance, alta/
 exhibiciones, "Liquidar el saldo"). En el buzón, "Marcar Pagado" de una CxP pregunta el
 monto: si es menor al saldo, agrega la exhibición y el item **no** pasa a `pagado` — sigue
 siendo cuenta por pagar viva, y el espejo de la OC en `/shared/compras` no se cierra.
+
+
+## Retenciones a subcontratistas — fondo de garantía (2026-08-25)
+
+Al pagarle una estimación a un sub se le puede retener una parte (garantía por vicios
+ocultos, 5-10%) y liberarla meses después. Estimaciones manda **dos** items al buzón.
+
+**LA REGLA, y no admite matices:**
+
+```
+esGasto === false  →  NO se genera movimiento de efectivo. Retener no es gastar.
+esGasto === true   →  Sí sale. Gasto normal, con la FECHA DEL ITEM.
+```
+
+Si se sumara al retener y otra vez al liberar, el mismo dinero saldría dos veces.
+
+| `tipo` | `movimiento` | `esGasto` | Aprobar genera |
+|---|---|---|---|
+| `estimacion_subcontratista` | — | — | Gasto por `monto.importe`, que **ya viene NETO**. `importeBruto` y `retencionTotal` son informativos: no se restan ni se suman, sólo explican por qué el gasto no coincide con lo estimado. |
+| `retencion_subcontratista` | `retencion` | `false` | Registro en `sogrub_retenciones` (`estado:'pendiente'`). **Cero contables.** Item queda `asentado`. |
+| `retencion_subcontratista` | `liberacion` | `true` | `sogrub_proy_movimientos` (gasto, categoria='Subcontratista', folio CP) con la fecha del item + marca la retención `liberado`. |
+
+- **Pareo por `refKey`**: la liberación trae el mismo `refKey` que su retención. Si llega una
+  liberación cuyo refKey no existe se pide confirmación, se asienta igual (el dinero sí salió)
+  y el contable queda con `retencion_huerfana:true`.
+- **Idempotente**: estimaciones puede reenviar el mismo `refKey`; `_retencionPorRefKey` busca y
+  actualiza en vez de duplicar.
+- **La fecha manda**: una liberación puede llegar meses después, incluso de otro ejercicio. Se
+  registra con `item.fecha`, no con la de aprobación.
+- **No recalcular desde `pct`**: el `monto` ya viene resuelto (`base:'importe'`, sobre el
+  importe C/IVA). El pct es sólo para la etiqueta.
+
+**Por qué colección aparte y no un movimiento contable**: si el fondo viviera en
+`sogrub_proy_movimientos`, cualquier suma de gastos lo contaría. Retener es un **pasivo**, no
+una salida — el dinero sigue en tu caja. Ver `calcFondosRetenidos` y
+`calcComprometidoSubcontratistas` en `js/calculations.js`, `_aprobarRetencionSub` en
+`js/views/buzon.js`, y la tarjeta `renderFondosRetenidos` en `js/views/detalle.js`.
+
+Entra al KPI de **Deuda pendiente** como tercer renglón (se le debe al sub) y la tarjeta del
+proyecto muestra `pagado + fondo = comprometido con subs`.

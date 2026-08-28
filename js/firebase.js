@@ -326,6 +326,9 @@ const KEYS = Object.freeze({
   PROVEEDORES:      'sogrub_proveedores',
   PROY_PROVEEDORES: 'sogrub_proy_proveedores',
   FISCAL_CONFIG:    'sogrub_fiscal_config',
+  // Fondos retenidos a subcontratistas (garantía por vicios ocultos). No son
+  // movimientos de caja: el dinero nunca salió. Viven aparte a propósito.
+  RETENCIONES:      'sogrub_retenciones',
 });
 
 // =====================================================
@@ -342,6 +345,7 @@ const _COLECCIONES = [
   'sogrub_proveedores',
   'sogrub_proy_proveedores',
   'sogrub_fiscal_config',
+  'sogrub_retenciones',
 ];
 
 let _loadedCount = 0;
