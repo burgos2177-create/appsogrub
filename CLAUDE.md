@@ -392,3 +392,34 @@ una salida — el dinero sigue en tu caja. Ver `calcFondosRetenidos` y
 
 Entra al KPI de **Deuda pendiente** como tercer renglón (se le debe al sub) y la tarjeta del
 proyecto muestra `pagado + fondo = comprometido con subs`.
+
+## Retiro de utilidad — obra → SOGRUB (2026-08-26)
+
+El inverso exacto de `ejecutarTransferenciaSOGRUB`. Saca de la caja de la obra el dinero que
+ya sobró y lo pasa a SOGRUB; a partir de ahí es **utilidad cobrada**: dinero libre que ya no
+hay que justificar contra el proyecto.
+
+```
+ejecutarRetiroUtilidad(proyectoId, monto, concepto, fecha, metodo)
+  lado obra    → sogrub_proy_movimientos { tipo:'retiro_utilidad', monto:−abs, metodo_pago }
+  lado SOGRUB  → transferencia: sogrub_movimientos  { tipo:'retiro_utilidad_proyecto', +abs }
+                 efectivo:      sogrub_efectivo_movimientos { idem }
+```
+
+**No es un gasto y por eso lleva tipo propio.** Un gasto compra algo para la obra y consume
+presupuesto; esto sólo cambia de bolsillo dinero que ya sobró. Si se registrara como `gasto`
+contaminaría el costo, las bolsitas, el CPI y la utilidad realizada — justo lo contrario de
+lo que mide.
+
+- `calcSaldoCajaProyecto` resta los retiros; `calcSaldoCajaProyectoDesglose` manda los de
+  efectivo a `efOut` para que el split efectivo/electrónico siga cuadrando.
+- `calcUtilidadRetirada(proyectoId)` = Σ retiros.
+- `calcBolsitasProyecto`: `utilidadDisponible = utilidadPlaneada − overflowTotal −
+  utilidadRetirada`. **Los sobregiros se siguen restando aunque ya hayas retirado** — retirar
+  no protege la utilidad de un rubro que se pasa.
+- Tarjeta de presupuesto: renglón "💸 Utilidad cobrada" y el total pasa a llamarse "Utilidad
+  por cobrar" en cuanto hay retiros.
+- Análisis → tarjeta de trade: bloque "Utilidad cobrada / Utilidad por cobrar". La curva de
+  caja de la obra baja con el retiro (`s.retiros` en `_aoSeries`).
+- El modal avisa —sin bloquear— si el monto excede la caja de la obra o la utilidad por
+  cobrar, y `calcSaldoGlobal` sube: es el espejo de la transferencia, que lo baja.

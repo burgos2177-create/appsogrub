@@ -527,10 +527,20 @@ function renderBolsitasProyecto(proyectoId) {
           <span class="text-danger">− Sobregiros de otras bolsitas</span>
           <strong class="text-danger">${formatMXN(b.overflowTotal)}</strong>
         </div>` : ''}
+      ${b.utilidadRetirada > 0 ? `
+        <div class="bolsa-margen-item" title="Utilidad que ya salió de la obra a SOGRUB. Ese dinero ya es libre: no hay que justificarlo contra el proyecto.">
+          <span class="text-muted">− 💸 Utilidad cobrada (retirada a SOGRUB)</span>
+          <strong>${formatMXN(b.utilidadRetirada)}</strong>
+        </div>` : ''}
       <div class="bolsa-margen-item bolsa-margen-total">
-        <span style="font-weight:600">Utilidad disponible</span>
+        <span style="font-weight:600">${b.utilidadRetirada > 0 ? 'Utilidad por cobrar' : 'Utilidad disponible'}</span>
         <strong class="${utilNeg ? 'text-danger' : 'text-success'}" style="font-size:16px">${formatMXN(b.utilidadDisponible)}</strong>
       </div>
+      ${b.utilidadRetirada > 0 ? `
+        <div class="text-muted" style="font-size:11px;margin-top:6px;line-height:1.5">
+          Ya cobraste <b>${formatMXN(b.utilidadRetirada)}</b> de los ${formatMXN(b.utilidadPlaneada)} planeados${
+            b.overflowTotal > 0 ? `; los sobregiros (${formatMXN(b.overflowTotal)}) se siguen comiendo lo que queda` : ''}.
+        </div>` : ''}
     </div>
   `;
   return card;
@@ -714,6 +724,7 @@ function renderDetalleToolbar(proyectoId, proyecto) {
     <button class="btn btn-primary" id="btn-gasto">＋ Registrar gasto</button>
     <button class="btn btn-secondary" id="btn-abono">＋ Abono del cliente</button>
     <button class="btn btn-secondary" id="btn-recibir">⇄ Recibir de SOGRUB</button>
+    <button class="btn btn-secondary" id="btn-retirar-utilidad" title="Pasa dinero de la obra a SOGRUB. Deja de estar comprometido con el proyecto.">💸 Retirar utilidad</button>
     <button class="btn btn-secondary" id="btn-proveedores-proy">📋 Proveedores</button>
     <button class="btn btn-secondary" id="btn-facturas-lote">📄 Cargar facturas</button>
     <div class="toolbar-spacer"></div>
@@ -724,6 +735,8 @@ function renderDetalleToolbar(proyectoId, proyecto) {
     abrirModalMovProy(proyectoId, 'gasto'));
   bar.querySelector('#btn-abono').addEventListener('click', () =>
     abrirModalMovProy(proyectoId, 'abono_cliente'));
+  bar.querySelector('#btn-retirar-utilidad').addEventListener('click', () =>
+    abrirModalRetirarUtilidad(proyectoId));
   bar.querySelector('#btn-recibir').addEventListener('click', () =>
     abrirModalRecibirSOGRUB(proyectoId));
   bar.querySelector('#btn-proveedores-proy').addEventListener('click', () =>
@@ -1609,6 +1622,117 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
 // =====================================================
 // MODAL: RECIBIR DE SOGRUB (regla #9)
 // =====================================================
+// =====================================================
+// RETIRAR UTILIDAD — obra → SOGRUB
+//
+// El inverso de "Recibir de SOGRUB". No es un gasto: no compra nada ni consume
+// presupuesto. Sólo saca de la obra el dinero que ya sobró, y a partir de ahí
+// es libre — no hay que justificarlo contra el proyecto.
+// =====================================================
+function abrirModalRetirarUtilidad(proyectoId) {
+  const proyecto = getItem(KEYS.PROYECTOS, proyectoId);
+  const b        = calcBolsitasProyecto(proyectoId);
+  const saldo    = calcSaldoCajaProyecto(proyectoId);
+  const desg     = calcSaldoCajaProyectoDesglose(proyectoId);
+  // Techo prudente: no puedes retirar más utilidad de la que queda, ni más
+  // dinero del que hay en la caja de la obra.
+  const tope     = Math.max(0, Math.min(b.utilidadDisponible, saldo));
+
+  const body = document.createElement('div');
+  body.style.cssText = 'display:flex;flex-direction:column;gap:14px';
+  body.innerHTML = `
+    <div style="display:flex;gap:18px;flex-wrap:wrap;padding:10px 12px;background:var(--surface2);border-radius:var(--radius)">
+      <div>
+        <div class="text-muted" style="font-size:11px">Utilidad por cobrar</div>
+        <div class="font-mono ${b.utilidadDisponible < 0 ? 'text-danger' : 'text-success'}" style="font-size:15px">${formatMXN(b.utilidadDisponible)}</div>
+      </div>
+      <div>
+        <div class="text-muted" style="font-size:11px">Caja de la obra</div>
+        <div class="font-mono" style="font-size:15px">${formatMXN(saldo)}</div>
+        <div class="text-dim" style="font-size:10px">🏦 ${formatMXN(desg.electronico)} · 💵 ${formatMXN(desg.efectivo)}</div>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label" for="ru-fecha">Fecha</label>
+        <input type="date" id="ru-fecha" class="form-input" value="${todayISO()}">
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="ru-monto">Monto ($)</label>
+        <input type="number" id="ru-monto" class="form-input" placeholder="0.00" min="0.01" step="0.01"
+               value="${tope > 0 ? tope.toFixed(2) : ''}">
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">¿A dónde entra?</label>
+      <div class="toggle-group">
+        <input type="radio" name="ru-metodo" id="ru-transf" value="transferencia" class="toggle-option" checked>
+        <label for="ru-transf" class="toggle-label">🏦 Mifel (transferencia)</label>
+        <input type="radio" name="ru-metodo" id="ru-efe" value="efectivo" class="toggle-option">
+        <label for="ru-efe" class="toggle-label">💵 Efectivo (caja física)</label>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label" for="ru-concepto">Concepto</label>
+      <input type="text" id="ru-concepto" class="form-input"
+        value="Retiro de utilidad — ${proyecto?.nombre ?? ''}" placeholder="Concepto del retiro">
+    </div>
+
+    <p class="text-muted text-sm" style="margin:0">
+      Sale de la caja de la obra y entra a SOGRUB. <b>No es un gasto</b>: no consume presupuesto
+      ni aparece en el costo. A partir de aquí ese dinero es libre.
+    </p>
+    <div id="ru-aviso" style="font-size:12px"></div>
+  `;
+
+  const aviso = () => {
+    const el = body.querySelector('#ru-aviso');
+    const v  = Math.abs(parseFloat(body.querySelector('#ru-monto').value) || 0);
+    if (!v) { el.innerHTML = ''; return; }
+    const msgs = [];
+    if (v > saldo + 0.005) msgs.push(`⚠ Excede la caja de la obra por <b>${formatMXN(v - saldo)}</b>: la dejarías en negativo.`);
+    if (v > b.utilidadDisponible + 0.005) msgs.push(`⚠ Excede la utilidad por cobrar en <b>${formatMXN(v - b.utilidadDisponible)}</b>: estarías sacando dinero que todavía hace falta para terminar la obra.`);
+    el.innerHTML = msgs.length
+      ? `<div style="color:#e0a04c;line-height:1.6">${msgs.join('<br>')}</div>`
+      : `<div class="text-muted">Quedarían <b>${formatMXN(saldo - v)}</b> en la caja de la obra y <b>${formatMXN(b.utilidadDisponible - v)}</b> de utilidad por cobrar.</div>`;
+  };
+  setTimeout(() => { body.querySelector('#ru-monto')?.addEventListener('input', aviso); aviso(); }, 0);
+
+  openModal({
+    title:       '💸 Retirar utilidad a SOGRUB',
+    body,
+    confirmText: 'Retirar',
+    onConfirm:   () => {
+      const fecha    = body.querySelector('#ru-fecha').value;
+      const monto    = parseFloat(body.querySelector('#ru-monto').value);
+      const concepto = body.querySelector('#ru-concepto').value.trim();
+      const metodo   = body.querySelector('input[name="ru-metodo"]:checked')?.value ?? 'transferencia';
+
+      const valid = validateFields([
+        { el: body.querySelector('#ru-fecha'), msg: 'Selecciona una fecha' },
+        { el: body.querySelector('#ru-monto'), msg: 'Ingresa un monto mayor a 0' },
+      ]);
+      if (!valid) return;
+
+      if (monto > saldo + 0.005 &&
+          !confirm(`El retiro de ${formatMXN(monto)} deja la caja de la obra en ${formatMXN(saldo - monto)}. ¿Continuar?`)) return;
+
+      try { ejecutarRetiroUtilidad(proyectoId, monto, concepto, fecha, metodo); }
+      catch (err) { showToast('Error: ' + err.message, 'error'); return; }
+
+      showToast(`Utilidad retirada · entró a ${metodo === 'efectivo' ? 'caja física' : 'Mifel'}`, 'success');
+      closeModal();
+      refreshDetalleKPIs(proyectoId);
+      refreshDetalleTable(proyectoId);
+      refreshDetalleCharts(proyectoId);
+      refreshBolsitas(proyectoId);
+    },
+  });
+}
+
 function abrirModalRecibirSOGRUB(proyectoId) {
   const proyecto = getItem(KEYS.PROYECTOS, proyectoId);
 

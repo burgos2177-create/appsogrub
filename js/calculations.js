@@ -300,7 +300,14 @@ function calcSaldoCajaProyecto(proyectoId) {
     .filter(m => m.tipo === 'devolucion_caja_chica' && m.status === 'Pagado')
     .reduce((acc, m) => acc + Math.abs(m.monto), 0);
 
-  return abonos + transferencias - gastosPagados - depositosCajaChica + devolucionesCajaChica;
+  // Retiros de utilidad a SOGRUB: el dinero se fue de la obra (no es gasto,
+  // pero deja de estar en su caja).
+  const retirosUtilidad = movs
+    .filter(m => m.tipo === 'retiro_utilidad')
+    .reduce((acc, m) => acc + Math.abs(m.monto), 0);
+
+  return abonos + transferencias - gastosPagados - depositosCajaChica
+       + devolucionesCajaChica - retirosUtilidad;
 }
 
 // =====================================================
@@ -322,7 +329,10 @@ function calcSaldoCajaProyectoDesglose(proyectoId) {
     .reduce((acc, m) => acc + Math.abs(m.monto), 0);
 
   const efOut = movs
-    .filter(m => m.tipo === 'gasto' && m.status === 'Pagado' && !m.paga_de_caja_chica && esEfectivo(m))
+    .filter(m => esEfectivo(m) && (
+      (m.tipo === 'gasto' && m.status === 'Pagado' && !m.paga_de_caja_chica) ||
+      // Retiro de utilidad en efectivo: los billetes de la obra pasan a SOGRUB.
+      m.tipo === 'retiro_utilidad'))
     .reduce((acc, m) => acc + Math.abs(m.monto), 0);
 
   // Traspasos efectivo↔Mifel asignados a esta obra (viven en EFECTIVO_MOV).
@@ -1078,6 +1088,70 @@ function ejecutarTransferenciaSOGRUB(proyectoId, monto, concepto, fecha) {
 }
 
 // =====================================================
+// RETIRO DE UTILIDAD — obra → SOGRUB (el inverso exacto de la transferencia)
+//
+// Saca dinero de la caja de la obra y lo pasa a SOGRUB. A partir de ahí ese
+// dinero deja de estar comprometido con el proyecto: es utilidad cobrada y se
+// puede usar para lo que sea, sin justificarlo contra la obra.
+//
+// No es un gasto. Un gasto compra algo para la obra y consume presupuesto;
+// esto sólo cambia de bolsillo el dinero que ya sobró. Por eso lleva tipo
+// propio y no entra en ninguna suma de gastos ni en las bolsitas de costo.
+//
+//   metodo 'transferencia' → entra a Mifel (sogrub_movimientos)
+//   metodo 'efectivo'      → entra a la caja física (sogrub_efectivo_movimientos)
+// =====================================================
+function ejecutarRetiroUtilidad(proyectoId, monto, concepto, fecha, metodo = 'transferencia') {
+  const proyecto = getItem(KEYS.PROYECTOS, proyectoId);
+  if (!proyecto) throw new Error('Proyecto no encontrado');
+  const abs = Math.abs(Number(monto) || 0);
+  if (!(abs > 0)) throw new Error('El monto debe ser mayor a 0');
+
+  const esEfectivo    = metodo === 'efectivo';
+  const conceptoFinal = concepto || `Retiro de utilidad — ${proyecto.nombre}`;
+
+  // Lado SOGRUB (ingreso). La caja destino depende del método.
+  const movSOGRUB = esEfectivo
+    ? addItem(KEYS.EFECTIVO_MOV, {
+        fecha,
+        monto:       abs,
+        concepto:    conceptoFinal,
+        tipo:        'retiro_utilidad_proyecto',
+        proyecto_id: proyectoId,
+      })
+    : addItem(KEYS.MOVIMIENTOS, {
+        fecha,
+        monto:       abs,
+        concepto:    conceptoFinal,
+        status:      'Pagado',
+        tipo:        'retiro_utilidad_proyecto',
+        metodo_pago: 'transferencia',
+        proyecto_id: proyectoId,
+      });
+
+  // Lado obra (egreso). tipo propio: NO es 'gasto'.
+  const movProy = addItem(KEYS.PROY_MOVIMIENTOS, {
+    proyecto_id:    proyectoId,
+    fecha,
+    monto:          -abs,
+    concepto:       conceptoFinal,
+    subcontratista: '',
+    status:         'Pagado',
+    tipo:           'retiro_utilidad',
+    metodo_pago:    esEfectivo ? 'efectivo' : 'transferencia',
+  });
+
+  return { movSOGRUB, movProy };
+}
+
+// Utilidad ya retirada de la obra (Σ retiros). Es utilidad cobrada.
+function calcUtilidadRetirada(proyectoId) {
+  return (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
+    .filter(m => m.proyecto_id === proyectoId && m.tipo === 'retiro_utilidad')
+    .reduce((acc, m) => acc + Math.abs(Number(m.monto) || 0), 0);
+}
+
+// =====================================================
 // HELPERS de resumen por proyecto (para tablas)
 // =====================================================
 function calcResumenProyecto(proyectoId) {
@@ -1380,7 +1454,11 @@ function calcBolsitasProyecto(proyectoId) {
 
   const overflowTotal      = bolsas.reduce((a, b) => a + b.overflow, 0);
   const utilidadPlaneada   = d.utilidad + A('utilidad');
-  const utilidadDisponible = utilidadPlaneada - overflowTotal;
+  // Lo ya retirado a SOGRUB es utilidad COBRADA: sale del disponible igual que
+  // un sobregiro, y los dos se restan a la vez (un sobregiro no deja de comerse
+  // la utilidad porque ya hayas retirado una parte).
+  const utilidadRetirada   = calcUtilidadRetirada(proyectoId);
+  const utilidadDisponible = utilidadPlaneada - overflowTotal - utilidadRetirada;
 
   return {
     bolsas,
@@ -1389,6 +1467,7 @@ function calcBolsitasProyecto(proyectoId) {
     utilidadOriginal: d.utilidad,
     otros:            A('otros'),
     overflowTotal,
+    utilidadRetirada,
     utilidadDisponible,
     // Contrato vigente sin IVA. Se prefiere el que publica estimaciones; si no
     // hay nodo, el derivado de la cascada local.

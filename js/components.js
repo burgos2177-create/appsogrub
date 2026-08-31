@@ -286,6 +286,8 @@ function tipoBadge(tipo, proyectoNombre = '') {
     'gasto':                 { cls: 'badge-danger',  label: 'Gasto' },
     'abono_cliente':         { cls: 'badge-success', label: 'Abono cliente' },
     'transferencia_sogrub':  { cls: 'badge-info',    label: 'De SOGRUB' },
+    'retiro_utilidad':       { cls: 'badge-success', label: '💸 Utilidad a SOGRUB' },
+    'retiro_utilidad_proyecto': { cls: 'badge-success', label: proyectoNombre ? `💸 Utilidad de ${proyectoNombre}` : '💸 Utilidad de obra' },
     'deposito_caja_chica':   { cls: 'badge-warning', label: '💰 Depósito caja chica' },
     'devolucion_caja_chica': { cls: 'badge-info',    label: '⇄ Devolución caja chica' },
     'retiro_efectivo':       { cls: 'badge-warning', label: '💵 Retiro a efectivo' },

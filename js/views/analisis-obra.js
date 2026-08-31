@@ -109,7 +109,7 @@ function _aoSeries(proyectoId, gran) {
   const s = {
     keys,
     labels: keys.map(k => _aoBucketLabel(k, gran)),
-    cobrado: Z(), cobradoNeto: Z(), sogrub: Z(), gastado: Z(), gastoPend: Z(), deltaSaldo: Z(),
+    cobrado: Z(), cobradoNeto: Z(), sogrub: Z(), gastado: Z(), gastoPend: Z(), retiros: Z(), deltaSaldo: Z(),
     porCat: {},
   };
 
@@ -139,6 +139,11 @@ function _aoSeries(proyectoId, gran) {
       }
     } else if (m.tipo === 'deposito_caja_chica' && m.status === 'Pagado') {
       s.deltaSaldo[i] -= abs;
+    } else if (m.tipo === 'retiro_utilidad') {
+      // Utilidad cobrada: sale de la obra a SOGRUB. No es gasto, pero sí baja
+      // la caja del proyecto.
+      s.retiros[i] += abs;
+      s.deltaSaldo[i] -= abs;
     } else if (m.tipo === 'devolucion_caja_chica' && m.status === 'Pagado') {
       // El fondo de efectivo devolvió billete a SOGRUB: la caja del proyecto
       // recupera el monto (inverso del depósito).
@@ -151,6 +156,7 @@ function _aoSeries(proyectoId, gran) {
   s.cobradoAcum = acc(s.cobrado);
   s.cobradoNetoAcum = acc(s.cobradoNeto);
   s.gastadoAcum = acc(s.gastado);
+  s.retirosAcum = acc(s.retiros);
 
   // ---- Saldo a favor del cliente ----------------------------------------
   // Lo que pagó menos la obra que ya recibió, todo sin IVA. Es lo que habría
@@ -186,10 +192,10 @@ function _aoAplicarRango(s, rango, gran) {
   const out = {
     keys: cut(s.keys), labels: cut(s.labels),
     cobrado: cut(s.cobrado), cobradoNeto: cut(s.cobradoNeto), sogrub: cut(s.sogrub),
-    gastado: cut(s.gastado), gastoPend: cut(s.gastoPend),
+    gastado: cut(s.gastado), gastoPend: cut(s.gastoPend), retiros: cut(s.retiros),
     deltaSaldo: cut(s.deltaSaldo), saldoAcum: cut(s.saldoAcum),
     cobradoAcum: cut(s.cobradoAcum), cobradoNetoAcum: cut(s.cobradoNetoAcum),
-    gastadoAcum: cut(s.gastadoAcum),
+    gastadoAcum: cut(s.gastadoAcum), retirosAcum: cut(s.retirosAcum),
     ejecutadoAcum: cut(s.ejecutadoAcum), saldoCliente: cut(s.saldoCliente),
     tieneEjecutado: s.tieneEjecutado,
     porCat: {},
@@ -329,6 +335,26 @@ function _aoTradeCard(proyectoId) {
         M(t.utilidadEsperada),
         `${M(t.vContrato)} contrato vigente − ${M(t.cPresup)} costo presupuestado vigente`, signo(t.utilidadEsperada))}
     </div>
+
+    ${(() => {
+      // Utilidad ya cobrada: dinero que salió de la obra a SOGRUB y dejó de
+      // estar comprometido. Es la única parte de la utilidad que ya es tuya de
+      // verdad — el resto sigue expuesto a lo que falta de obra.
+      const ret = calcUtilidadRetirada(proyectoId);
+      if (!(ret > 0)) return '';
+      const b = calcBolsitasProyecto(proyectoId);
+      const pctRet = t.utilidadEsperada > 0 ? (ret / t.utilidadEsperada) * 100 : 0;
+      return `
+        <div style="display:flex;gap:20px;flex-wrap:wrap;padding:14px 0;border-bottom:1px solid var(--border)">
+          ${bloque('💸 Utilidad cobrada <span style="text-transform:none;letter-spacing:0">(ya salió de la obra)</span>',
+            M(ret), `${pctRet.toFixed(1)}% de la utilidad esperada · dinero libre en SOGRUB`, 'text-success')}
+          ${bloque('Utilidad por cobrar', M(b.utilidadDisponible),
+            b.overflowTotal > 0
+              ? `neta de ${M(b.overflowTotal)} de sobregiros que se la comen`
+              : 'sigue dentro de la obra, expuesta a lo que falta',
+            signo(b.utilidadDisponible))}
+        </div>`;
+    })()}
 
     ${t.oc ? `
     <div style="margin-top:14px;padding:10px 12px;background:var(--surface2);border-radius:var(--radius);
