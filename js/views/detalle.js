@@ -1179,9 +1179,15 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
   const titulos = {
     gasto:           id ? 'Editar gasto' : 'Registrar gasto',
     abono_cliente:   id ? 'Editar abono' : 'Abono del cliente',
+    retiro_utilidad: 'Editar retiro de utilidad',
   };
   const titulo = titulos[tipo] ?? 'Movimiento';
   const esGasto = tipo === 'gasto';
+  // Qué movimientos SALEN de la caja de la obra. No es lo mismo que esGasto:
+  // el retiro de utilidad sale pero no es gasto (no consume presupuesto ni
+  // entra al costo). Sin esta distinción, editar un retiro le volteaba el
+  // signo y la obra recibía dinero en vez de perderlo.
+  const esSalida = esGasto || tipo === 'retiro_utilidad';
 
   // Obtener proveedores del proyecto
   const proveedoresProy = (getCollection(KEYS.PROY_PROVEEDORES) ?? [])
@@ -1494,7 +1500,7 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
         return;
       }
 
-      const monto = esGasto ? -montoRaw : montoRaw;
+      const monto = esSalida ? -montoRaw : montoRaw;
 
       // Archivos de factura
       let factura_nombre          = mov?.factura_nombre          ?? '';
@@ -1666,12 +1672,12 @@ function abrirModalRetirarUtilidad(proyectoId) {
     </div>
 
     <div class="form-group">
-      <label class="form-label">¿A dónde entra?</label>
+      <label class="form-label">¿De qué parte de la caja de la obra sale?</label>
       <div class="toggle-group">
         <input type="radio" name="ru-metodo" id="ru-transf" value="transferencia" class="toggle-option" checked>
-        <label for="ru-transf" class="toggle-label">🏦 Mifel (transferencia)</label>
+        <label for="ru-transf" class="toggle-label">🏦 Electrónico (Mifel)</label>
         <input type="radio" name="ru-metodo" id="ru-efe" value="efectivo" class="toggle-option">
-        <label for="ru-efe" class="toggle-label">💵 Efectivo (caja física)</label>
+        <label for="ru-efe" class="toggle-label">💵 Efectivo</label>
       </div>
     </div>
 
@@ -1681,9 +1687,11 @@ function abrirModalRetirarUtilidad(proyectoId) {
         value="Retiro de utilidad — ${proyecto?.nombre ?? ''}" placeholder="Concepto del retiro">
     </div>
 
-    <p class="text-muted text-sm" style="margin:0">
-      Sale de la caja de la obra y entra a SOGRUB. <b>No es un gasto</b>: no consume presupuesto
-      ni aparece en el costo. A partir de aquí ese dinero es libre.
+    <p class="text-muted text-sm" style="margin:0;line-height:1.6">
+      <b>No es un gasto</b> ni una transferencia física: el dinero ya está en Mifel o en la caja.
+      Lo único que cambia es que deja de estar apartado para esta obra, así que
+      <b>sube tu disponible libre de compromisos</b> por el mismo monto.
+      Ni el saldo de Mifel ni el arqueo de efectivo se mueven.
     </p>
     <div id="ru-aviso" style="font-size:12px"></div>
   `;
@@ -1723,7 +1731,7 @@ function abrirModalRetirarUtilidad(proyectoId) {
       try { ejecutarRetiroUtilidad(proyectoId, monto, concepto, fecha, metodo); }
       catch (err) { showToast('Error: ' + err.message, 'error'); return; }
 
-      showToast(`Utilidad retirada · entró a ${metodo === 'efectivo' ? 'caja física' : 'Mifel'}`, 'success');
+      showToast(`Utilidad retirada · ${formatMXN(monto)} pasó a disponible libre`, 'success');
       closeModal();
       refreshDetalleKPIs(proyectoId);
       refreshDetalleTable(proyectoId);

@@ -1088,18 +1088,26 @@ function ejecutarTransferenciaSOGRUB(proyectoId, monto, concepto, fecha) {
 }
 
 // =====================================================
-// RETIRO DE UTILIDAD — obra → SOGRUB (el inverso exacto de la transferencia)
+// RETIRO DE UTILIDAD — la obra deja de tener comprometido ese dinero
 //
-// Saca dinero de la caja de la obra y lo pasa a SOGRUB. A partir de ahí ese
-// dinero deja de estar comprometido con el proyecto: es utilidad cobrada y se
-// puede usar para lo que sea, sin justificarlo contra la obra.
+// Saca de la caja de la obra el dinero que ya sobró. A partir de ahí es
+// utilidad cobrada: dinero libre que ya no hay que justificar contra el
+// proyecto.
 //
-// No es un gasto. Un gasto compra algo para la obra y consume presupuesto;
-// esto sólo cambia de bolsillo el dinero que ya sobró. Por eso lleva tipo
-// propio y no entra en ninguna suma de gastos ni en las bolsitas de costo.
+// OJO — sólo se escribe el lado OBRA, a propósito. El dinero YA está en Mifel
+// o en la caja física; lo único que cambia es que deja de estar apartado. El
+// libre de compromisos se calcula como (Mifel + efectivo) − Σ saldos de obras,
+// así que al bajar la caja de la obra el libre sube solo, sin registrar nada
+// del lado SOGRUB.
 //
-//   metodo 'transferencia' → entra a Mifel (sogrub_movimientos)
-//   metodo 'efectivo'      → entra a la caja física (sogrub_efectivo_movimientos)
+// Escribir además un ingreso en sogrub_movimientos / sogrub_efectivo_movimientos
+// sube el libre DOS VECES y, en el caso de efectivo, infla el saldo teórico de
+// la caja física sin que haya llegado un solo billete: el arqueo aparece
+// faltante por el monto del retiro. No volver a hacerlo.
+//
+// `metodo` no elige una caja destino: dice de qué mitad de la caja de la obra
+// sale (efectivo o electrónico) para que el split de
+// calcSaldoCajaProyectoDesglose siga cuadrando.
 // =====================================================
 function ejecutarRetiroUtilidad(proyectoId, monto, concepto, fecha, metodo = 'transferencia') {
   const proyecto = getItem(KEYS.PROYECTOS, proyectoId);
@@ -1107,41 +1115,18 @@ function ejecutarRetiroUtilidad(proyectoId, monto, concepto, fecha, metodo = 'tr
   const abs = Math.abs(Number(monto) || 0);
   if (!(abs > 0)) throw new Error('El monto debe ser mayor a 0');
 
-  const esEfectivo    = metodo === 'efectivo';
-  const conceptoFinal = concepto || `Retiro de utilidad — ${proyecto.nombre}`;
-
-  // Lado SOGRUB (ingreso). La caja destino depende del método.
-  const movSOGRUB = esEfectivo
-    ? addItem(KEYS.EFECTIVO_MOV, {
-        fecha,
-        monto:       abs,
-        concepto:    conceptoFinal,
-        tipo:        'retiro_utilidad_proyecto',
-        proyecto_id: proyectoId,
-      })
-    : addItem(KEYS.MOVIMIENTOS, {
-        fecha,
-        monto:       abs,
-        concepto:    conceptoFinal,
-        status:      'Pagado',
-        tipo:        'retiro_utilidad_proyecto',
-        metodo_pago: 'transferencia',
-        proyecto_id: proyectoId,
-      });
-
-  // Lado obra (egreso). tipo propio: NO es 'gasto'.
   const movProy = addItem(KEYS.PROY_MOVIMIENTOS, {
     proyecto_id:    proyectoId,
     fecha,
     monto:          -abs,
-    concepto:       conceptoFinal,
+    concepto:       concepto || `Retiro de utilidad — ${proyecto.nombre}`,
     subcontratista: '',
     status:         'Pagado',
     tipo:           'retiro_utilidad',
-    metodo_pago:    esEfectivo ? 'efectivo' : 'transferencia',
+    metodo_pago:    metodo === 'efectivo' ? 'efectivo' : 'transferencia',
   });
 
-  return { movSOGRUB, movProy };
+  return { movProy };
 }
 
 // Utilidad ya retirada de la obra (Σ retiros). Es utilidad cobrada.

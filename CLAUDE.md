@@ -401,10 +401,22 @@ hay que justificar contra el proyecto.
 
 ```
 ejecutarRetiroUtilidad(proyectoId, monto, concepto, fecha, metodo)
-  lado obra    → sogrub_proy_movimientos { tipo:'retiro_utilidad', monto:−abs, metodo_pago }
-  lado SOGRUB  → transferencia: sogrub_movimientos  { tipo:'retiro_utilidad_proyecto', +abs }
-                 efectivo:      sogrub_efectivo_movimientos { idem }
+  SÓLO sogrub_proy_movimientos { tipo:'retiro_utilidad', monto:−abs, metodo_pago }
 ```
+
+**Un solo asiento, y no es negociable (2026-08-26).** El dinero YA está en Mifel o en la caja
+física; lo único que cambia es que deja de estar apartado. Como
+`libre = (Mifel + efectivo) − Σ saldos de obras`, al bajar la caja de la obra el libre sube
+solo. Escribir además un ingreso del lado SOGRUB sube el libre **dos veces** y, en efectivo,
+infla el saldo teórico de la caja física sin que llegue un billete: **el arqueo aparece
+faltante por el monto del retiro**. Es el mismo error que el "Ingreso a Mifel" fantasma.
+
+`metodo` no elige caja destino: dice de qué mitad de la caja de la obra sale, para que el
+split de `calcSaldoCajaProyectoDesglose` siga cuadrando.
+
+⚠ **`ejecutarTransferenciaSOGRUB` tiene este mismo bug al revés** (escribe el egreso en
+`sogrub_movimientos` *y* el ingreso en la obra, así que baja el libre el doble). Se dejó como
+estaba por no tocarlo sin pedirlo, pero si se usa "Recibir de SOGRUB" hay que arreglarlo.
 
 **No es un gasto y por eso lleva tipo propio.** Un gasto compra algo para la obra y consume
 presupuesto; esto sólo cambia de bolsillo dinero que ya sobró. Si se registrara como `gasto`
@@ -422,4 +434,6 @@ lo que mide.
 - Análisis → tarjeta de trade: bloque "Utilidad cobrada / Utilidad por cobrar". La curva de
   caja de la obra baja con el retiro (`s.retiros` en `_aoSeries`).
 - El modal avisa —sin bloquear— si el monto excede la caja de la obra o la utilidad por
-  cobrar, y `calcSaldoGlobal` sube: es el espejo de la transferencia, que lo baja.
+  cobrar. Ni `calcSaldoMifel` ni `calcSaldoEfectivo` se mueven: sólo sube el disponible libre.
+- Editar un retiro: `abrirModalMovProy` usa `esSalida` (gasto **o** retiro) para el signo. Con
+  `esGasto` a secas le volteaba el signo y la obra recibía dinero en vez de perderlo.
