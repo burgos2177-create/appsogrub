@@ -137,7 +137,7 @@ function refreshCajaTable() {
                 <td class="${colorMonto} font-mono">${formatMXN(m.monto)}</td>
                 <td>${factura || '<span class="text-dim">—</span>'}</td>
                 <td>${statusBadge(m.status)}</td>
-                <td>${tipoBadge(m.tipo, proy?.nombre ?? '')}</td>
+                <td>${tipoBadge(m.tipo, proy?.nombre ?? '')} <span class="badge badge-muted badge-no-dot" style="font-size:10px" title="${m.metodo_pago === 'efectivo' ? 'Movió la caja física (entra al arqueo)' : m.metodo_pago === 'transferencia' ? 'Movió Mifel' : 'Forma de pago no especificada — se asume transferencia (Mifel)'}">${m.metodo_pago === 'efectivo' ? '💵 Efectivo' : '🏦 Transf.'}${m.metodo_pago ? '' : '<span style="opacity:.55"> ?</span>'}</span></td>
                 <td>
                   <div class="td-actions">
                     <button class="btn btn-ghost btn-icon btn-edit-mov" data-id="${m.id}" title="Editar">✏️</button>
@@ -208,6 +208,21 @@ function abrirModalMovimiento(id = null) {
         value="${mov?.concepto ?? ''}">
     </div>
     <div class="form-group">
+      <label class="form-label">Forma de pago</label>
+      <div class="toggle-group">
+        <input type="radio" name="mov-metodo" id="metodo-transf" value="transferencia" class="toggle-option"
+          ${(mov?.metodo_pago ?? 'transferencia') !== 'efectivo' ? 'checked' : ''}>
+        <label for="metodo-transf" class="toggle-label">🏦 Transferencia</label>
+        <input type="radio" name="mov-metodo" id="metodo-efectivo" value="efectivo" class="toggle-option"
+          ${mov?.metodo_pago === 'efectivo' ? 'checked' : ''}>
+        <label for="metodo-efectivo" class="toggle-label">💵 Efectivo</label>
+      </div>
+      <span class="text-muted" style="font-size:11px;display:block;margin-top:5px">
+        De qué caja de SOGRUB sale o entra el dinero. <b>Efectivo</b> mueve la caja física
+        (y por tanto el arqueo); <b>Transferencia</b> mueve Mifel.
+      </span>
+    </div>
+    <div class="form-group">
       <label class="form-label">Status</label>
       <div class="toggle-group">
         <input type="radio" name="mov-status" id="status-pagado"   value="Pagado"   class="toggle-option" ${(mov?.status ?? 'Pagado') === 'Pagado'   ? 'checked' : ''}>
@@ -259,6 +274,9 @@ function abrirModalMovimiento(id = null) {
       const montoRaw = parseFloat(body.querySelector('#mov-monto').value);
       const concepto = body.querySelector('#mov-concepto').value.trim();
       const status  = body.querySelector('input[name="mov-status"]:checked')?.value ?? 'Pagado';
+      // De qué caja sale/entra. calcSaldoMifel excluye los de efectivo y
+      // calcSaldoEfectivo los suma, así que este campo decide qué saldo mueve.
+      const metodo_pago = body.querySelector('input[name="mov-metodo"]:checked')?.value ?? 'transferencia';
 
         const valid = validateFields([
         { el: body.querySelector('#mov-fecha'),   msg: 'Selecciona una fecha' },
@@ -274,7 +292,7 @@ function abrirModalMovimiento(id = null) {
       const uploadPDF = body.querySelector('#mov-factura-pdf')?.files?.[0] ?? null;
       const uploadXML = body.querySelector('#mov-factura-xml')?.files?.[0] ?? null;
 
-      const datos = { fecha, monto, concepto, status };
+      const datos = { fecha, monto, concepto, status, metodo_pago };
       // Al reemplazar un archivo se limpia su url/id: los de Drive se
       // reescriben al terminar la subida, y así no queda un link al viejo.
       if (uploadPDF) Object.assign(datos, { factura_nombre: uploadPDF.name, factura_drive_url: '', factura_drive_id: '' });
