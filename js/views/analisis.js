@@ -462,6 +462,11 @@ function _aCalcRunning(allMovs) {
         projCash[pid] += (m.monto ?? 0);
       } else if (m.tipo === 'gasto' && m.status === 'Pagado') {
         projCash[pid] += (m.monto ?? 0);     // negativo
+      } else if (m.tipo === 'retiro_utilidad') {
+        // Utilidad cobrada: deja de estar comprometida con la obra, así que el
+        // libre de compromisos sube. Sin esto la curva seguía mostrando ese
+        // dinero apartado para el proyecto.
+        projCash[pid] -= Math.abs(m.monto ?? 0);
       }
     }
 
