@@ -1,11 +1,11 @@
 import { rread } from './db.js?v=1';
-import { buildCtx } from './data-pure.js?v=2';
+import { buildCtx } from './data-pure.js?v=3';
 
 // Re-export de helpers puros para las vistas (compat).
 export {
   toItemArray, parseFolio, computeSaldoCajaChica, lastWrite,
   resolveProyectoId, nombreProyecto, nombreObra, buildCtx
-} from './data-pure.js?v=2';
+} from './data-pure.js?v=3';
 
 // ============================================================================
 // Lecturas agregadas cross-app. Todo se lee con "/"-escape (paths absolutos)
@@ -16,7 +16,7 @@ export {
 export async function loadEcosystem() {
   const [
     buzonNode, obraLinks, obrasCampoNode, proyectosNode,
-    movsNode, cajaChicaNode, comprasNode, countersNode
+    movsNode, cajaChicaNode, comprasNode, countersNode, crmNode
   ] = await Promise.all([
     rread('/shared/buzon'),
     rread('/shared/obraLinks'),
@@ -25,12 +25,13 @@ export async function loadEcosystem() {
     rread('/legacy/bitacora/sogrub_proy_movimientos'),
     rread('/shared/cajaChica'),
     rread('/shared/compras/obras'),
-    rread('/legacy/bitacora/_counters')
+    rread('/legacy/bitacora/_counters'),
+    rread('/shared/crm')
   ]);
 
   const ctx = buildCtx({
     buzonNode, obraLinks, obrasCampoNode, proyectosNode,
-    movsNode, cajaChicaNode, comprasNode, countersNode
+    movsNode, cajaChicaNode, comprasNode, countersNode, crmNode
   });
   ctx.loadedAt = Date.now();
   return ctx;

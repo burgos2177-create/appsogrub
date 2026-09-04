@@ -1,20 +1,20 @@
-import { h, modal, toast } from '../util/dom.js?v=20260904-0310';
-import { state, setState } from '../state/store.js?v=20260904-0310';
-import { navigate } from '../state/router.js?v=20260904-0310';
-import { renderShell, cargando } from './shell.js?v=20260904-0310';
-import { esAdmin } from '../services/auth.js?v=20260904-0310';
+import { h, modal, toast } from '../util/dom.js?v=20260904-0325';
+import { state, setState } from '../state/store.js?v=20260904-0325';
+import { navigate } from '../state/router.js?v=20260904-0325';
+import { renderShell, cargando } from './shell.js?v=20260904-0325';
+import { esAdmin } from '../services/auth.js?v=20260904-0325';
 import {
   loadAll, getOportunidad, watchActividades, moverEtapa, cerrarOportunidad, reabrirOportunidad,
   guardarPresupuesto, registrarActividad, marcarTarea, eliminarActividad, setProximaAccion,
   eliminarOportunidad, convertirEnProyecto, actualizarOportunidad
-} from '../services/crm.js?v=20260904-0310';
+} from '../services/crm.js?v=20260904-0325';
 import {
   ETAPAS, ETAPA_IDX, etapaDef, CIERRES, cierreDef, estaAbierta, calcCascada, montoRef, probabilidadDe,
   diasEnEtapa, diasSinActividad, estadoProximaAccion, TIPOS_ACTIVIDAD, tipoActividadDef
-} from '../services/pipeline.js?v=20260904-0310';
-import { money, money0, pct, dateMx, dateShort, dateTimeMx, ago, todayISO, addDaysISO, diasHasta } from '../util/format.js?v=20260904-0310';
-import { etapaTag, prioridadTag, field, select, input, textarea } from './_ui.js?v=20260904-0310';
-import { abrirFormOportunidad } from './_form-oportunidad.js?v=20260904-0310';
+} from '../services/pipeline.js?v=20260904-0325';
+import { money, money0, pct, dateMx, dateShort, dateTimeMx, ago, todayISO, addDaysISO, diasHasta } from '../util/format.js?v=20260904-0325';
+import { etapaTag, prioridadTag, field, select, input, textarea } from './_ui.js?v=20260904-0325';
+import { abrirFormOportunidad } from './_form-oportunidad.js?v=20260904-0325';
 
 let _unwatchActs = null;
 let _actividades = [];

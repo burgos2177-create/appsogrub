@@ -21,6 +21,7 @@ App web para el contador de SOGRUB. Sister apps: **app-estimaciones** (ingeniero
 | `/shared/contratos/{obraId}` | estimaciones | Solo lectura. Contrato vigente con órdenes de cambio aplicadas (ver abajo). |
 | `/legacy/bitacora/sogrub_retenciones` | **Esta app** | Fondos de garantía retenidos a subs. NO son movimientos de caja (ver abajo). |
 | `/shared/cajaChica/{obraId}/{meta,movimientos}` | **materiales** y **esta app** | Ledger de caja chica por obra (saldo conciliado vive aquí, no en el ledger del proyecto). |
+| `/shared/crm/*` | **CRM** (`crm/`, sólo admin) | Pipeline comercial previo a la obra. La consola sólo lo lee. |
 
 ## Buzón cross-app — máquina de estados B1-B8
 
@@ -292,9 +293,9 @@ js/
 
 Sub-app **independiente** de administración del ecosistema (no del uso operativo del contador). Vive en `console/` con su propio stack: **Firebase v10 modular + ES-modules** (a diferencia del appsogrub raíz, que usa compat 9.x no-modular). Es una página aparte — no comparte código con la app raíz — y se sirve como su propia ruta de GitHub Pages (`…/appsogrub/console/`). Gate duro a `role='admin'`.
 
-Para qué sirve: ver las 5 apps desde un solo lugar, verificar interconexión sana, y reparar cosas estructurales sin entrar al directorio de cada app.
+Para qué sirve: ver las 6 apps desde un solo lugar, verificar interconexión sana, y reparar cosas estructurales sin entrar al directorio de cada app.
 
-Módulos: **Mapa del ecosistema** · **Diagnóstico de salud** (11 invariantes cross-app en `console/js/services/checks.js`) · **Editor de obraLinks** · **Obras activas** (togglea `sogrub_proyectos[].estado`, que controla la visibilidad en dashboards). Alcance de escritura: diagnóstico + arreglos guiados con confirmación (`console/js/services/fixes.js`) — nada destructivo ni masivo.
+Módulos: **Mapa del ecosistema** · **Diagnóstico de salud** (13 invariantes cross-app en `console/js/services/checks.js`, las dos últimas del CRM) · **Editor de obraLinks** · **Obras activas** (togglea `sogrub_proyectos[].estado`, que controla la visibilidad en dashboards). Alcance de escritura: diagnóstico + arreglos guiados con confirmación (`console/js/services/fixes.js`) — nada destructivo ni masivo.
 
 La lógica de invariantes es pura y testeable (`console/js/services/checks.js` + `data-pure.js`, sin Firebase). Cache-busting propio: `bump-cache.sh` **no** aplica a `console/`. Detalle completo en `console/README.md`.
 
@@ -304,8 +305,10 @@ Sub-app **independiente** (mismo patrón que `console/`: Firebase v10 modular + 
 aparte servida en `…/appsogrub/crm/`). Lleva el pipeline comercial **antes** de que exista la obra:
 Lead → Contacto → Visita/levantamiento → Presupuesto (OPUS) → Propuesta enviada → Negociación →
 Ganada / Perdida / Declinada / Pospuesta. Datos bajo `/shared/crm/*` (oportunidades, actividades,
-clientes, config, `_counters` para el folio `OP-AAAA-NNN`). Acceso: `admin` e `ingeniero` (o perfil
-con `crm: true`).
+clientes, config, `_counters` para el folio `OP-AAAA-NNN`). **Gate duro a `role='admin'`**, igual que
+la consola — el pipeline trae montos de contrato, márgenes y motivos de pérdida de toda la empresa;
+los ingenieros sólo aparecen como responsables asignables. Reglas de RTDB en
+`docs/rules-rtdb-crm.md` (fragmento para pegar dentro de las vigentes, nunca solo).
 
 - **El presupuesto usa la misma cascada que "Nuevo proyecto"** (`crm/js/services/pipeline.js#calcCascada`
   ≡ `calcDesgloseContrato`): al ganar, el admin crea el proyecto en `sogrub_proyectos` desde la ficha
@@ -314,8 +317,12 @@ con `crm: true`).
   (bitácora lo `set`ea completo; los listeners lo recogen al instante) y es idempotente por
   `origen_crm_id`. La obra de estimaciones se crea como siempre y se liga en consola → obraLinks.
 - No publica nada al buzón: una oportunidad no mueve dinero. El dinero llega después vía `pago_cliente`.
+- **La consola lo ve**: `console/js/services/data.js` lee `/shared/crm` y el mapa trae tarjeta de app
+  y nodo (abiertas / ganadas / perdidas / clientes). Dos invariantes nuevas en `checks.js`:
+  oportunidad con `proyectoId` colgante (error) y `ganada` sin proyecto creado (warn tras 7 días).
 - Cache-busting propio: `bash crm/bump-cache.sh` antes de pushear cambios en `crm/js` o `crm/css`.
-  El `bump-cache.sh` de la raíz **no** lo cubre. Detalle completo en `crm/README.md`.
+  El `bump-cache.sh` de la raíz **no** lo cubre. La consola tampoco tiene script: al tocar
+  `console/js`, subir a mano el `?v=` de los imports del módulo cambiado. Detalle en cada README.
 
 ## Cómo arrancar
 

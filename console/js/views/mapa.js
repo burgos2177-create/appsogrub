@@ -2,8 +2,8 @@ import { h } from '../util/dom.js?v=2';
 import { state, setState } from '../state/store.js?v=1';
 import { navigate } from '../state/router.js?v=1';
 import { renderShell } from './shell.js?v=1';
-import { loadEcosystem, lastWrite, computeSaldoCajaChica } from '../services/data.js?v=1';
-import { runChecks, countBySeverity } from '../services/checks.js?v=2';
+import { loadEcosystem, lastWrite, computeSaldoCajaChica } from '../services/data.js?v=2';
+import { runChecks, countBySeverity } from '../services/checks.js?v=3';
 import { money, num0, ago, dateMx } from '../util/format.js?v=1';
 import { estadoTag } from './_ui.js?v=1';
 
@@ -45,7 +45,8 @@ export async function renderMapa() {
       appCard('📒 Bitácora', 'contador', lastWrite(ctx.movimientos), true),
       appCard('🛒 Compras', 'órdenes de compra', lastWrite(ctx.oc), true),
       appCard('📦 Materiales', 'almacén · caja chica', lastWrite(Object.values(ctx.cajaChica)), true),
-      appCard('🏗️ Indirectos', 'indirectos · nómina', lastWrite(ctx.buzonList.filter(i => i.origenApp === 'indirectos')), true)
+      appCard('🏗️ Indirectos', 'indirectos · nómina', lastWrite(ctx.buzonList.filter(i => i.origenApp === 'indirectos')), true),
+      appCard('🤝 CRM', 'pipeline comercial', lastWrite(ctx.oportunidades), true)
     ]),
 
     // Nodos compartidos
@@ -62,7 +63,9 @@ export async function renderMapa() {
         [tagMini('', `saldo ${money(totalSaldo(ctx))}`)]),
       nodeCard('Órdenes de compra', '/shared/compras', ctx.oc.length, 'OC',
         ocBreakdown(ctx.oc)),
-      nodeCard('Movimientos', 'sogrub_proy_movimientos', ctx.movimientos.length, 'movs', [])
+      nodeCard('Movimientos', 'sogrub_proy_movimientos', ctx.movimientos.length, 'movs', []),
+      nodeCard('CRM · oportunidades', '/shared/crm', ctx.oportunidades.length, 'oportunidades',
+        crmBreakdown(ctx))
     ]),
 
     // Buzón en vivo
@@ -113,6 +116,19 @@ function proyectoBreakdown(proyectos) {
   const kind = { activo: 'ok', pausa: 'warn', terminado: 'muted' };
   return Object.entries(by).map(([e, n]) => tagMini(kind[e] || '', `${e} ${n}`));
 }
+// Abiertas (por etapa no cabe en la tarjeta: se resume) + cierres + clientes.
+function crmBreakdown(ctx) {
+  const ops = ctx.oportunidades;
+  const abiertas = ops.filter(o => !o.estado || o.estado === 'abierta');
+  const cuenta = (e) => ops.filter(o => o.estado === e).length;
+  const out = [tagMini('accent', `${abiertas.length} abiertas`)];
+  const g = cuenta('ganada'), p = cuenta('perdida') + cuenta('declinada');
+  if (g) out.push(tagMini('ok', `${g} ganadas`));
+  if (p) out.push(tagMini('danger', `${p} perdidas/decl.`));
+  if (ctx.clientesCRM) out.push(tagMini('', `${ctx.clientesCRM} clientes`));
+  return out;
+}
+
 function ocBreakdown(oc) {
   const by = {};
   oc.forEach(o => { by[o.estado || '—'] = (by[o.estado || '—'] || 0) + 1; });

@@ -1,8 +1,8 @@
-import { h, mount } from '../util/dom.js?v=20260904-0310';
-import { state } from '../state/store.js?v=20260904-0310';
-import { logout, esAdmin } from '../services/auth.js?v=20260904-0310';
-import { navigate, currentPath } from '../state/router.js?v=20260904-0310';
-import { APP_VERSION } from '../config/firebase-config.js?v=20260904-0310';
+import { h, mount } from '../util/dom.js?v=20260904-0325';
+import { state } from '../state/store.js?v=20260904-0325';
+import { logout, esAdmin } from '../services/auth.js?v=20260904-0325';
+import { navigate, currentPath } from '../state/router.js?v=20260904-0325';
+import { APP_VERSION } from '../config/firebase-config.js?v=20260904-0325';
 
 const NAV = [
   { to: '/',         label: 'Pipeline' },

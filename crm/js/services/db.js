@@ -1,8 +1,8 @@
 import {
   ref, get, set, update, push, remove, onValue, off, runTransaction
 } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-database.js';
-import { db } from './firebase.js?v=20260904-0310';
-import { APP_BASE_PATH } from '../config/firebase-config.js?v=20260904-0310';
+import { db } from './firebase.js?v=20260904-0325';
+import { APP_BASE_PATH } from '../config/firebase-config.js?v=20260904-0325';
 
 // Path relativo → /shared/crm/<path>. Path con "/" inicial → absoluto.
 function _resolve(path) {

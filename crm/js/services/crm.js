@@ -4,11 +4,11 @@
 //   clientes/{clienteId}            catálogo de clientes/contactos
 //   config                          listas editables + defaults de sobrecostos
 //   _counters/oportunidades/{año}   folio OP-AAAA-NNN (transacción, como CC/CP en bitácora)
-import { rread, rset, rupdate, rpush, rremove, rwatch, rtransaction, clean } from './db.js?v=20260904-0310';
-import { state } from '../state/store.js?v=20260904-0310';
+import { rread, rset, rupdate, rpush, rremove, rwatch, rtransaction, clean } from './db.js?v=20260904-0325';
+import { state } from '../state/store.js?v=20260904-0325';
 import {
   ETAPAS, etapaDef, cierreDef, estaAbierta, mergeConfig, calcCascada, formatoFolio, normalizarTexto
-} from './pipeline.js?v=20260904-0310';
+} from './pipeline.js?v=20260904-0325';
 
 function _autor() {
   const u = state.user || {};
@@ -24,9 +24,12 @@ export async function loadAll() {
   const [ops, clientes, config, users] = await Promise.all([
     rread('oportunidades'), rread('clientes'), rread('config'), rread('/legacy/estimaciones/users')
   ]);
+  // Responsables asignables: admins e ingenieros. Los ingenieros hacen el
+  // levantamiento y arman el OPUS, así que se les asigna seguimiento aunque el
+  // acceso a esta app sea sólo de admin (ver services/auth.js).
   const usuarios = Object.entries(users || {})
     .map(([uid, u]) => ({ uid, ...(u || {}) }))
-    .filter(u => u.role === 'admin' || u.role === 'ingeniero' || u.crm === true)
+    .filter(u => u.role === 'admin' || u.role === 'ingeniero')
     .sort((a, b) => (a.displayName || a.email || '').localeCompare(b.displayName || b.email || ''));
   return {
     oportunidades: _toList(ops).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)),

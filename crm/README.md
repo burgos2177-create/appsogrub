@@ -88,9 +88,13 @@ _counters/oportunidades/{año}: N   (folio atómico, mismo patrón que CC/CP de 
 
 ## Acceso
 
-Pool único de usuarios en `/legacy/estimaciones/users`. Entran `admin` e
-`ingeniero`; cualquier otro rol entra si su perfil tiene `crm: true`. Sólo admin
-borra oportunidades, edita la configuración y crea el proyecto en bitácora.
+Pool único de usuarios en `/legacy/estimaciones/users`. **Gate duro a
+`role='admin'`**, igual que la consola: el pipeline trae montos de contrato,
+márgenes y motivos de pérdida de toda la empresa. Los ingenieros SÍ aparecen como
+**responsables** de seguimiento (se listan del mismo nodo), pero no entran a la app.
+
+Las reglas de RTDB que respaldan esto —el gate del cliente es sólo UX— están en
+`../docs/rules-rtdb-crm.md` como fragmento para pegar dentro de las reglas vigentes.
 
 ## Cómo arrancar
 
@@ -122,3 +126,14 @@ crm/
 
 La lógica de `pipeline.js` no depende de Firebase: se prueba con datos sintéticos
 (la cascada reproduce el ejemplo de Cimentación Ocaso del spec al centavo).
+
+## Interconexión
+
+La **consola** (`../console/`) lee `/shared/crm` y lo muestra en el mapa del
+ecosistema (tarjeta de app + nodo con abiertas / ganadas / perdidas / clientes), y
+corre dos invariantes propias en su diagnóstico de salud:
+
+- **error** — oportunidad con `proyectoId` que ya no existe en `sogrub_proyectos`
+  (se borró el proyecto en bitácora y la ficha apunta a la nada).
+- **warn / info** — oportunidad `ganada` sin proyecto creado (info recién cerrada,
+  warn si lleva más de 7 días): mientras siga así la obra no existe para el contador.

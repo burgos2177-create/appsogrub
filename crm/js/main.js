@@ -1,14 +1,14 @@
-import { onAuth, getUserProfile, logout, tieneAccesoCRM } from './services/auth.js?v=20260904-0310';
-import { setState } from './state/store.js?v=20260904-0310';
-import { route, startRouter, navigate } from './state/router.js?v=20260904-0310';
-import { renderLogin } from './views/login.js?v=20260904-0310';
-import { renderPipeline } from './views/pipeline.js?v=20260904-0310';
-import { renderOportunidad } from './views/oportunidad.js?v=20260904-0310';
-import { renderAgenda } from './views/agenda.js?v=20260904-0310';
-import { renderClientes } from './views/clientes.js?v=20260904-0310';
-import { renderReportes } from './views/reportes.js?v=20260904-0310';
-import { renderConfig } from './views/config.js?v=20260904-0310';
-import { h, mount } from './util/dom.js?v=20260904-0310';
+import { onAuth, getUserProfile, logout, tieneAccesoCRM } from './services/auth.js?v=20260904-0325';
+import { setState } from './state/store.js?v=20260904-0325';
+import { route, startRouter, navigate } from './state/router.js?v=20260904-0325';
+import { renderLogin } from './views/login.js?v=20260904-0325';
+import { renderPipeline } from './views/pipeline.js?v=20260904-0325';
+import { renderOportunidad } from './views/oportunidad.js?v=20260904-0325';
+import { renderAgenda } from './views/agenda.js?v=20260904-0325';
+import { renderClientes } from './views/clientes.js?v=20260904-0325';
+import { renderReportes } from './views/reportes.js?v=20260904-0325';
+import { renderConfig } from './views/config.js?v=20260904-0325';
+import { h, mount } from './util/dom.js?v=20260904-0325';
 
 route('/',                  (ctx) => renderPipeline(ctx));
 route('/oportunidad/:id',   (ctx) => renderOportunidad(ctx));
@@ -34,7 +34,7 @@ onAuth(async (fbUser) => {
     mount('#app', h('div', { class: 'login-shell' }, h('div', { class: 'login-card' }, [
       h('h1', {}, 'Sin acceso'),
       h('p', { class: 'sub' }, profile
-        ? 'El CRM es para dirección (admin) e ingenieros. Un admin puede darte acceso marcando "crm" en tu perfil desde la consola.'
+        ? 'El CRM es sólo para administradores de la suite.'
         : 'Tu cuenta no tiene un perfil registrado en sogrub-suite.'),
       h('button', { class: 'btn', style: { marginTop: '16px' }, onClick: () => logout() }, 'Salir')
     ])));

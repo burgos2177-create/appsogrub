@@ -1,10 +1,10 @@
 // Modal de alta / edición de oportunidad. Se usa desde el tablero y el detalle.
-import { h, modal, toast } from '../util/dom.js?v=20260904-0310';
-import { state } from '../state/store.js?v=20260904-0310';
-import { ETAPAS, PRIORIDADES, TIPOS_CLIENTE, etapaDef } from '../services/pipeline.js?v=20260904-0310';
-import { crearOportunidad, actualizarOportunidad, crearCliente } from '../services/crm.js?v=20260904-0310';
-import { field, select, input, textarea } from './_ui.js?v=20260904-0310';
-import { todayISO, addDaysISO } from '../util/format.js?v=20260904-0310';
+import { h, modal, toast } from '../util/dom.js?v=20260904-0325';
+import { state } from '../state/store.js?v=20260904-0325';
+import { ETAPAS, PRIORIDADES, TIPOS_CLIENTE, etapaDef } from '../services/pipeline.js?v=20260904-0325';
+import { crearOportunidad, actualizarOportunidad, crearCliente } from '../services/crm.js?v=20260904-0325';
+import { field, select, input, textarea } from './_ui.js?v=20260904-0325';
+import { todayISO, addDaysISO } from '../util/format.js?v=20260904-0325';
 
 // Devuelve el id de la oportunidad creada/editada, o null si se canceló.
 export async function abrirFormOportunidad(op = null) {

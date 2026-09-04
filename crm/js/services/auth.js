@@ -1,8 +1,8 @@
 import {
   signInWithEmailAndPassword, signOut, onAuthStateChanged
 } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js';
-import { auth } from './firebase.js?v=20260904-0310';
-import { rread } from './db.js?v=20260904-0310';
+import { auth } from './firebase.js?v=20260904-0325';
+import { rread } from './db.js?v=20260904-0325';
 
 // Pool único de usuarios de la suite en /legacy/estimaciones/users. El CRM no
 // crea usuarios (eso es de la consola); sólo autentica y lee el perfil.
@@ -17,13 +17,12 @@ export async function getUserProfile(uid) {
   return await rread(`/legacy/estimaciones/users/${uid}`);
 }
 
-// Quién entra al CRM: admin (dirección) e ingeniero (hace levantamientos y
-// arma el presupuesto en OPUS). Cualquier otro rol entra si el admin le pone
-// `crm: true` en su perfil desde la consola — no hace falta un rol nuevo.
+// Gate DURO a `role='admin'`, igual que la consola. El pipeline comercial es
+// de dirección: montos de contrato, márgenes y motivos de pérdida de toda la
+// empresa. Los ingenieros SÍ aparecen como responsables de seguimiento (se
+// listan desde /legacy/estimaciones/users), pero no entran a la app.
 export function tieneAccesoCRM(profile) {
-  if (!profile) return false;
-  return profile.role === 'admin' || profile.role === 'ingeniero' || profile.crm === true;
+  return profile?.role === 'admin';
 }
 
-// Sólo admin puede borrar oportunidades y cambiar la configuración.
 export function esAdmin(profile) { return profile?.role === 'admin'; }

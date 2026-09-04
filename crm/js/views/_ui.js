@@ -1,6 +1,6 @@
-import { h } from '../util/dom.js?v=20260904-0310';
-import { etapaDef, cierreDef, PRIORIDADES, estaAbierta } from '../services/pipeline.js?v=20260904-0310';
-import { state } from '../state/store.js?v=20260904-0310';
+import { h } from '../util/dom.js?v=20260904-0325';
+import { etapaDef, cierreDef, PRIORIDADES, estaAbierta } from '../services/pipeline.js?v=20260904-0325';
+import { state } from '../state/store.js?v=20260904-0325';
 
 export function etapaTag(op) {
   if (!estaAbierta(op)) {

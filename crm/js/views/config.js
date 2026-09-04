@@ -1,11 +1,11 @@
-import { h, toast } from '../util/dom.js?v=20260904-0310';
-import { state, setState } from '../state/store.js?v=20260904-0310';
-import { navigate } from '../state/router.js?v=20260904-0310';
-import { renderShell, cargando } from './shell.js?v=20260904-0310';
-import { esAdmin } from '../services/auth.js?v=20260904-0310';
-import { loadAll, guardarConfig } from '../services/crm.js?v=20260904-0310';
-import { ETAPAS } from '../services/pipeline.js?v=20260904-0310';
-import { field, input } from './_ui.js?v=20260904-0310';
+import { h, toast } from '../util/dom.js?v=20260904-0325';
+import { state, setState } from '../state/store.js?v=20260904-0325';
+import { navigate } from '../state/router.js?v=20260904-0325';
+import { renderShell, cargando } from './shell.js?v=20260904-0325';
+import { esAdmin } from '../services/auth.js?v=20260904-0325';
+import { loadAll, guardarConfig } from '../services/crm.js?v=20260904-0325';
+import { ETAPAS } from '../services/pipeline.js?v=20260904-0325';
+import { field, input } from './_ui.js?v=20260904-0325';
 
 export async function renderConfig() {
   if (!esAdmin(state.user)) return navigate('/');

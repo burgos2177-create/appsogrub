@@ -1,7 +1,7 @@
 import { h, modal, toast } from '../util/dom.js?v=2';
 import { setState } from '../state/store.js?v=1';
 import { renderShell } from './shell.js?v=1';
-import { loadEcosystem, nombreObra } from '../services/data.js?v=1';
+import { loadEcosystem, nombreObra } from '../services/data.js?v=2';
 import { crearObraLink, borrarObraLink } from '../services/fixes.js?v=1';
 
 export async function renderObraLinks({ query } = {}) {

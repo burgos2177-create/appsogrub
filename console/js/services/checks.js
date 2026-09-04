@@ -1,4 +1,4 @@
-import { computeSaldosCajaChicaPorFondo, parseFolio, resolveProyectoId, nombreObra } from './data-pure.js?v=2';
+import { computeSaldosCajaChicaPorFondo, parseFolio, resolveProyectoId, nombreObra } from './data-pure.js?v=3';
 
 // ============================================================================
 // Invariantes del ecosistema. Cada check es PURO: recibe el ctx de data.js y
@@ -262,10 +262,47 @@ function checkTrabajoRezagado(ctx) {
   return out;
 }
 
+// 12 — CRM: oportunidad ganada cuyo proyectoId ya no existe en sogrub_proyectos.
+// El vínculo lo escribe crm/js/services/crm.js#convertirEnProyecto; si el
+// proyecto se borró en bitácora, la ficha del CRM apunta a la nada.
+function checkCRMProyectoColgante(ctx) {
+  const out = [];
+  for (const op of ctx.oportunidades) {
+    if (!op.proyectoId) continue;
+    if (ctx.proyectosById[String(op.proyectoId)]) continue;
+    out.push({
+      id: `crm-proy-dangling-${op.id}`, severity: 'error', check: 'crm',
+      title: `Oportunidad ganada apunta a un proyecto inexistente`,
+      detail: `${op.folio || op.id} · "${op.nombre || '—'}" → proyectoId "${op.proyectoId}", que ya no está en sogrub_proyectos. Se borró el proyecto o se creó en otra base.`
+    });
+  }
+  return out;
+}
+
+// 13 — CRM: oportunidad ganada sin proyecto contable creado. No es un error
+// (puede estar recién cerrada), pero mientras siga así la obra no existe para
+// el contador: no hay dónde registrar el anticipo ni los gastos.
+function checkCRMGanadaSinProyecto(ctx) {
+  const out = [];
+  for (const op of ctx.oportunidades) {
+    if (op.estado !== 'ganada' || op.proyectoId) continue;
+    const cerradaAt = Number(op.cierre && op.cierre.at) || Number(op.updatedAt) || 0;
+    const dias = cerradaAt ? Math.floor((Date.now() - cerradaAt) / 86400000) : null;
+    out.push({
+      id: `crm-ganada-sinproy-${op.id}`, severity: dias != null && dias > 7 ? 'warn' : 'info', check: 'crm',
+      title: `Oportunidad ganada sin proyecto en bitácora`,
+      detail: `${op.folio || op.id} · "${op.nombre || '—'}"${op.clienteNombre ? ' · ' + op.clienteNombre : ''}${dias != null ? ` · ganada hace ${dias} d` : ''}. Créalo desde la ficha del CRM (botón "Crear proyecto en bitácora").`
+    });
+  }
+  return out;
+}
+
 const CHECKS = [
   checkObraLinksValidos, checkBuzonRuteable, checkMovsBuzon, checkDeberiaHuerfano,
   checkHuerfanoFormado, checkEspejoCajaChica, checkEspejoOC, checkFolios,
-  checkCajaChicaNegativa, checkProyectoDuplicado, checkTrabajoRezagado
+  checkCajaChicaNegativa, checkProyectoDuplicado, checkTrabajoRezagado,
+  checkCRMProyectoColgante,
+  checkCRMGanadaSinProyecto
 ];
 
 const SEV_ORDER = { error: 0, warn: 1, info: 2 };

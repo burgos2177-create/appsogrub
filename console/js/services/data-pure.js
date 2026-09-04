@@ -90,7 +90,7 @@ export function nombreObra(obrasCampo, obraId) {
 // Construcción del ctx a partir de nodos crudos del RTDB. Puro → testeable con
 // datos sintéticos sin tocar Firebase. loadEcosystem() (data.js) lo alimenta con
 // las lecturas reales.
-export function buildCtx({ buzonNode, obraLinks, obrasCampoNode, proyectosNode, movsNode, cajaChicaNode, comprasNode, countersNode }) {
+export function buildCtx({ buzonNode, obraLinks, obrasCampoNode, proyectosNode, movsNode, cajaChicaNode, comprasNode, countersNode, crmNode }) {
   const buzon = buzonNode || {};
   const buzonList = Object.entries(buzon).map(([id, item]) => ({ id, ...(item || {}) }));
 
@@ -122,8 +122,17 @@ export function buildCtx({ buzonNode, obraLinks, obrasCampoNode, proyectosNode, 
     });
   });
 
+  // CRM: oportunidades del pipeline comercial (/shared/crm/oportunidades).
+  // Es la única parte del CRM que la consola necesita: el vínculo
+  // oportunidad ganada → proyecto contable (origen_crm_id).
+  const crm = crmNode || {};
+  const oportunidades = Object.entries(crm.oportunidades || {})
+    .map(([id, o]) => ({ id, ...(o || {}) }));
+  const clientesCRM = Object.keys(crm.clientes || {}).length;
+
   return {
     buzon, buzonList,
+    oportunidades, clientesCRM,
     obraLinks: links, obraByProyecto,
     obrasCampo,
     proyectos, proyectosById,
