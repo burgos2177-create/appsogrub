@@ -1,7 +1,7 @@
 import { h, modal, toast } from '../util/dom.js?v=2';
 import { setState } from '../state/store.js?v=1';
 import { navigate } from '../state/router.js?v=1';
-import { renderShell } from './shell.js?v=1';
+import { renderShell } from './shell.js?v=2';
 import { loadEcosystem } from '../services/data.js?v=2';
 import { runChecks, countBySeverity } from '../services/checks.js?v=3';
 import { marcarHuerfano, normalizarHuerfano } from '../services/fixes.js?v=1';

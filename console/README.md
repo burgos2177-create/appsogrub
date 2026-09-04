@@ -31,6 +31,19 @@ Vive dentro de `appsogrub` porque es la app autoritativa de `/shared` y `/legacy
 
 La lógica pura de invariantes vive en `js/services/checks.js` + `js/services/data-pure.js` (sin dependencias de Firebase → testeable con datos sintéticos).
 
+## Entrar al CRM desde aquí
+
+La barra superior trae un botón **🤝 CRM ↗** (en todas las vistas) y la tarjeta
+del CRM en el mapa es clickeable. Ambos apuntan a `../crm/`: ruta **relativa**, así
+que resuelve igual en GitHub Pages (`…/appsogrub/console/` → `…/appsogrub/crm/`) y
+al servir el repo completo desde su raíz. Sirviendo sólo `console/` en un puerto
+—como en "Cómo arrancar"— el vecino no existe y el link no resuelve; para probarlo
+hay que servir la raíz del repo (`python -m http.server 3011` en `appsogrub/` y
+abrir `/console/`).
+
+Es la única app hermana enlazada: las demás viven en otros repos y no hay a dónde
+apuntar desde aquí.
+
 ## Alcance de escritura
 
 Diagnóstico + **arreglos guiados**: cada escritura (crear/quitar obraLink, marcar/normalizar huérfano, cambiar estado de proyecto) pasa por un modal que describe el nodo exacto afectado antes de aplicar. Nada destructivo ni masivo. Ver `js/services/fixes.js`.

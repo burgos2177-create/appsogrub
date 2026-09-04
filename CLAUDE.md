@@ -317,9 +317,11 @@ los ingenieros sólo aparecen como responsables asignables. Reglas de RTDB en
   (bitácora lo `set`ea completo; los listeners lo recogen al instante) y es idempotente por
   `origen_crm_id`. La obra de estimaciones se crea como siempre y se liga en consola → obraLinks.
 - No publica nada al buzón: una oportunidad no mueve dinero. El dinero llega después vía `pago_cliente`.
-- **La consola lo ve**: `console/js/services/data.js` lee `/shared/crm` y el mapa trae tarjeta de app
-  y nodo (abiertas / ganadas / perdidas / clientes). Dos invariantes nuevas en `checks.js`:
+- **La consola lo ve y entra**: `console/js/services/data.js` lee `/shared/crm` y el mapa trae tarjeta
+  de app y nodo (abiertas / ganadas / perdidas / clientes). Dos invariantes nuevas en `checks.js`:
   oportunidad con `proyectoId` colgante (error) y `ganada` sin proyecto creado (warn tras 7 días).
+  Para entrar: botón `🤝 CRM ↗` en la topbar (todas las vistas) y la tarjeta del mapa, ambos a
+  `../crm/` — ruta relativa, resuelve en Pages y sirviendo la raíz del repo, no `console/` sola.
 - Cache-busting propio: `bash crm/bump-cache.sh` antes de pushear cambios en `crm/js` o `crm/css`.
   El `bump-cache.sh` de la raíz **no** lo cubre. La consola tampoco tiene script: al tocar
   `console/js`, subir a mano el `?v=` de los imports del módulo cambiado. Detalle en cada README.
