@@ -298,6 +298,25 @@ Módulos: **Mapa del ecosistema** · **Diagnóstico de salud** (11 invariantes c
 
 La lógica de invariantes es pura y testeable (`console/js/services/checks.js` + `data-pure.js`, sin Firebase). Cache-busting propio: `bump-cache.sh` **no** aplica a `console/`. Detalle completo en `console/README.md`.
 
+## CRM comercial (`crm/`) — pipeline de leads a obra (2026-09-04)
+
+Sub-app **independiente** (mismo patrón que `console/`: Firebase v10 modular + ES-modules, página
+aparte servida en `…/appsogrub/crm/`). Lleva el pipeline comercial **antes** de que exista la obra:
+Lead → Contacto → Visita/levantamiento → Presupuesto (OPUS) → Propuesta enviada → Negociación →
+Ganada / Perdida / Declinada / Pospuesta. Datos bajo `/shared/crm/*` (oportunidades, actividades,
+clientes, config, `_counters` para el folio `OP-AAAA-NNN`). Acceso: `admin` e `ingeniero` (o perfil
+con `crm: true`).
+
+- **El presupuesto usa la misma cascada que "Nuevo proyecto"** (`crm/js/services/pipeline.js#calcCascada`
+  ≡ `calcDesgloseContrato`): al ganar, el admin crea el proyecto en `sogrub_proyectos` desde la ficha
+  con `costo_directo_base`, los cuatro `sobrecosto_*` y `presupuesto_contrato` sin IVA, más
+  `origen_crm_id` / `origen_crm_folio` como rastro. Se escribe con **transacción** sobre el arreglo
+  (bitácora lo `set`ea completo; los listeners lo recogen al instante) y es idempotente por
+  `origen_crm_id`. La obra de estimaciones se crea como siempre y se liga en consola → obraLinks.
+- No publica nada al buzón: una oportunidad no mueve dinero. El dinero llega después vía `pago_cliente`.
+- Cache-busting propio: `bash crm/bump-cache.sh` antes de pushear cambios en `crm/js` o `crm/css`.
+  El `bump-cache.sh` de la raíz **no** lo cubre. Detalle completo en `crm/README.md`.
+
 ## Cómo arrancar
 
 1. `python -m http.server 3001` (o `npx serve .`)
