@@ -1158,20 +1158,45 @@ function calcTotalCobradoCliente(proyectoId) {
 }
 
 // Desglose IVA de lo cobrado al cliente
+// El IVA cobrado sale del desglose CAPTURADO, nunca de dividir entre 1.16.
+//
+// En obras donde sólo el material está gravado, el IVA no guarda ninguna
+// proporción con el subtotal: puede ser 3%, 6%, lo que resulte. Estimaciones lo
+// manda exacto por estimación (`ivaManual`), y derivarlo al 16% acá inflaba el
+// IVA cobrado — en Cimentación Ocaso, $27,624.53 de más.
+//
+// Prioridad:
+//   1. subtotal + IVA capturados y consistentes con el monto → mandan.
+//   2. sólo IVA capturado → neto = monto − IVA.
+//   3. sin desglose y marcado con IVA → 16% (legacy, sólo para lo viejo).
 function calcIVACobradoCliente(proyectoId) {
   const movs = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
     .filter(m => m.proyecto_id === proyectoId && m.tipo === 'abono_cliente');
-  let netoTotal = 0, ivaTotal = 0;
+  let netoTotal = 0, ivaTotal = 0, nDerivados = 0;
   movs.forEach(m => {
     const abs = Math.abs(m.monto ?? 0);
+    const iva = Number(m.monto_iva);
+    const sub = Number(m.monto_subtotal);
+    const ivaOk = Number.isFinite(iva) && iva >= 0 && iva <= abs + 0.005;
+
+    // Guarda de cordura: hay registros donde monto_subtotal guarda otra cosa
+    // (el ejecutado del período, p. ej.). Si subtotal + IVA no da el monto, no
+    // es un desglose válido y se usa sólo el IVA.
+    if (ivaOk && Number.isFinite(sub) && sub > 0 && Math.abs(sub + iva - abs) <= 0.02) {
+      netoTotal += sub; ivaTotal += iva; return;
+    }
+    if (ivaOk && iva > 0) { netoTotal += abs - iva; ivaTotal += iva; return; }
     if (m.incluye_iva) {
+      nDerivados++;
       netoTotal += abs / 1.16;
       ivaTotal  += abs - abs / 1.16;
-    } else {
-      netoTotal += abs;
+      return;
     }
+    netoTotal += abs;
   });
-  return { netoTotal, ivaTotal, total: netoTotal + ivaTotal };
+  // nDerivados > 0 = abonos sin desglose capturado, cuyo IVA se está estimando
+  // al 16%. Quien lo pinte debe avisarlo en vez de darlo por bueno.
+  return { netoTotal, ivaTotal, total: netoTotal + ivaTotal, nDerivados };
 }
 
 // =====================================================

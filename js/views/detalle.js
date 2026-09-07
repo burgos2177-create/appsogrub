@@ -148,7 +148,12 @@ function renderDetalleKPIs(proyectoId, proyecto) {
   const fondosRet        = calcFondosRetenidos(proyectoId);
   const iva              = calcIVADesglose(proyectoId);
   const presupuesto      = proyecto?.presupuesto_contrato ?? 0;
-  const restantePorCobrar = Math.max(0, presupuesto - totalCobrado);
+  // Contrato VIGENTE (con órdenes de cambio aplicadas) contra neto cobrado SIN
+  // IVA. Antes restaba el contrato original menos el cobrado CON IVA: dos
+  // errores a la vez — contrato desactualizado y bases distintas.
+  const contratoVigente   = calcContratoVigenteSubtotal(proyectoId, getAvanceObra(proyectoId));
+  const restantePorCobrar = Math.max(0, contratoVigente - ivaCobrado.netoTotal);
+  const contratoAjustado  = Math.abs(contratoVigente - presupuesto) > 0.02;
   const ivaBalance       = ivaCobrado.ivaTotal - iva.ivaPagado;
 
   const cls = avance < 60 ? 'low' : avance < 85 ? 'medium' : 'high';
@@ -190,10 +195,25 @@ function renderDetalleKPIs(proyectoId, proyecto) {
             title="IVA cobrado al cliente minus IVA pagado en gastos">${ivaBalance >= 0 ? '+' : ''}${formatMXN(ivaBalance)}</strong>
         </div>
         ` : ''}
-        <div style="display:flex;justify-content:space-between;${ivaCobrado.ivaTotal > 0 ? '' : ''}">
-          <span>Restante por cobrar</span>
+        <div style="display:flex;justify-content:space-between"
+             title="Contrato vigente ${formatMXN(contratoVigente)} (sin IVA)${contratoAjustado ? ` · original ${formatMXN(presupuesto)}` : ''} − neto cobrado ${formatMXN(ivaCobrado.netoTotal)}">
+          <span>Restante por cobrar <span class="text-dim" style="font-size:10px">sin IVA</span></span>
           <strong style="color:${restantePorCobrar > 0 ? 'var(--warning)' : 'var(--text-muted)'};font-variant-numeric:tabular-nums">${formatMXN(restantePorCobrar)}</strong>
         </div>
+        ${contratoAjustado ? `
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted)">
+          <span>Contrato vigente (con OC)</span>
+          <span style="font-variant-numeric:tabular-nums">${formatMXN(contratoVigente)}</span>
+        </div>` : ''}
+        ${ivaCobrado.nDerivados > 0 ? `
+        <div style="margin-top:4px;font-size:10px;color:var(--warning);line-height:1.5"
+             title="Esos abonos no traen el IVA capturado, así que se está estimando al 16%. Si el IVA real es distinto, el número está mal.">
+          ⚠ ${ivaCobrado.nDerivados} abono(s) sin IVA capturado — estimado al 16%
+          <a href="#" id="btn-reparar-iva-${proyectoId}" style="color:var(--accent)">revisar contra el buzón</a>
+        </div>` : `
+        <div style="margin-top:4px;font-size:10px">
+          <a href="#" id="btn-reparar-iva-${proyectoId}" class="text-dim">⟳ revisar IVA contra el buzón</a>
+        </div>`}
       </div>
     </div>
     <div class="kpi-card">
@@ -349,6 +369,8 @@ function renderDetalleKPIs(proyectoId, proyecto) {
     });
     const btnEC = grid.querySelector(`#btn-estado-cuenta-${proyectoId}`);
     if (btnEC) btnEC.addEventListener('click', () => generarEstadoDeCuenta(proyectoId));
+    const btnIVA = grid.querySelector(`#btn-reparar-iva-${proyectoId}`);
+    if (btnIVA) btnIVA.addEventListener('click', (e) => { e.preventDefault(); abrirModalRepararIVA(proyectoId); });
   }, 0);
 
   return grid;
@@ -1635,6 +1657,83 @@ function abrirModalMovProy(proyectoId, tipo, id = null) {
 // presupuesto. Sólo saca de la obra el dinero que ya sobró, y a partir de ahí
 // es libre — no hay que justificarlo contra el proyecto.
 // =====================================================
+// =====================================================
+// REVISAR IVA COBRADO CONTRA EL BUZÓN
+//
+// Compara el IVA guardado en cada abono contra el que publicó estimaciones.
+// Diagnostica primero y sólo escribe si el contador lo confirma: nunca ajusta
+// en silencio.
+// =====================================================
+async function abrirModalRepararIVA(proyectoId) {
+  let rep;
+  try { rep = await repararIVAAbonos(proyectoId, false); }
+  catch (err) { showToast(err.message, 'error'); return; }
+
+  const ETIQ = {
+    ok:                 '<span class="badge badge-success" style="font-size:10px">✓ Coincide</span>',
+    corregir:           '<span class="badge badge-warning" style="font-size:10px">⚠ Corregir</span>',
+    'sin-origen':       '<span class="badge badge-muted" style="font-size:10px">Capturado a mano</span>',
+    'otro-tipo':        '<span class="badge badge-muted" style="font-size:10px">Otro origen</span>',
+    'importe-distinto': '<span class="badge badge-danger" style="font-size:10px">✕ Importe distinto</span>',
+  };
+
+  const body = document.createElement('div');
+  const dif = rep.ivaDespues - rep.ivaAntes;
+  body.innerHTML = `
+    <div style="display:flex;gap:20px;flex-wrap:wrap;padding:11px 13px;background:var(--surface2);border-radius:var(--radius);margin-bottom:14px">
+      <div><div class="text-muted" style="font-size:11px">IVA hoy en bitácora</div>
+      <div class="font-mono" style="font-size:15px">${formatMXN(rep.ivaAntes)}</div></div>
+      <div><div class="text-muted" style="font-size:11px">IVA según el buzón</div>
+      <div class="font-mono text-success" style="font-size:15px">${formatMXN(rep.ivaDespues)}</div></div>
+      <div style="border-left:1px solid var(--border);padding-left:20px">
+        <div class="text-muted" style="font-size:11px">Diferencia</div>
+        <div class="font-mono ${Math.abs(dif) > 0.02 ? 'text-warning' : 'text-muted'}" style="font-size:15px">${dif >= 0 ? '+' : ''}${formatMXN(dif)}</div></div>
+    </div>
+
+    ${rep.aCorregir.length === 0
+      ? `<p class="text-muted" style="line-height:1.6;margin:0 0 12px">Todos los abonos con origen en el buzón ya traen el IVA correcto. No hay nada que corregir.</p>`
+      : `<p style="line-height:1.6;margin:0 0 12px"><b>${rep.aCorregir.length}</b> abono(s) tienen el IVA distinto al que publicó estimaciones. Se repondrá el valor del buzón, que es la autoridad — el IVA lo captura el ingeniero a mano y puede no ser el 16%.</p>`}
+
+    <div class="table-wrap" style="max-height:340px;overflow:auto">
+      <table class="data-table" style="width:100%">
+        <thead><tr><th>Fecha</th><th>Concepto</th><th class="text-right">Importe</th>
+          <th class="text-right">IVA hoy</th><th class="text-right">IVA buzón</th><th>Estado</th></tr></thead>
+        <tbody>${rep.filas.map(f => `
+          <tr>
+            <td class="text-muted" style="font-size:12px">${formatDate(f.mov.fecha)}</td>
+            <td style="font-size:12px">${(f.mov.concepto || '').slice(0, 44)}</td>
+            <td class="font-mono text-right">${formatMXN(f.abs)}</td>
+            <td class="font-mono text-right">${formatMXN(Number(f.mov.monto_iva) || 0)}</td>
+            <td class="font-mono text-right ${f.estado === 'corregir' ? 'text-success' : 'text-muted'}">${f.esperado ? formatMXN(f.esperado.iva) : '—'}</td>
+            <td>${ETIQ[f.estado] ?? f.estado}</td>
+          </tr>`).join('')}</tbody>
+      </table>
+    </div>
+    ${rep.filas.some(f => f.estado === 'importe-distinto')
+      ? `<p style="color:#e0a04c;font-size:12px;margin-top:10px;line-height:1.6">⚠ Hay abonos cuyo importe ya no coincide con el del buzón — se editaron a mano. Esos <b>no se tocan</b>: revísalos tú y decide cuál es el bueno.</p>` : ''}
+    ${rep.filas.some(f => f.estado === 'sin-origen')
+      ? `<p class="text-muted" style="font-size:12px;margin-top:8px;line-height:1.6">Los capturados a mano no tienen item de buzón contra el cual comparar, así que se dejan como están.</p>` : ''}
+  `;
+
+  openModal({
+    title: '🧾 IVA cobrado vs. el buzón',
+    body,
+    large: true,
+    cancelText: 'Cerrar',
+    confirmText: rep.aCorregir.length ? `Corregir ${rep.aCorregir.length} abono(s)` : 'Sin cambios',
+    onConfirm: async () => {
+      if (!rep.aCorregir.length) return closeModal();
+      try { await repararIVAAbonos(proyectoId, true); }
+      catch (err) { showToast(err.message, 'error'); return; }
+      showToast(`IVA corregido en ${rep.aCorregir.length} abono(s)`, 'success');
+      closeModal();
+      refreshDetalleKPIs(proyectoId);
+      refreshDetalleTable(proyectoId);
+      refreshDetalleCharts(proyectoId);
+    },
+  });
+}
+
 function abrirModalRetirarUtilidad(proyectoId) {
   const proyecto = getItem(KEYS.PROYECTOS, proyectoId);
   const b        = calcBolsitasProyecto(proyectoId);

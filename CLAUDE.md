@@ -437,3 +437,50 @@ lo que mide.
   cobrar. Ni `calcSaldoMifel` ni `calcSaldoEfectivo` se mueven: sólo sube el disponible libre.
 - Editar un retiro: `abrirModalMovProy` usa `esSalida` (gasto **o** retiro) para el signo. Con
   `esGasto` a secas le volteaba el signo y la obra recibía dinero en vez de perderlo.
+
+## IVA manual en abonos del cliente (2026-09-07)
+
+En obras donde sólo el material está gravado, **el IVA no es el 16% del subtotal**: lo causa
+una parte del importe y el ingeniero lo captura a mano por estimación. Estimaciones lo publica
+exacto en el item `pago_cliente`:
+
+```
+{ importe_sin_iva, iva, ivaManual: true, ivaPct, importe, amortizacion_anticipo: 0 }
+```
+
+**Nunca se re-deriva.** Ni `monto / 1.16`, ni `neto × 0.16`. Con `ivaManual:true` el campo `iva`
+es autoridad absoluta aunque no guarde proporción alguna con el subtotal. En Cimentación Ocaso
+derivarlo al 16% daba $78,277.38 contra $50,652.85 reales: **$27,624.53 inflados**.
+
+- `_montoAbonoDeItem(item)` (buzón) resuelve el desglose. Acepta los campos nuevos
+  (`importe_sin_iva`) y los viejos (`subtotal`), y los busca en `item.monto` y en la raíz.
+  Si `subtotal + iva ≠ importe`, o si `amortizacion_anticipo ≠ 0`, **avisa y registra tal cual**
+  — nunca ajusta en silencio (regla 4). El importe ya viene neto de amortización: no se
+  descuenta nada.
+- `calcIVACobradoCliente` lee `monto_subtotal` / `monto_iva` capturados. Prioridad: desglose
+  consistente → sólo IVA → 16% legacy. Devuelve `nDerivados` = cuántos abonos siguen estimados
+  al 16%, y la tarjeta lo avisa en vez de darlo por bueno.
+- Guarda de cordura: si `subtotal + iva` no da el monto, el subtotal no es válido (hay
+  registros donde guarda el ejecutado del período) y se usa `monto − iva`.
+- **Reparación**: `repararIVAAbonos(proyectoId, aplicar)` relee `/shared/buzon` y repone el IVA
+  de los abonos ya asentados. Diagnostica primero; sólo escribe si el contador confirma en el
+  modal (`abrirModalRepararIVA`, enlace en el KPI "Total cobrado"). Los abonos cuyo importe ya
+  no coincide con el del buzón **no se tocan**: se editaron a mano y los revisa el contador.
+
+**Restante por cobrar** = `contrato.subtotal` VIGENTE − neto cobrado SIN IVA
+(`calcContratoVigenteSubtotal`). Antes restaba el contrato **original** menos el cobrado **con
+IVA**: contrato desactualizado y bases mezcladas a la vez. En Ocaso decía $124,084.98 cuando lo
+correcto son $149,391.36.
+
+## Buzón: estado `cancelado` (2026-09-07)
+
+Estimaciones puede quitar un pago capturado por error y marca el item
+`{ estado:'cancelado', canceladoAt, canceladoPor, descripcionCancelado }`.
+
+**Terminal.** Sale de la bandeja de pendientes (aparece en la pestaña Rechazados), no suma a
+cartera, y `_aprobarItem` lo rechaza de entrada: asentarlo crearía un cobro que del otro lado
+ya no existe.
+
+Si el item **ya había generado movimiento** (`movId` presente), la tarjeta lo marca en rojo con
+el id del contable y ofrece "Ver movimiento a reversar". **La app no lo borra sola**: el
+contador pudo haberlo editado después, así que el reverso es manual y deliberado.

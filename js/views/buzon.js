@@ -23,6 +23,8 @@ const _ESTADOS_CFG = {
   cerrado:     { label: 'Cerrado',       color: '#666',    bg: 'rgba(102,102,102,0.04)',accionable: false },
   rechazado:   { label: 'Rechazado',     color: '#e15555', bg: 'rgba(225,85,85,0.04)',  accionable: false },
   huerfano:    { label: '⚠ Huérfano',   color: '#a06bd9', bg: 'rgba(160,107,217,0.05)',accionable: true  },
+  // Terminal: el pago se eliminó del lado de estimaciones. No se aprueba nunca.
+  cancelado:   { label: '🚫 Cancelado',  color: '#8a8f98', bg: 'rgba(138,143,152,0.04)', accionable: false },
   // compat legacy
   pendiente:   { label: 'Pendiente',     color: '#e0a04c', bg: 'rgba(224,160,76,0.05)', accionable: true  },
 };
@@ -33,7 +35,7 @@ const _TABS = [
   { key: 'aprobado',       label: 'Aprobados',        estados: ['aprobado'],              priority: false },
   { key: 'cobrado_pagado', label: 'Cobrado / Pagado', estados: ['cobrado', 'pagado'],     priority: false },
   { key: 'cerrado',        label: 'Cerrados',         estados: ['cerrado'],               priority: false },
-  { key: 'rechazado',      label: 'Rechazados',       estados: ['rechazado'],             priority: false },
+  { key: 'rechazado',      label: 'Rechazados',       estados: ['rechazado', 'cancelado'], priority: false },
   { key: 'huerfano',       label: 'Huérfanos',        estados: ['huerfano'],              priority: true  },
   { key: 'todos',          label: 'Todos',            estados: null,                      priority: false },
 ];
@@ -728,6 +730,23 @@ function _cardBodyHTML(item) {
     ? `<div style="margin-top:4px;font-size:12px;color:#e15555">Rechazo: <em>${item.comentarioRechazo}</em></div>`
     : '';
 
+  // Cancelado en origen. Si además ya había generado contable, es lo más grave
+  // que puede pasar en el buzón: hay un cobro asentado que del otro lado ya no
+  // existe. Se avisa fuerte y se deja el reverso al contador.
+  const canceladoInfo = item.estado === 'cancelado'
+    ? `<div style="margin-top:8px;padding:9px 11px;border-radius:6px;line-height:1.6;font-size:12px;
+             background:${item.movId ? 'rgba(225,85,85,.10)' : 'rgba(138,143,152,.08)'};
+             border-left:3px solid ${item.movId ? '#e15555' : '#8a8f98'}">
+        <b>🚫 Cancelado en estimaciones</b>${item.canceladoAt ? ` <span class="text-muted">· ${new Date(item.canceladoAt).toLocaleString('es-MX')}</span>` : ''}<br>
+        ${item.descripcionCancelado ? `<em>${item.descripcionCancelado}</em><br>` : ''}
+        ${item.movId
+          ? `<b style="color:#e15555">⚠ Este item ya había generado el movimiento <code>${item.movId}</code>.</b>
+             El pago ya no existe del otro lado, así que hay que <b>reversarlo a mano</b> en el proyecto.
+             La app no lo borra sola: podrías haber editado ese movimiento después.`
+          : 'Nunca se asentó, así que no hay nada que reversar.'}
+      </div>`
+    : '';
+
   const huerfanoInfo = item.descripcionHuerfano
     ? `<div style="margin-top:4px;font-size:12px;color:#a06bd9">⚠ ${item.descripcionHuerfano}${item.huerfanoAt ? ' (' + new Date(item.huerfanoAt).toLocaleString('es-MX') + ')' : ''}</div>`
     : '';
@@ -809,7 +828,7 @@ function _cardBodyHTML(item) {
         <div>${col1}</div>
         <div>${col2}</div>
       </div>
-      ${movInfo}${pagoInfo}${rechazInfo}${huerfanoInfo}
+      ${movInfo}${pagoInfo}${rechazInfo}${canceladoInfo}${huerfanoInfo}
     </div>
     ${desgloseHTML}
     ${historialHTML}
@@ -837,6 +856,8 @@ function _calcularResumenFinanciero(items) {
       : (Number(it?.monto?.importe) || 0);
     if (!monto) continue;
     if (it.estado === 'rechazado') { excluidos.rechazados++; continue; }
+    // Cancelado en origen: el pago ya no existe del otro lado, no es cartera.
+    if (it.estado === 'cancelado') { excluidos.cancelados = (excluidos.cancelados || 0) + 1; continue; }
     if (it.estado === 'huerfano')  { excluidos.huerfanos++; excluidos.montoHuerfano += monto; continue; }
 
     const target = it.tipo === 'pago_cliente' ? cxc
@@ -1115,6 +1136,15 @@ function _accionesHTML(item) {
       <button class="bz-btn-rechazar" style="background:transparent;color:#e15555;border:1px solid #e15555;border-radius:6px;padding:8px 14px;cursor:pointer">✕ Cerrar como rechazado</button>
       ${noVinc}`;
   }
+  if (e === 'cancelado') {
+    // Si nunca se asentó, no hay nada que hacer. Si YA generó movimiento, hay
+    // que reversarlo a mano: el contador decide, la app no borra contables por
+    // su cuenta.
+    return item.movId
+      ? `<button class="bz-btn-ver-mov" style="background:transparent;color:#e0a04c;border:1px solid #e0a04c;border-radius:6px;padding:8px 14px;cursor:pointer">⚠ Ver movimiento a reversar</button>
+         <button class="bz-btn-cerrar" style="background:transparent;color:var(--text-muted);border:1px solid var(--border);border-radius:6px;padding:8px 14px;cursor:pointer">Marcar revisado</button>`
+      : '';
+  }
   return ''; // cerrado / rechazado — sin acciones
 }
 
@@ -1127,6 +1157,12 @@ function _attachAcciones(body, item) {
   on('.bz-btn-reabrir',        () => _reabrirItem(item));
   on('.bz-btn-reaprobar',      () => _aprobarItem(item, false));
   on('.bz-btn-cerrar',         () => _cerrarItem(item));
+  on('.bz-btn-ver-mov',        () => {
+    const pid = _resolverProyectoIdItem(item);
+    if (!pid) { _toast('No se pudo resolver el proyecto de este item.', 'error'); return; }
+    _toast(`Abriendo el proyecto. Busca el movimiento ${item.movId} y decide si lo reversas.`, 'warning', 7000);
+    if (typeof navigateTo === 'function') navigateTo('detalle', pid);
+  });
   on('.bz-btn-ver-recepcion',  () => _modalVerRecepcion(item));
   on('.bz-btn-vincular',       () => {
     const obras = _obrasSinVincularDeItem(item);
@@ -1414,7 +1450,114 @@ async function _aprobarGastoOC(item, aprobarYPagar = false) {
   }
 }
 
+// =====================================================
+// DESGLOSE DE UN ABONO DEL CLIENTE (tipo 'pago_cliente')
+//
+// Los montos vienen RESUELTOS desde estimaciones. No se re-derivan: en obras
+// donde sólo el material está gravado, el IVA no guarda proporción alguna con
+// el subtotal (`ivaManual:true`) y dividir entre 1.16 lo infla.
+//
+// Acepta los campos nuevos (`importe_sin_iva`, `iva`, `ivaManual`) y los viejos
+// (`subtotal`), y los busca tanto dentro de `monto` como en la raíz del item,
+// porque distintas versiones del publicador los ponen en un lado o el otro.
+//
+// `amortizacion_anticipo` llega en 0 a propósito: el importe YA viene neto de
+// amortización. Si alguna vez llega distinto de 0 se avisa — no se descuenta.
+// =====================================================
+function _montoAbonoDeItem(item) {
+  const mo  = item?.monto ?? {};
+  const num = (...vals) => {
+    for (const v of vals) { const n = Number(v); if (Number.isFinite(n)) return n; }
+    return null;
+  };
+  const subtotal = num(mo.importe_sin_iva, item?.importe_sin_iva, mo.subtotal, item?.subtotal);
+  const iva      = num(mo.iva, item?.iva);
+  const importe  = num(mo.importe, item?.importe);
+  const ivaManual = (mo.ivaManual ?? item?.ivaManual) === true;
+  const ivaPct    = num(mo.ivaPct, item?.ivaPct);
+  const amort     = num(mo.amortizacion_anticipo, item?.amortizacion_anticipo) ?? 0;
+
+  // El importe es el dinero que se movió; si falta, se arma con el desglose.
+  const total = importe ?? ((subtotal ?? 0) + (iva ?? 0));
+  const sub   = subtotal ?? (total - (iva ?? 0));
+  const i     = iva ?? Math.max(0, total - sub);
+
+  // Regla 4: ante una inconsistencia, avisar — nunca ajustar en silencio.
+  const avisos = [];
+  if (Math.abs(sub + i - total) > 0.02) {
+    avisos.push(`el desglose no cuadra: ${sub.toFixed(2)} + ${i.toFixed(2)} = ${(sub + i).toFixed(2)} ≠ ${total.toFixed(2)}`);
+  }
+  if (Math.abs(amort) > 0.005) {
+    avisos.push(`trae amortizacion_anticipo = ${amort.toFixed(2)} (se esperaba 0; el importe debe venir ya neto). NO se descontó.`);
+  }
+  return { subtotal: sub, iva: i, importe: total, ivaManual, ivaPct, amortizacion: amort, avisos };
+}
+
+// =====================================================
+// REPARACIÓN — reponer el IVA de abonos ya aprobados
+//
+// Los abonos asentados antes de que el IVA manual existiera guardaron el IVA
+// derivado al 16%. Esta función relee el item del buzón que originó cada abono
+// y repone `monto_subtotal` / `monto_iva` con los valores reales.
+//
+// `aplicar=false` sólo diagnostica: devuelve el reporte sin escribir nada.
+// =====================================================
+async function repararIVAAbonos(proyectoId, aplicar = false) {
+  const abonos = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
+    .filter(m => m.proyecto_id === proyectoId && m.tipo === 'abono_cliente');
+
+  let buzon = {};
+  try { buzon = (await _dbRef('/shared/buzon').get()).val() || {}; }
+  catch (err) { throw new Error('No se pudo leer el buzón: ' + err.message); }
+
+  const filas = [];
+  for (const m of abonos) {
+    const item = m.origen_buzon_id ? buzon[m.origen_buzon_id] : null;
+    const abs  = Math.abs(Number(m.monto) || 0);
+    if (!item) { filas.push({ mov: m, estado: 'sin-origen', abs }); continue; }
+    if (item.tipo !== 'pago_cliente') { filas.push({ mov: m, estado: 'otro-tipo', abs }); continue; }
+
+    const d = _montoAbonoDeItem(item);
+    // Si el importe del buzón ya no coincide con el contable, el abono se
+    // editó a mano: no se toca, se reporta.
+    if (Math.abs(d.importe - abs) > 0.02) {
+      filas.push({ mov: m, item, estado: 'importe-distinto', abs, esperado: d, dif: d.importe - abs });
+      continue;
+    }
+    const difIva = d.iva - (Number(m.monto_iva) || 0);
+    filas.push({
+      mov: m, item, abs, esperado: d, difIva,
+      estado: Math.abs(difIva) <= 0.02 ? 'ok' : 'corregir',
+    });
+  }
+
+  const aCorregir = filas.filter(f => f.estado === 'corregir');
+  if (aplicar) {
+    for (const f of aCorregir) {
+      updateItem(KEYS.PROY_MOVIMIENTOS, f.mov.id, {
+        monto_subtotal: f.esperado.subtotal,
+        monto_iva:      f.esperado.iva,
+        iva_manual:     f.esperado.ivaManual || null,
+        iva_pct:        f.esperado.ivaPct,
+        incluye_iva:    f.esperado.iva > 0,
+      });
+    }
+  }
+  return {
+    filas, aCorregir,
+    ivaAntes:   filas.reduce((a, f) => a + (Number(f.mov.monto_iva) || 0), 0),
+    ivaDespues: filas.reduce((a, f) => a + (f.esperado ? f.esperado.iva : (Number(f.mov.monto_iva) || 0)), 0),
+    aplicado: aplicar,
+  };
+}
+
 async function _aprobarItem(item, aprobarYPagar = false) {
+  // Blindaje: estimaciones ya eliminó este pago de su lado. Asentarlo crearía
+  // un cobro que no existe.
+  if (item.estado === 'cancelado') {
+    _toast('Este item fue cancelado en estimaciones: el pago ya no existe. No se puede aprobar.', 'error');
+    return;
+  }
   // Caja chica: rutas especializadas (ver _aprobarGastoCajaChica / _aprobarDepositoCajaChica)
   if (item.tipo === 'gasto_caja_chica')    return _aprobarGastoCajaChica(item);
   if (item.tipo === 'deposito_caja_chica') return _aprobarDepositoCajaChica(item);
@@ -1448,18 +1591,28 @@ async function _aprobarItem(item, aprobarYPagar = false) {
   try {
     if (item.tipo === 'pago_cliente') {
       folio = await _generarFolio('CC');
-      const conIva = item?.monto?.conIva !== false && (Number(item?.monto?.iva) || 0) > 0;
+      // Montos TAL CUAL vienen. Ver _montoAbonoDeItem: nada se re-deriva.
+      const d = _montoAbonoDeItem(item);
+      if (d.avisos.length) {
+        console.warn('[Buzón pago_cliente]', item.id, d.avisos);
+        _toast(`⚠ ${folio}: ${d.avisos.join(' · ')}. Se registró tal cual — revísalo.`, 'warning', 9000);
+      }
+      const conIva = d.iva > 0;
       movimiento = {
         proyecto_id:    proyectoIdResuelto,
         fecha:          fechaISO,
-        monto:          Number(item?.monto?.importe) || 0,
+        monto:          d.importe,
         concepto:       `[${folio}] Pago Est. #${item.estimNumero ?? '?'} (${item.obraNombre || item.obraId || ''})${conIva ? '' : ' (sin IVA)'}`,
         subcontratista: '',
         status:         aprobarYPagar ? 'Pagado' : 'Pendiente',
         tipo:           'abono_cliente',
         origen_buzon_id: item.id,
-        monto_subtotal: Number(item?.monto?.subtotal) || 0,
-        monto_iva:      Number(item?.monto?.iva) || 0,
+        monto_subtotal: d.subtotal,
+        monto_iva:      d.iva,
+        // El IVA lo capturó el ingeniero a mano: es autoridad absoluta y no
+        // debe recalcularse aunque no guarde proporción con el subtotal.
+        iva_manual:     d.ivaManual || null,
+        iva_pct:        d.ivaPct,
         incluye_iva:    conIva,
       };
       nombrePill = `${folio} · Abono $${movimiento.monto.toLocaleString('es-MX',{minimumFractionDigits:2})} registrado.`;
