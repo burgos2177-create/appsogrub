@@ -172,6 +172,11 @@ input[disabled], select[disabled], textarea[disabled] { opacity: .55; cursor: no
 .mono { font-family: var(--mono); }
 .hidden { display: none !important; }
 
+/* link a una app hermana (CRM) en la topbar */
+.topbar .nav.apps a.ext { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--border); background: var(--bg-2); color: var(--text-0); }
+.topbar .nav.apps a.ext:hover { border-color: var(--accent); color: var(--accent); background: var(--bg-3); text-decoration: none; }
+.topbar .nav.apps a.ext .ext-ico { font-size: 10px; opacity: .7; }
+
 /* ================= consola: mapa del ecosistema ================= */
 .node-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; margin-top: 8px; }
 .node-card {
@@ -179,6 +184,10 @@ input[disabled], select[disabled], textarea[disabled] { opacity: .55; cursor: no
   padding: 16px; display: flex; flex-direction: column; gap: 6px;
 }
 .node-card.app { border-left: 3px solid var(--accent); }
+a.node-card.app.link { text-decoration: none; color: inherit; transition: border-color .15s, transform .1s; }
+a.node-card.app.link:hover { border-color: var(--accent); text-decoration: none; }
+a.node-card.app.link:hover .node-open { color: var(--accent); }
+.node-card .node-open { font-size: 12px; color: var(--text-2); margin-top: 4px; }
 .node-card .node-title { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; }
 .node-card .node-path { font-family: var(--mono); font-size: 11px; color: var(--text-2); }
 .node-card .node-big { font-size: 26px; font-weight: 700; line-height: 1; margin: 4px 0; }

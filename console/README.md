@@ -8,12 +8,12 @@ Vive dentro de `appsogrub` porque es la app autoritativa de `/shared` y `/legacy
 
 | Ruta | Módulo | Qué hace |
 |---|---|---|
-| `#/` | **Mapa del ecosistema** | Conteos y "último escrito" por nodo `/shared` y `/legacy`, estado de las 5 apps, actividad del buzón en vivo, banner de salud. |
-| `#/salud` | **Diagnóstico de salud** | Corre 11 invariantes de interconexión cross-app y ofrece arreglos guiados (con confirmación). |
+| `#/` | **Mapa del ecosistema** | Conteos y "último escrito" por nodo `/shared` y `/legacy`, estado de las 6 apps (incluido el CRM), actividad del buzón en vivo, banner de salud. |
+| `#/salud` | **Diagnóstico de salud** | Corre 13 invariantes de interconexión cross-app y ofrece arreglos guiados (con confirmación). |
 | `#/obralinks` | **Editor de obraLinks** | Crear/reparar el mapa `obraId → proyectoId` (`/shared/obraLinks`). |
 | `#/obras` | **Obras activas** | Togglear el `estado` del proyecto (controla visibilidad en dashboards), vista unificada campo↔contable + saldo de caja chica. |
 
-## Las 11 invariantes (`js/services/checks.js`)
+## Las 13 invariantes (`js/services/checks.js`)
 
 1. `obraLinks` inválido — valor no-string o `proyectoId` inexistente en `sogrub_proyectos`.
 2. Item de buzón **sin ruta** — tiene `obraId` pero no `proyectoId` ni entrada en `obraLinks`.
@@ -26,8 +26,23 @@ Vive dentro de `appsogrub` porque es la app autoritativa de `/shared` y `/legacy
 9. **Caja chica en negativo** — saldo conciliado < 0 (el almacenista adelantó dinero).
 10. **`proyectoId` duplicado** en `obraLinks` — rompe el reverse-lookup de caja chica.
 11. **Trabajo rezagado** — proyecto `pausa/terminado` con buzón accionable o caja chica negativa.
+12. **CRM · proyecto colgante** — oportunidad con `proyectoId` que ya no existe en `sogrub_proyectos`.
+13. **CRM · ganada sin proyecto** — oportunidad `ganada` que todavía no se convirtió en proyecto contable (warn tras 7 días).
 
 La lógica pura de invariantes vive en `js/services/checks.js` + `js/services/data-pure.js` (sin dependencias de Firebase → testeable con datos sintéticos).
+
+## Entrar al CRM desde aquí
+
+La barra superior trae un botón **🤝 CRM ↗** (en todas las vistas) y la tarjeta
+del CRM en el mapa es clickeable. Ambos apuntan a `../crm/`: ruta **relativa**, así
+que resuelve igual en GitHub Pages (`…/appsogrub/console/` → `…/appsogrub/crm/`) y
+al servir el repo completo desde su raíz. Sirviendo sólo `console/` en un puerto
+—como en "Cómo arrancar"— el vecino no existe y el link no resuelve; para probarlo
+hay que servir la raíz del repo (`python -m http.server 3011` en `appsogrub/` y
+abrir `/console/`).
+
+Es la única app hermana enlazada: las demás viven en otros repos y no hay a dónde
+apuntar desde aquí.
 
 ## Alcance de escritura
 
@@ -66,4 +81,4 @@ console/
 ## Notas
 
 - Cache-busting propio (`?v=Date.now()` en el import de entrada); `bump-cache.sh` de appsogrub **no** aplica aquí.
-- No toca compras ni estimaciones; sólo lee/repara `/shared/*` y `/legacy/bitacora/*`.
+- No toca compras, estimaciones ni el CRM; sólo lee/repara `/shared/*` y `/legacy/bitacora/*`. De `/shared/crm` únicamente **lee** las oportunidades (para el mapa y las dos invariantes).
