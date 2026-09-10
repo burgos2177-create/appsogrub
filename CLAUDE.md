@@ -398,7 +398,7 @@ Si se sumara al retener y otra vez al liberar, el mismo dinero saldría dos vece
 
 | `tipo` | `movimiento` | `esGasto` | Aprobar genera |
 |---|---|---|---|
-| `estimacion_subcontratista` | — | — | Gasto por `monto.importe`, que **ya viene NETO**. `importeBruto` y `retencionTotal` son informativos: no se restan ni se suman, sólo explican por qué el gasto no coincide con lo estimado. |
+| `estimacion_subcontratista` | — | — | **Un gasto por el importe BRUTO** (la factura completa) con el neto pagado como exhibición. Ver "Un renglón por factura" abajo. |
 | `retencion_subcontratista` | `retencion` | `false` | Registro en `sogrub_retenciones` (`estado:'pendiente'`). **Cero contables.** Item queda `asentado`. |
 | `retencion_subcontratista` | `liberacion` | `true` | `sogrub_proy_movimientos` (gasto, categoria='Subcontratista', folio CP) con la fecha del item + marca la retención `liberado`. |
 
@@ -512,3 +512,38 @@ ya no existe.
 Si el item **ya había generado movimiento** (`movId` presente), la tarjeta lo marca en rojo con
 el id del contable y ofrece "Ver movimiento a reversar". **La app no lo borra sola**: el
 contador pudo haberlo editado después, así que el reverso es manual y deliberado.
+
+
+### Un renglón por factura: la retención como saldo, no como gasto aparte (2026-09-10)
+
+**Las bases del item no son las que parecen.** En `estimacion_subcontratista`:
+
+```
+monto.subtotal + monto.iva = importeBruto   ← la FACTURA completa (29,868.00 + 4,778.88 = 34,646.88)
+monto.importe              = el NETO que salió de caja (bruto − retención)
+```
+
+Por eso el gasto se registra **por el bruto**: es lo que dice el CFDI, y el desglose de IVA que
+manda estimaciones ya corresponde a ese monto. El 90% pagado entra como **exhibición**
+(`pagos[]`), así que el fondo de garantía queda como **saldo insoluto del mismo movimiento**.
+
+Al liberar, `_aprobarRetencionSub` agrega **otra exhibición al mismo gasto** en vez de crear uno
+nuevo: el renglón conserva el monto de la factura y pasa de 90% a 100% liquidado. Una factura,
+un renglón, dos pagos — que es como lo ve el SAT y como cuadra la conciliación.
+
+- **Amarre pago ↔ retención** por `clave = "obraId:subcontratoId:subEstimacionId"`. Los dos items
+  llegan por separado y en cualquier orden, así que se liga por ambos lados: al aprobar el pago
+  se buscan retenciones con esa clave, y al aprobar la retención se busca el gasto
+  (`_gastoDeClaveRetencion`). El gasto guarda `retencion_clave`; la retención guarda `clave` +
+  `movId`.
+- **Sin doble conteo**: una retención con `movId` ya vive dentro del saldo insoluto de su gasto.
+  `calcFondosRetenidos` devuelve `pendienteEnGasto` / `pendienteSuelto`, y
+  `calcDeudaPendienteDesglose` sólo suma las **sueltas**.
+- **El saldo se explica**: el modal de pagos dice cuánto de lo que falta es fondo de garantía
+  (`retencionVivaDeMovimiento`) — no es falta de pago y no se persigue igual. Por lo mismo,
+  "Marcar Pagado" propone `saldo − retención`, no el saldo completo.
+- **Retenciones sueltas** (sin gasto ligado, o las asentadas antes de este cambio) siguen por el
+  camino viejo: la liberación crea su propio gasto.
+- **Sin retención no cambia nada**: `bruto = importe` y el movimiento se comporta igual que
+  siempre. No hay migración.
+- Si `subtotal + iva ≠ importeBruto`, o `bruto − retención ≠ neto`, **avisa y registra tal cual**.

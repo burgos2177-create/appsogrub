@@ -452,7 +452,9 @@ function calcDeudaPendiente(proyectoId) {
 function calcDeudaPendienteDesglose(proyectoId, saldoCajaChica = 0) {
   const proveedores = calcDeudaPendiente(proyectoId);
   const cajaChica = Math.max(0, -Number(saldoCajaChica || 0));
-  const retenido  = calcFondosRetenidos(proyectoId).pendiente;
+  // Sólo las retenciones SUELTAS: las ligadas a un gasto ya están dentro de
+  // `proveedores` como saldo insoluto de ese movimiento.
+  const retenido  = calcFondosRetenidos(proyectoId).pendienteSuelto;
   return { proveedores, cajaChica, retenido, total: proveedores + cajaChica + retenido };
 }
 
@@ -480,9 +482,26 @@ function retencionesDeProyecto(proyectoId) {
 function calcFondosRetenidos(proyectoId) {
   const rs = retencionesDeProyecto(proyectoId);
   const n = v => Math.abs(Number(v) || 0);
-  const pendiente = rs.filter(r => r.estado !== 'liberado').reduce((a, r) => a + n(r.monto), 0);
+  const vivas = rs.filter(r => r.estado !== 'liberado');
+  const pendiente = vivas.reduce((a, r) => a + n(r.monto), 0);
   const liberado  = rs.filter(r => r.estado === 'liberado').reduce((a, r) => a + n(r.monto), 0);
-  return { retenciones: rs, pendiente, liberado, total: pendiente + liberado, count: rs.length };
+  // Las que están LIGADAS a un gasto ya viven dentro del saldo insoluto de ese
+  // movimiento (la factura se registra completa y el 90% pagado es una
+  // exhibición). Sumarlas otra vez a la deuda las contaría dos veces.
+  const enGasto = vivas.filter(r => r.movId).reduce((a, r) => a + n(r.monto), 0);
+  return {
+    retenciones: rs, pendiente, liberado, total: pendiente + liberado, count: rs.length,
+    pendienteEnGasto: enGasto,
+    pendienteSuelto:  pendiente - enGasto,
+  };
+}
+
+// La retención viva ligada a un gasto (si la hay). Sirve para saber cuánto del
+// saldo insoluto de ese movimiento es fondo de garantía y no falta de pago.
+function retencionVivaDeMovimiento(movId) {
+  if (!movId) return null;
+  return (getCollection(KEYS.RETENCIONES) ?? [])
+    .find(r => r.movId === movId && r.estado !== 'liberado') || null;
 }
 
 // Comprometido con un subcontratista = lo que ya se le pagó + lo que se le

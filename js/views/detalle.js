@@ -1016,6 +1016,16 @@ function abrirModalPagos(proyectoId, movId) {
         </div>
         <div class="text-muted" style="font-size:11px;margin-top:5px">${pct}% liquidado${
           sobre > 0 ? ` · <b class="text-danger">⚠ pagado de más ${formatMXN(sobre)}</b>` : ''}</div>
+        ${(() => {
+          // El saldo puede no ser falta de pago sino fondo de garantía: se dice,
+          // porque no se persigue igual a un proveedor que a una retención.
+          const r = retencionVivaDeMovimiento(movId);
+          if (!r || pend <= 0.005) return '';
+          return `<div style="margin-top:7px;font-size:11px;line-height:1.6;color:var(--text-muted)">
+            🔒 De lo que falta, <b class="text-warning">${formatMXN(Math.abs(r.monto))}</b> es
+            <b>${r.etiqueta || 'fondo de garantía'}</b> — no es falta de pago: se libera cuando estimaciones lo mande.
+          </div>`;
+        })()}
       </div>
 
       <table class="data-table" style="width:100%;margin-bottom:16px">

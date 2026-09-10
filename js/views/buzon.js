@@ -1551,6 +1551,53 @@ async function repararIVAAbonos(proyectoId, aplicar = false) {
   };
 }
 
+// Clave que identifica una ESTIMACIÓN de subcontrato, para amarrar el pago con
+// sus retenciones. El item de pago la arma con sus propios campos; el de
+// retención la deriva de refKey ("obraId:subId:estId:retN" → los tres primeros).
+function _claveEstimacionSub(item) {
+  const o = item?.obraId, sc = item?.subcontratoId, e = item?.subEstimacionId;
+  if (o && sc && e) return `${o}:${sc}:${e}`;
+  const p = String(item?.refKey || '').split(':');
+  return p.length >= 3 ? p.slice(0, 3).join(':') : null;
+}
+
+// =====================================================
+// DESGLOSE DE UNA ESTIMACIÓN DE SUBCONTRATO
+//
+// OJO con las bases, que no son las que parecen:
+//   monto.subtotal + monto.iva = importeBruto   ← la FACTURA completa
+//   monto.importe              = el NETO que salió de caja (bruto − retención)
+//
+// El gasto se registra por el BRUTO, que es lo que dice la factura, y el 90%
+// pagado entra como exhibición. Así la factura ocupa un solo renglón y el
+// fondo de garantía es saldo insoluto del mismo movimiento — cuando se libere,
+// se agrega otra exhibición y queda al 100%, sin un segundo gasto suelto.
+// =====================================================
+function _montoEstimacionSubDeItem(item) {
+  const mo = item?.monto ?? {};
+  const n  = v => Number(v) || 0;
+  const neto     = n(mo.importe);
+  const subtotal = n(mo.subtotal);
+  const iva      = n(mo.iva);
+  const retencion = n(item.retencionTotal ?? mo.retencionTotal);
+  // Si no viene importeBruto, se arma; y si tampoco hay retención, bruto = neto
+  // y todo se comporta exactamente como antes.
+  const bruto = n(item.importeBruto ?? mo.importeBruto) || (neto + retencion) || neto;
+
+  const avisos = [];
+  if (subtotal > 0 && Math.abs(subtotal + iva - bruto) > 0.02) {
+    avisos.push(`subtotal + IVA (${(subtotal + iva).toFixed(2)}) no da el importe bruto (${bruto.toFixed(2)})`);
+  }
+  if (retencion > 0 && Math.abs(bruto - retencion - neto) > 0.02) {
+    avisos.push(`bruto − retención (${(bruto - retencion).toFixed(2)}) no da el neto (${neto.toFixed(2)})`);
+  }
+  return {
+    bruto, neto, retencion, subtotal, iva,
+    conIva: mo.conIva !== false && iva > 0,
+    avisos,
+  };
+}
+
 async function _aprobarItem(item, aprobarYPagar = false) {
   // Blindaje: estimaciones ya eliminó este pago de su lado. Asentarlo crearía
   // un cobro que no existe.
@@ -1622,29 +1669,49 @@ async function _aprobarItem(item, aprobarYPagar = false) {
       const provNombre = (item.proveedorNombre || '').trim();
       if (!provNombre) { _toast('El item no tiene nombre de subcontratista.', 'error'); return; }
       const provDef = _findOrCreateProveedor(provNombre, { email: item.proveedorEmail || '', telefono: item.proveedorTelefono || '' });
-      const importe  = Number(item?.monto?.importe) || 0;
-      const conIva   = item?.monto?.conIva !== false && (Number(item?.monto?.iva) || 0) > 0;
+      const d = _montoEstimacionSubDeItem(item);
+      if (d.avisos.length) {
+        console.warn('[Buzón estimacion_subcontratista]', item.id, d.avisos);
+        _toast(`⚠ ${folio}: ${d.avisos.join(' · ')}. Se registró tal cual — revísalo.`, 'warning', 9000);
+      }
+      const conIva   = d.conIva;
       const desglose = await _mapearDesgloseAOpusBitacora(proyectoIdResuelto, item.desglose);
       movimiento = {
         proyecto_id:    proyectoIdResuelto,
         fecha:          fechaISO,
-        monto:          -Math.abs(importe),
+        // La FACTURA completa. Lo retenido es saldo insoluto, no un gasto menor.
+        monto:          -Math.abs(d.bruto),
         concepto:       `[${folio}] Pago a ${provNombre} — "${item.subcontratoNombre || ''}" estim. #${item.subEstimacionNumero ?? '?'}${conIva ? '' : ' (sin IVA)'}`,
         subcontratista: provNombre,
-        status:         aprobarYPagar ? 'Pagado' : 'Pendiente',
         tipo:           'gasto',
         categoria:      'Subcontratista',
         origen_buzon_id: item.id,
-        monto_subtotal: Number(item?.monto?.subtotal) || 0,
-        monto_iva:      Number(item?.monto?.iva) || 0,
+        monto_subtotal: d.subtotal,
+        monto_iva:      d.iva,
         incluye_iva:    conIva,
         proveedor_id:   provDef?.id || null,
         desglose_presupuesto: desglose.length ? desglose : undefined,
+        retencion_clave: _claveEstimacionSub(item),
+        retencion_total: d.retencion || null,
       };
+      if (d.retencion > 0 && aprobarYPagar) {
+        // Se pagó el neto; el fondo queda como saldo del mismo movimiento.
+        movimiento.pagos = [{
+          id: 'pg_' + Math.random().toString(36).slice(2, 10),
+          fecha: fechaISO, monto: d.neto,
+          metodo_pago: _metodoPagoDeItem(item) ?? 'transferencia',
+          nota: 'Pago de estimación (neto de retención)',
+        }];
+        movimiento.status = 'Pendiente';   // queda vivo el fondo de garantía
+      } else {
+        movimiento.status = aprobarYPagar ? 'Pagado' : 'Pendiente';
+      }
       const desgloseExtra = desglose.length
         ? ` · ${desglose.length} conceptos OPUS`
         : (item.desglose?.length ? ' · ⚠ sin mapa OPUS' : '');
-      nombrePill = `${folio} · Gasto $${Math.abs(movimiento.monto).toLocaleString('es-MX',{minimumFractionDigits:2})} a ${provNombre}${provDef?._creado ? ' (nuevo proveedor)' : ''}.${desgloseExtra}`;
+      nombrePill = d.retencion > 0
+        ? `${folio} · Factura $${d.bruto.toLocaleString('es-MX',{minimumFractionDigits:2})} a ${provNombre} · pagado $${d.neto.toLocaleString('es-MX',{minimumFractionDigits:2})}, retenido $${d.retencion.toLocaleString('es-MX',{minimumFractionDigits:2})}.${desgloseExtra}`
+        : `${folio} · Gasto $${d.bruto.toLocaleString('es-MX',{minimumFractionDigits:2})} a ${provNombre}${provDef?._creado ? ' (nuevo proveedor)' : ''}.${desgloseExtra}`;
 
     } else {
       _toast('Tipo de buzón no soportado: ' + item.tipo, 'error');
@@ -1668,6 +1735,15 @@ async function _aprobarItem(item, aprobarYPagar = false) {
 
   try {
     const created       = addItem('sogrub_proy_movimientos', movimiento);
+    // Amarre pago ↔ retención. Los dos items llegan por separado y en cualquier
+    // orden, así que se liga por los dos lados (aquí y en _aprobarRetencionSub).
+    if (movimiento.retencion_clave) {
+      for (const r of (getCollection(KEYS.RETENCIONES) ?? [])) {
+        if (r.clave === movimiento.retencion_clave && !r.movId) {
+          updateItem(KEYS.RETENCIONES, r.id, { movId: created.id });
+        }
+      }
+    }
     const nuevoEstado   = aprobarYPagar
       ? ((item.tipo === 'estimacion_subcontratista' || item.tipo === 'gasto_indirecto') ? 'pagado' : 'cobrado')
       : 'aprobado';
@@ -1724,8 +1800,14 @@ async function _marcarPagadoCobrado(item) {
   // al cliente se queda binario: esos entran completos.
   const movActual = item.movId ? getItem('sogrub_proy_movimientos', item.movId) : null;
   const saldoAnterior = movActual ? saldoPendienteDe(movActual) : 0;
+  // Si parte del saldo es fondo de garantía, se propone pagar sólo el resto:
+  // la retención no se paga aquí, se libera cuando estimaciones lo mande.
+  const _retViva = movActual ? retencionVivaDeMovimiento(movActual.id) : null;
+  const _sugerido = _retViva
+    ? Math.max(0, saldoAnterior - Math.abs(Number(_retViva.monto) || 0))
+    : saldoAnterior;
   const pagoData = await _modalDatosPago(esCxP ? 'pago' : 'cobro',
-                                         (esCxP && saldoAnterior > 0) ? saldoAnterior : null);
+                                         (esCxP && _sugerido > 0) ? _sugerido : (esCxP && saldoAnterior > 0 ? saldoAnterior : null));
   if (!pagoData) return;
 
   try {
@@ -2152,6 +2234,13 @@ async function _aprobarGastoIndirecto(item, aprobarYPagar = false) {
 // Idempotente: estimaciones puede reenviar el mismo refKey si corrige algo, y
 // entonces se actualiza el registro existente en vez de duplicarlo.
 // =====================================================
+// El gasto de subcontrato que corresponde a una clave de estimación.
+function _gastoDeClaveRetencion(clave) {
+  if (!clave) return null;
+  return (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
+    .find(m => m.retencion_clave === clave && m.tipo === 'gasto')?.id ?? null;
+}
+
 function _retencionPorRefKey(refKey) {
   if (!refKey) return null;
   return (getCollection(KEYS.RETENCIONES) ?? []).find(r => r.refKey === refKey) || null;
@@ -2190,6 +2279,10 @@ async function _aprobarRetencionSub(item) {
       descripcion: item.descripcion || '',
       estado: existente?.estado === 'liberado' ? 'liberado' : 'pendiente',
       origen_buzon_id: item.id,
+      clave: _claveEstimacionSub(item),
+      // Si el pago de esa estimación ya se asentó, el fondo vive DENTRO de su
+      // saldo insoluto: la factura es una sola y se registró completa.
+      movId: existente?.movId ?? _gastoDeClaveRetencion(_claveEstimacionSub(item)),
     };
     try {
       const guardado = existente
@@ -2217,7 +2310,44 @@ async function _aprobarRetencionSub(item) {
     return;
   }
 
-  // ── LIBERAR: ahora sí sale el dinero. Gasto con la fecha del item. ──
+  // ── LIBERAR: ahora sí sale el dinero. ──
+  //
+  // Si la retención vive DENTRO del saldo de un gasto (la factura se registró
+  // completa y el 90% quedó como exhibición), liberar es simplemente agregar
+  // otra exhibición: el renglón conserva el monto de la factura y pasa a 100%
+  // liquidado. Nada de un segundo gasto suelto que rompa el cuadre con el CFDI.
+  const movLigado = existente?.movId ? getItem('sogrub_proy_movimientos', existente.movId) : null;
+  if (movLigado) {
+    const ps = Array.isArray(movLigado.pagos) ? [...movLigado.pagos] : [];
+    ps.push({
+      id: 'pg_' + Math.random().toString(36).slice(2, 10),
+      fecha: fechaISO,
+      monto,
+      metodo_pago: _metodoPagoDeItem(item) ?? 'transferencia',
+      nota: `Liberación ${item.etiqueta || existente.etiqueta || 'fondo de garantía'}`,
+    });
+    const totalMov = Math.abs(Number(movLigado.monto) || 0);
+    const sum = ps.reduce((a, x) => a + Math.abs(Number(x.monto) || 0), 0);
+    try {
+      updateItem('sogrub_proy_movimientos', movLigado.id, {
+        pagos: ps,
+        status: sum >= totalMov - 0.005 ? 'Pagado' : 'Pendiente',
+      });
+      updateItem(KEYS.RETENCIONES, existente.id, {
+        estado: 'liberado', liberadoFecha: fechaISO, liberadoAt: Date.now(),
+        movIdLiberacion: movLigado.id,
+      });
+      await _dbRef(`/shared/buzon/${item.id}`).update({
+        ..._buzonPatchAprobado(null, movLigado.id, 'sogrub_proy_movimientos'),
+        estado: 'asentado',
+      });
+      _buzon.expanded.delete(item.id);
+      _toast(`🔓 Fondo liberado $${monto.toLocaleString('es-MX',{minimumFractionDigits:2})} · se agregó como exhibición al gasto original${sum >= totalMov - 0.005 ? ' (queda 100% liquidado)' : ''}.`, 'success');
+    } catch (err) { console.error('[Buzón liberación ligada]', err); _toast('Error al liberar: ' + err.message, 'error'); }
+    return;
+  }
+
+  // Sin gasto ligado (retención vieja o suelta): se asienta como gasto propio.
   if (!existente) {
     // Liberación sin retención previa: se registra igual (el dinero salió de
     // verdad) pero se marca, porque significa que la retención nunca se aprobó.
