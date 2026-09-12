@@ -598,3 +598,20 @@ repartirlo entre obras sería adivinar.
 **Ojo con la fecha al buscarlos en la tabla**: el contable lleva `item.fecha` (la del período),
 no la de aprobación. Una emisión de julio aprobada en septiembre aparece seis semanas abajo en
 la lista, que ordena por fecha descendente.
+
+
+### Capital gastado vs ejecutado: mismas dos bases (2026-09-12)
+
+Las barras del KPI de avance financiero tenían los dos errores de siempre juntos:
+`calcAvanceFinanciero` dividía el gasto **CON IVA** entre el contrato **ORIGINAL**, y el capital
+ejecutado dividía el ejecutado **sin IVA** entre ese mismo contrato original. Daba
+74.9% / 87.6% cuando lo correcto era **80.9% / 100%**.
+
+Ambas usan ahora `calcContratoVigenteSubtotal` y `calcTotalGastadoPagado` (sin IVA, y por
+exhibición, así que un gasto parcialmente pagado cuenta lo que lleva). `calcAvanceCobranza` va
+igual: neto sin IVA sobre contrato vigente.
+
+**La brecha entre las dos barras es el margen realizado**, y con la obra al 100% es exactamente
+el margen final — `(ejec − gastado)/contrato` con `contrato = ejec`. Si las bases no coinciden,
+ese número no significa nada. Con una OC deductiva y el contrato original de denominador, la
+obra se queda para siempre en "90% ejecutado" y la brecha mide el IVA.

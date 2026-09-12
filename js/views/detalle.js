@@ -283,7 +283,7 @@ function renderDetalleKPIs(proyectoId, proyecto) {
       <div class="progress-bar" style="margin-top:6px">
         <div class="progress-fill" style="width:${Math.min(avanceCobranza,100)}%;background:var(--accent)"></div>
       </div>
-      <div class="kpi-sub">cobrado de ${formatMXN(proyecto.presupuesto_contrato)} contratados</div>
+      <div class="kpi-sub">cobrado de ${formatMXN(contratoVigente)} contratados${contratoAjustado ? ' <span class="text-dim">(vigente)</span>' : ''}</div>
       <div style="margin-top:8px;border-top:1px solid var(--border);padding-top:6px">
         <div style="display:flex;justify-content:space-between;align-items:baseline">
           <span style="font-size:11px;color:var(--text-muted)"
@@ -302,7 +302,10 @@ function renderDetalleKPIs(proyectoId, proyecto) {
             // único que hay que interpretar.
             // Capital ejecutado = valor de venta de lo ya producido, sobre el
             // mismo contrato que el gastado, para que las dos barras comparen.
-            const ejec  = (trade.vEjec / (proyecto.presupuesto_contrato || 1)) * 100;
+            // Mismo denominador que el gastado: contrato VIGENTE sin IVA. Con
+            // el original, una OC deductiva no movía ninguna de las dos barras
+            // y la brecha medía cualquier cosa menos la eficiencia.
+            const ejec  = (trade.vEjec / (contratoVigente || 1)) * 100;
             const brecha = ejec - avance;                 // + produces más de lo que gastas
             const base  = Math.max(0, Math.min(avance, ejec));
             const ancho = Math.min(Math.abs(brecha), 100 - base);

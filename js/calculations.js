@@ -519,15 +519,17 @@ function calcComprometidoSubcontratistas(proyectoId) {
 // REGLA 7 — % Avance financiero
 // (gastos pagados / presupuesto_contrato) × 100
 // =====================================================
+// % del contrato VIGENTE que la empresa ya tuvo que poner, SIN IVA.
+//
+// Las dos bases importan. Contra el contrato ORIGINAL, una OC deductiva no
+// mueve el porcentaje y la obra parece eternamente incompleta. Y con el gasto
+// CON IVA contra un contrato sin IVA, el porcentaje sale inflado ~6-16% —
+// además de que deja de ser comparable con el capital ejecutado, que va sin
+// IVA por definición.
 function calcAvanceFinanciero(proyectoId) {
-  const proyecto = getItem(KEYS.PROYECTOS, proyectoId);
-  if (!proyecto || !proyecto.presupuesto_contrato) return 0;
-
-  const movs = (getCollection(KEYS.PROY_MOVIMIENTOS) ?? [])
-    .filter(m => m.proyecto_id === proyectoId && m.tipo === 'gasto' && m.status === 'Pagado');
-
-  const gastado = movs.reduce((acc, m) => acc + Math.abs(m.monto), 0);
-  return (gastado / proyecto.presupuesto_contrato) * 100;
+  const contrato = calcContratoVigenteSubtotal(proyectoId, getAvanceObra(proyectoId));
+  if (!(contrato > 0)) return 0;
+  return (calcTotalGastadoPagado(proyectoId) / contrato) * 100;
 }
 
 // =====================================================
@@ -535,11 +537,11 @@ function calcAvanceFinanciero(proyectoId) {
 // (total cobrado al cliente / presupuesto_contrato) × 100
 // Mide cuánto del contrato ya pagó el cliente (avance financiero de obra).
 // =====================================================
+// % del contrato VIGENTE ya cobrado, neto de IVA contra subtotal.
 function calcAvanceCobranza(proyectoId) {
-  const proyecto = getItem(KEYS.PROYECTOS, proyectoId);
-  if (!proyecto || !proyecto.presupuesto_contrato) return 0;
-  const cobrado = calcTotalCobradoCliente(proyectoId);
-  return (cobrado / proyecto.presupuesto_contrato) * 100;
+  const contrato = calcContratoVigenteSubtotal(proyectoId, getAvanceObra(proyectoId));
+  if (!(contrato > 0)) return 0;
+  return (calcIVACobradoCliente(proyectoId).netoTotal / contrato) * 100;
 }
 
 // =====================================================
