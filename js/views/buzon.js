@@ -1616,7 +1616,7 @@ async function _aprobarItem(item, aprobarYPagar = false) {
   // Indirectos (app-indirectos): gasto por obra / empresa, y nómina por período.
   if (item.tipo === 'gasto_indirecto')     return _aprobarGastoIndirecto(item, aprobarYPagar);
   if (typeof item.tipo === 'string' && item.tipo.startsWith('nomina_')) return _aprobarNomina(item);
-  if (item.tipo === 'carga_social')        return _aprobarCargaSocial(item);
+  if (item.tipo === 'carga_social')        return _aprobarCargaSocial(item, aprobarYPagar);
   // Orden de cambio: INFORMATIVA. No genera contable — una OC no es dinero que
   // entró o salió, es un cambio de presupuesto. El presupuesto vigente sale de
   // /shared/contratos, no de este item.
@@ -1798,7 +1798,14 @@ async function _marcarPagadoCobrado(item) {
   // Cuentas por pagar: se permite liquidar en exhibiciones (anticipo 60% y
   // liquidación contra entrega es lo normal en una OC de servicio). El cobro
   // al cliente se queda binario: esos entran completos.
-  const movActual = item.movId ? getItem('sogrub_proy_movimientos', item.movId) : null;
+  // Un prorrateo (carga social, nómina) asienta N contables. `movRefs` los trae
+  // todos; `movId` es sólo el primero y liquidar sólo ése dejaba la mitad de la
+  // obligación viva sin que se notara.
+  const _refs = Array.isArray(item.movRefs) && item.movRefs.length
+    ? item.movRefs
+    : (item.movId ? [{ col: 'sogrub_proy_movimientos', id: item.movId }] : []);
+  const _multi = _refs.length > 1;
+  const movActual = (!_multi && _refs[0]) ? getItem(_refs[0].col, _refs[0].id) : null;
   const saldoAnterior = movActual ? saldoPendienteDe(movActual) : 0;
   // Si parte del saldo es fondo de garantía, se propone pagar sólo el resto:
   // la retención no se paga aquí, se libera cuando estimaciones lo mande.
@@ -1806,12 +1813,17 @@ async function _marcarPagadoCobrado(item) {
   const _sugerido = _retViva
     ? Math.max(0, saldoAnterior - Math.abs(Number(_retViva.monto) || 0))
     : saldoAnterior;
+  // Con varios contables no se ofrece pago parcial: el modal captura un solo
+  // monto y repartirlo entre obras sería adivinar.
   const pagoData = await _modalDatosPago(esCxP ? 'pago' : 'cobro',
-                                         (esCxP && _sugerido > 0) ? _sugerido : (esCxP && saldoAnterior > 0 ? saldoAnterior : null));
+    _multi ? null : ((esCxP && _sugerido > 0) ? _sugerido : (esCxP && saldoAnterior > 0 ? saldoAnterior : null)));
   if (!pagoData) return;
 
   try {
     const movUpdates = { fecha: pagoData.fechaISO };
+    // De qué caja salió el dinero (ver _metodoPagoDe). Sin esto el saldo lo
+    // descuenta de Mifel aunque se haya pagado con billetes.
+    const _mp = _metodoPagoDe(pagoData.metodo);
     // Liquidación parcial: se agrega una exhibición y el gasto sigue con saldo.
     const totalMov = movActual ? Math.abs(Number(movActual.monto) || 0) : 0;
     const esParcial = pagoData.monto != null && pagoData.monto < saldoAnterior - 0.005;
@@ -1831,12 +1843,8 @@ async function _marcarPagadoCobrado(item) {
     } else {
       movUpdates.status = 'Pagado';
     }
-    // Al liquidarlo se define de qué caja salió (o entró) el dinero. Aplica a
-    // todos los tipos, no sólo a gasto_oc: si aquí eliges Efectivo y no se
-    // escribe metodo_pago, el saldo lo descuenta de Mifel y el arqueo no cuadra.
-    const _mp = _metodoPagoDe(pagoData.metodo);
     if (_mp) movUpdates.metodo_pago = _mp;
-    updateItem('sogrub_proy_movimientos', item.movId, movUpdates);
+    for (const r of _refs) updateItem(r.col, r.id, movUpdates);
 
     // Mientras quede saldo, el item NO pasa a 'pagado': sigue siendo una
     // cuenta por pagar viva, sólo que con abono.
@@ -2461,7 +2469,15 @@ async function _aprobarNomina(item) {
 
   try {
     let refMovId = null, refColeccion = 'sogrub_proy_movimientos';
-    for (const m of proyMovs) { const c = addItem('sogrub_proy_movimientos', m); if (!refMovId) refMovId = c.id; }
+    // Un prorrateo genera N contables (uno por obra, más el de empresa). Se
+    // guardan TODOS: `movId` solo apunta al primero, y marcar pagado tiene que
+    // liquidarlos todos o quedan mitad y mitad.
+    const movRefs = [];
+    for (const m of proyMovs) {
+      const c = addItem('sogrub_proy_movimientos', m);
+      movRefs.push({ col: 'sogrub_proy_movimientos', id: c.id });
+      if (!refMovId) refMovId = c.id;
+    }
     if (montoEmpresa > 0) {
       const createdMifel = addItem('sogrub_movimientos', {
         fecha:          fechaISO,
@@ -2491,7 +2507,11 @@ async function _aprobarNomina(item) {
 // obra son gastos de proyecto normales (bajan Mifel una vez + caja de la obra).
 // Sólo la parte de obras SIN proyecto vinculado va a Caja SOGRUB (empresa).
 // Categoría: clasificacion 'directo' → 'Mano de Obra'; si no → 'Indirecto'.
-async function _aprobarCargaSocial(item) {
+// La carga social es una CUENTA POR PAGAR con fecha de vencimiento, no un
+// gasto ya erogado: el IMSS emite y se paga después (el item trae `vence`).
+// Por eso el contable nace 'Pendiente' salvo que se apruebe y pague de una.
+// Contrasta con la nómina, que sí nace 'Pagado' porque el trabajador ya cobró.
+async function _aprobarCargaSocial(item, aprobarYPagar = false) {
   const neto = Number(item?.monto?.importe) || 0;
   if (neto <= 0) { _toast('Carga social con importe inválido.', 'error'); return; }
   const fechaISO  = item.fecha || new Date().toISOString().slice(0, 10);
@@ -2518,7 +2538,8 @@ async function _aprobarCargaSocial(item) {
       fecha:        fechaISO,
       monto:        -Math.abs(m),
       concepto:     `[${folio}] Carga social${item.mes ? ' · ' + item.mes : ''} (prorrateo)`,
-      status:       'Pagado',
+      status:       aprobarYPagar ? 'Pagado' : 'Pendiente',
+      fecha_vencimiento: item.fechaVencimiento || null,
       tipo:         'gasto',
       categoria,
       indirecto_ambito: categoria === 'Indirecto' ? ambito : undefined,
@@ -2539,13 +2560,22 @@ async function _aprobarCargaSocial(item) {
 
   try {
     let refMovId = null, refColeccion = 'sogrub_proy_movimientos';
-    for (const m of proyMovs) { const c = addItem('sogrub_proy_movimientos', m); if (!refMovId) refMovId = c.id; }
+    // Un prorrateo genera N contables (uno por obra, más el de empresa). Se
+    // guardan TODOS: `movId` solo apunta al primero, y marcar pagado tiene que
+    // liquidarlos todos o quedan mitad y mitad.
+    const movRefs = [];
+    for (const m of proyMovs) {
+      const c = addItem('sogrub_proy_movimientos', m);
+      movRefs.push({ col: 'sogrub_proy_movimientos', id: c.id });
+      if (!refMovId) refMovId = c.id;
+    }
     if (montoEmpresa > 0) {
       const createdMifel = addItem('sogrub_movimientos', {
         fecha:          fechaISO,
         monto:          -Math.abs(montoEmpresa),
         concepto:       `[${folio}] ${item.concepto || 'Carga social'}${item.mes ? ' · ' + item.mes : ''} (empresa)`,
-        status:         'Pagado',
+        status:         aprobarYPagar ? 'Pagado' : 'Pendiente',
+        fecha_vencimiento: item.fechaVencimiento || null,
         tipo:           'carga_social',
         categoria,
         empresa:        true,
@@ -2554,11 +2584,16 @@ async function _aprobarCargaSocial(item) {
         incluye_infonavit: !!item.incluyeInfonavit,
         origen_buzon_id: item.id,
       });
+      movRefs.push({ col: 'sogrub_movimientos', id: createdMifel.id });
       if (!refMovId) { refMovId = createdMifel.id; refColeccion = 'sogrub_movimientos'; }
     }
-    await _dbRef(`/shared/buzon/${item.id}`).update(_buzonPatchAprobado(folio, refMovId, refColeccion));
+    await _dbRef(`/shared/buzon/${item.id}`).update({
+      ..._buzonPatchAprobado(folio, refMovId, refColeccion),
+      movRefs,
+      ...(aprobarYPagar ? {} : { estado: 'aprobado' }),
+    });
     _buzon.expanded.delete(item.id);
-    _toast(`${folio} · Carga social $${neto.toLocaleString('es-MX',{minimumFractionDigits:2})} · ${proyMovs.length} obra(s)${montoEmpresa > 0 ? ' + empresa' : ''}.`, 'success');
+    _toast(`${folio} · Carga social $${neto.toLocaleString('es-MX',{minimumFractionDigits:2})} · ${proyMovs.length} obra(s)${montoEmpresa > 0 ? ' + empresa' : ''} · ${aprobarYPagar ? 'pagada' : 'POR PAGAR' + (item.fechaVencimiento ? ', vence ' + new Date(item.fechaVencimiento).toLocaleDateString('es-MX') : '')}.`, 'success');
   } catch (err) { console.error('[Buzón carga social]', err); _toast('Error al procesar carga social: ' + err.message, 'error'); }
 }
 

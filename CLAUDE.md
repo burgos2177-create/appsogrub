@@ -46,6 +46,7 @@ cualquier → rechazado
 | `deposito_caja_chica` | materiales o bitácora | `sogrub_movimientos` (egreso de Mifel) | Folio CC. Solo se publica si `metodoDeposito='transferencia'`; efectivo no genera movimiento contable. |
 | `oc_materiales` | compras | `sogrub_proy_movimientos` (gasto, categoria='Material') | Folio CP. Desglose OPUS por `conceptoKey`. Espejo en `/shared/compras/oc`. |
 | `gasto_indirecto` | indirectos | obra → `sogrub_proy_movimientos` (gasto, categoria='Indirecto'); **empresa** (`empresa:true`/sin obra) → egreso directo de Mifel (`sogrub_movimientos`) | Folio CP. Proveedor y desglose OPUS **opcionales** (`conceptoKey`); `monto={subtotal,iva,importe}`. Resuelve obra→proyecto vía `obraLinks`. Prorrateo = N items (uno por obra). Ver `_aprobarGastoIndirecto`. |
+| `carga_social` | indirectos | N `sogrub_proy_movimientos` por `prorrateoPorObra` + egreso de empresa por lo no vinculado | Folio CP. **Nace `'Pendiente'`** salvo aprobar+pagar: el IMSS emite y se paga después (`fechaVencimiento`). Guarda `movRefs` en el item. Ver abajo. |
 | `nomina_*` (`nomina_operativo_semana`, `nomina_tecnico_campo_quincena`, `nomina_tecnico_oficina_quincena`, `nomina_directivo_quincena`) | indirectos | 1 egreso Mifel (`sogrub_movimientos`, neto total) **+** N `sogrub_proy_movimientos` por `prorrateoPorObra` con `no_afecta_mifel:true` | Folio CP. `netoSinObra` queda sólo en el egreso de empresa. Categoría por `tipoPersonal`: operativo/técnico-campo→'Mano de Obra', oficina/directivo→'Indirecto'. Anti-doble-conteo: `calcSaldoMifel` excluye `no_afecta_mifel` (el neto ya bajó Mifel una vez), pero SÍ baja la caja de cada proyecto. Ver `_aprobarNomina`. |
 
 **Forma de pago — de qué caja sale el dinero.** Todo contable que nace del buzón hereda
@@ -572,3 +573,28 @@ misma regla. Un movimiento sin `pagos[]` rinde una sola aplicación por el total
 histórico dibuja idéntico.
 
 La **evolución de la caja** (`ao-chart-caja`) sí va con IVA: es dinero real saliendo del banco.
+
+
+## Carga social: es cuenta por pagar, no gasto erogado (2026-09-12)
+
+El IMSS **emite** y se paga después — el item trae `fechaVencimiento` y el stepper del buzón lo
+pone en "Por pagar". Pero `_aprobarCargaSocial` creaba los contables con `status:'Pagado'` fijo,
+ignorando `aprobarYPagar` (que además ni se le pasaba desde `_aprobarItem`).
+
+El resultado: el buzón decía que debías el monto y la contabilidad que ya lo habías pagado. La
+caja bajaba sin que el dinero hubiera salido y la deuda pendiente nunca lo mostraba —
+$11,930.09 de distorsión en cada dirección por cada emisión.
+
+Ahora: `aprobar` → `'Pendiente'` + `fecha_vencimiento`; `aprobar y pagar` → `'Pagado'`.
+**Contrasta con la nómina**, que sí nace `'Pagado'` a propósito: el trabajador ya cobró.
+
+**`movRefs` en el item del buzón.** Un prorrateo asienta N contables (uno por obra + el de
+empresa, este último en `sogrub_movimientos`). `movId` apunta sólo al primero, así que
+"Marcar Pagado" liquidaba una obra y dejaba las demás vivas sin que se notara.
+`_marcarPagadoCobrado` itera `movRefs` (`[{col, id}]`) y cae a `movId` cuando no existe, para lo
+histórico. Con más de un contable **no se ofrece pago parcial**: el modal captura un solo monto y
+repartirlo entre obras sería adivinar.
+
+**Ojo con la fecha al buscarlos en la tabla**: el contable lleva `item.fecha` (la del período),
+no la de aprobación. Una emisión de julio aprobada en septiembre aparece seis semanas abajo en
+la lista, que ordena por fecha descendente.
