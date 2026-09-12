@@ -109,7 +109,7 @@ function _aoSeries(proyectoId, gran) {
   const s = {
     keys,
     labels: keys.map(k => _aoBucketLabel(k, gran)),
-    cobrado: Z(), cobradoNeto: Z(), sogrub: Z(), gastado: Z(), gastoPend: Z(), retiros: Z(), deltaSaldo: Z(),
+    cobrado: Z(), cobradoNeto: Z(), sogrub: Z(), gastado: Z(), gastadoNeto: Z(), gastoPend: Z(), retiros: Z(), deltaSaldo: Z(),
     porCat: {},
   };
 
@@ -128,15 +128,25 @@ function _aoSeries(proyectoId, gran) {
       s.sogrub[i] += m.monto;
       s.deltaSaldo[i] += m.monto;
     } else if (m.tipo === 'gasto') {
-      if (m.status === 'Pagado') {
-        s.gastado[i] += abs;
+      // Exhibición por exhibición y en la FECHA DE CADA PAGO. Con status a
+      // secas, un gasto liquidado en parcialidades (el 90% de una estimación
+      // con retención, p. ej.) quedaba 'Pendiente' y su dinero ya pagado no
+      // entraba a la curva. Un movimiento sin `pagos[]` rinde una sola
+      // aplicación por el total, así que lo histórico dibuja idéntico.
+      const sub = montoSinIVA(m);
+      const tot = abs || 1;
+      for (const p of aplicacionesPago(m)) {
+        let j = idx[_aoBucketKey(p.fecha, gran)];
+        if (j === undefined) j = p.fecha <= keys[0] ? 0 : keys.length - 1;
+        s.gastado[j]     += p.monto;                   // con IVA (caja)
+        s.gastadoNeto[j] += sub * (p.monto / tot);     // sin IVA (costo)
         const cat = m.categoria || 'Sin categoría';
         if (!s.porCat[cat]) s.porCat[cat] = Z();
-        s.porCat[cat][i] += abs;
-        if (!m.paga_de_caja_chica) s.deltaSaldo[i] -= abs;
-      } else {
-        s.gastoPend[i] += abs;
+        s.porCat[cat][j] += p.monto;
+        if (!m.paga_de_caja_chica) s.deltaSaldo[j] -= p.monto;
       }
+      const pend = saldoPendienteDe(m);
+      if (pend > 0) s.gastoPend[i] += pend;
     } else if (m.tipo === 'deposito_caja_chica' && m.status === 'Pagado') {
       s.deltaSaldo[i] -= abs;
     } else if (m.tipo === 'retiro_utilidad') {
@@ -156,6 +166,7 @@ function _aoSeries(proyectoId, gran) {
   s.cobradoAcum = acc(s.cobrado);
   s.cobradoNetoAcum = acc(s.cobradoNeto);
   s.gastadoAcum = acc(s.gastado);
+  s.gastadoNetoAcum = acc(s.gastadoNeto);
   s.retirosAcum = acc(s.retiros);
 
   // ---- Saldo a favor del cliente ----------------------------------------
@@ -192,10 +203,10 @@ function _aoAplicarRango(s, rango, gran) {
   const out = {
     keys: cut(s.keys), labels: cut(s.labels),
     cobrado: cut(s.cobrado), cobradoNeto: cut(s.cobradoNeto), sogrub: cut(s.sogrub),
-    gastado: cut(s.gastado), gastoPend: cut(s.gastoPend), retiros: cut(s.retiros),
+    gastado: cut(s.gastado), gastadoNeto: cut(s.gastadoNeto), gastoPend: cut(s.gastoPend), retiros: cut(s.retiros),
     deltaSaldo: cut(s.deltaSaldo), saldoAcum: cut(s.saldoAcum),
     cobradoAcum: cut(s.cobradoAcum), cobradoNetoAcum: cut(s.cobradoNetoAcum),
-    gastadoAcum: cut(s.gastadoAcum), retirosAcum: cut(s.retirosAcum),
+    gastadoAcum: cut(s.gastadoAcum), gastadoNetoAcum: cut(s.gastadoNetoAcum), retirosAcum: cut(s.retirosAcum),
     ejecutadoAcum: cut(s.ejecutadoAcum), saldoCliente: cut(s.saldoCliente),
     tieneEjecutado: s.tieneEjecutado,
     porCat: {},
@@ -742,7 +753,7 @@ function renderAnalisisObraTab(proyectoId) {
     ${_chartCard('ao-chart-flujo', '⇄ Entradas vs salidas por periodo', 'Cobros al cliente y fondeo SOGRUB contra gasto ejecutado')}
     ${_chartCard('ao-chart-acum', '📈 Curva cobrado vs gastado vs ejecutado',
       trade.tieneAvance
-        ? `<b>Hoy:</b> ejecutado ${formatMXN(trade.vEjec)} − gastado ${formatMXN(trade.cIncurrido)} =
+        ? `<span class="text-dim">Todo sin IVA — el IVA es pass-through, no es obra.</span><br><b>Hoy:</b> ejecutado ${formatMXN(trade.vEjec)} − gastado ${formatMXN(trade.cIncurrido)} =
            <b class="${trade.pnlRealizado >= 0 ? 'text-success' : 'text-danger'}">${formatMXN(trade.pnlRealizado)}</b> de utilidad realizada ·
            cobrado − ejecutado = ${formatMXN(trade.efectivoFlotante)} de anticipo aún no ganado.
            ${avanceNumPuntos(proyectoId) >= 2
@@ -750,7 +761,7 @@ function renderAnalisisObraTab(proyectoId) {
                 pendiente entre escalones es el ritmo al que se realiza la utilidad.</span>`
              : `<span class="text-dim">La línea de ejecutado es plana porque todavía hay una sola
                 lectura del avance: por ahora la brecha solo se lee en el extremo derecho.</span>`}`
-        : 'Ejecutado − gastado = utilidad realizada · cobrado − ejecutado = anticipo aún no ganado')}
+        : '<span class="text-dim">Todo sin IVA.</span><br>Ejecutado − gastado = utilidad realizada · cobrado − ejecutado = anticipo aún no ganado')}
     ${_chartCard('ao-chart-cat', '🧱 Composición del gasto por periodo', 'En qué se está yendo el dinero a lo largo del tiempo')}
     ${calcRitmoEjecucion(proyectoId).length >= 2
       ? _chartCard('ao-chart-ritmo', '⚡ Ritmo de ejecución por estimación',
@@ -870,11 +881,15 @@ function _aoBuildCharts(proyectoId, proyecto) {
   // ---- 3. Curvas acumuladas vs contrato ----
   const ctx3 = document.getElementById('ao-chart-acum');
   if (ctx3) {
-    const contrato = Number(proyecto?.presupuesto_contrato) || 0;
+    // TODO SIN IVA. El ejecutado a catálogo y el contrato van sin IVA por
+    // definición, así que cobrado y gastado tienen que ir igual: comparar
+    // cobrado CON IVA contra ejecutado SIN IVA abre una brecha que es puro
+    // impuesto y se lee como anticipo no ganado.
+    const contrato = calcContratoVigenteSubtotal(proyectoId, getAvanceObra(proyectoId)) || 0;
     const presOpus = (typeof getPresupuesto === 'function' ? getPresupuesto(proyectoId)?.meta?.total : 0) || 0;
     const datasets = [
-      { label: 'Cobrado acumulado', data: s.cobradoAcum, borderColor: C.success, backgroundColor: C.success + '18', fill: 'origin', tension: 0.25, pointRadius: 0, borderWidth: 2 },
-      { label: 'Gastado acumulado', data: s.gastadoAcum, borderColor: C.danger, backgroundColor: C.danger + '18', fill: 'origin', tension: 0.25, pointRadius: 0, borderWidth: 2 },
+      { label: 'Cobrado acumulado', data: s.cobradoNetoAcum, borderColor: C.success, backgroundColor: C.success + '18', fill: 'origin', tension: 0.25, pointRadius: 0, borderWidth: 2 },
+      { label: 'Gastado acumulado', data: s.gastadoNetoAcum, borderColor: C.danger, backgroundColor: C.danger + '18', fill: 'origin', tension: 0.25, pointRadius: 0, borderWidth: 2 },
     ];
     // Valor de venta de lo ya ejecutado. Estimaciones publica un solo dato (el
     // acumulado de hoy), así que bitácora lo fotografía cada vez que lo lee: con

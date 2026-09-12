@@ -547,3 +547,28 @@ un renglón, dos pagos — que es como lo ve el SAT y como cuadra la conciliaci�
 - **Sin retención no cambia nada**: `bruto = importe` y el movimiento se comporta igual que
   siempre. No hay migración.
 - Si `subtotal + iva ≠ importeBruto`, o `bruto − retención ≠ neto`, **avisa y registra tal cual**.
+
+
+### La curva de acumulados va SIN IVA (2026-09-12)
+
+`ao-chart-acum` compara cobrado, gastado, ejecutado y contrato. El ejecutado a catálogo y el
+contrato son **sin IVA por definición**, así que las otras dos tienen que ir igual:
+`s.cobradoNetoAcum` y `s.gastadoNetoAcum`, no los acumulados con IVA.
+
+Mezclarlas abría una brecha que era **puro impuesto** y se leía como anticipo no ganado. En
+Cimentación Ocaso la tarjeta decía "cobrado − ejecutado = −$0.00" mientras la gráfica mostraba
+$989,207.90 contra $931,756.79: los $57,451.11 de diferencia eran el IVA cobrado al cliente. La
+utilidad realizada leída de la gráfica salía $43,403.40 más baja de lo real por el IVA de los
+gastos.
+
+La línea de contrato usa `calcContratoVigenteSubtotal`, no `presupuesto_contrato` (que es el
+original y no refleja las órdenes de cambio).
+
+**`s.gastado` se arma por exhibición y en la fecha de cada pago**, no por `status`. Con status a
+secas, un gasto liquidado en parcialidades —el 90% de una estimación con retención— queda
+`'Pendiente'` y su dinero ya pagado no entraba a la curva. `s.gastoPend` usa
+`saldoPendienteDe`, no el monto completo. La composición por categoría y `deltaSaldo` siguen la
+misma regla. Un movimiento sin `pagos[]` rinde una sola aplicación por el total, así que lo
+histórico dibuja idéntico.
+
+La **evolución de la caja** (`ao-chart-caja`) sí va con IVA: es dinero real saliendo del banco.
